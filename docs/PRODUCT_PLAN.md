@@ -48,7 +48,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | MVP 범위 | 읽기 + 알림만. 외부 쓰기는 2단계 |
 | MVP Situation | Reply Deadline, Calendar Conflict, Personal Occasion 3종 |
 | 메모리 | MVP 포함 — `remember`/`recall` 도구, 상황 감지가 메모리를 근거로 사용 |
-| Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트, read-only scope만 |
+| Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트(BYO), read-only scope만 — 공개 후 기본 경로. 클로즈드 알파에서는 Owner의 OAuth 클라이언트 JSON을 알파 패키지에 동봉해 배포 (2026-08-20 확정) |
 | 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 |
 | 배포 | 개발~1차 클로즈드 테스트 동안 저장소 private 유지. Owner가 지정한 테스터의 1차 검증에서 문제가 없으면 공개 전환 + 홍보 (Owner 결정). 공개 후 최종 배포 형태는 PyPI + uvx |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
@@ -262,6 +262,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 ## 12. 배포·온보딩
 
 - **클로즈드 알파 단계:** 저장소는 private. 지정 테스터에게는 wheel 파일을 직접 전달하거나(권장, 저장소 접근 불필요) collaborator(Read) 초대 후 인증된 git 설치를 안내한다. PyPI에는 게시하지 않는다.
+- **알파 Google 연동:** Owner의 OAuth 클라이언트 JSON(프로덕션 게시, 미검증 — 인증 시 경고 화면에서 고급→계속)을 알파 패키지와 함께 전달한다. 토큰과 데이터는 테스터 본인 머신에만 저장되며 클라이언트 소유자에게 전송되지 않는다. 테스터 중 1~2명은 BYO 경로(`docs/SETUP_GOOGLE.md`)로 온보딩해 온보딩 문서를 검증한다. 공개 후 일반 사용자는 BYO가 기본이다.
 - **공개 전환 후:** PyPI 패키지 `proactive-mcp`. 에이전트 설정 예시:
 
 ```json
