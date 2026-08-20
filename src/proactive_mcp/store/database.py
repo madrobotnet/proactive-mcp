@@ -15,13 +15,14 @@ from .memory import (
     MemoryStore,
     NewMemory,
 )
-from .migrations import load_migrations
+from .migrate import apply_migrations, current_version
 from .private_path import (
     UnsafeDatabasePathError,
     enforce_private_sidecars,
     open_private_parent,
     prepare_private_database_file,
     private_initialization_lock,
+    sqlite_connection_target,
 )
 
 if TYPE_CHECKING:
@@ -173,7 +174,7 @@ class Store:
                 "SELECT journal_mode FROM pragma_journal_mode"
             ),
             busy_timeout=reader.query_int("SELECT timeout FROM pragma_busy_timeout"),
-            migration_version=_current_version(reader),
+            migration_version=current_version(reader),
         )
 
     def remember(self, memory: NewMemory) -> MemoryItem:
@@ -199,7 +200,7 @@ class Store:
         prepare_private_database_file(directory_fd, self._path)
         with private_initialization_lock(directory_fd, self._path):
             connection = sqlite3.connect(
-                f"/proc/self/fd/{directory_fd:d}/{self._path.name}",
+                sqlite_connection_target(directory_fd, self._path),
                 timeout=self._busy_timeout_ms / 1000,
             )
             self._connection = connection
@@ -209,7 +210,7 @@ class Store:
             ).close()
             connection.execute("PRAGMA journal_mode = WAL").close()
             reader = _ScalarReader(connection)
-            _apply_migrations(connection, reader)
+            apply_migrations(connection, reader)
             enforce_private_sidecars(directory_fd, self._path)
         self._reader = reader
         self._memory_store = MemoryStore(connection, self._clock)
@@ -225,46 +226,3 @@ class Store:
         if memory_store is None:
             raise StoreClosedError
         return memory_store
-
-
-def _apply_migrations(
-    connection: sqlite3.Connection,
-    reader: _ScalarReader,
-) -> None:
-    _ = connection.execute("BEGIN IMMEDIATE")
-    try:
-        current_version = _current_version(reader)
-        for version, sql in load_migrations():
-            if version <= current_version:
-                continue
-            for statement in _sql_statements(sql):
-                _ = connection.execute(statement)
-            _ = connection.execute(
-                "INSERT INTO schema_migrations (version) VALUES (?)",
-                (version,),
-            )
-            current_version = version
-        _ = connection.execute("COMMIT")
-    except sqlite3.Error:
-        if connection.in_transaction:
-            _ = connection.execute("ROLLBACK")
-        raise
-
-
-def _current_version(reader: _ScalarReader) -> int:
-    table_count = reader.query_int(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?",
-        ("table", "schema_migrations"),
-    )
-    if table_count == 0:
-        return 0
-    return reader.query_int("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")
-
-
-def _sql_statements(sql: str) -> tuple[str, ...]:
-    statements: list[str] = []
-    for part in sql.split(";"):
-        statement = part.strip()
-        if statement:
-            statements.append(statement)
-    return tuple(statements)

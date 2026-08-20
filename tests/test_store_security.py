@@ -4,24 +4,31 @@ import stat
 import sys
 from contextlib import closing
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from proactive_mcp.store import Store, UnsafeDatabasePathError
 
+if TYPE_CHECKING or os.name == "nt":
+    from proactive_mcp.store import windows_path
 
-def test_non_linux_platform_is_rejected_with_clear_error(
+
+def test_macos_platform_creates_private_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with monkeypatch.context() as scoped:
-        scoped.setattr(sys, "platform", "win32")
-        with pytest.raises(UnsafeDatabasePathError) as raised:
-            _ = Store(tmp_path / "proactive.db")
+        scoped.setattr(sys, "platform", "darwin")
+        with Store(tmp_path / "proactive.db") as store:
+            status = store.status()
 
-    assert raised.value.reason == "secure database storage requires Linux"
+    assert status.path == (tmp_path / "proactive.db").absolute()
+    assert status.journal_mode.lower() == "wal"
+    assert status.migration_version == 2
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows permissions use ACLs")
 def test_store_enforces_private_state_permissions(tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     db_path = state_dir / "proactive.db"
@@ -40,6 +47,35 @@ def test_store_enforces_private_state_permissions(tmp_path: Path) -> None:
         _ = os.umask(previous_umask)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows ACL assertion")
+def test_windows_store_installs_protected_current_user_acl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "state" / "proactive.db"
+    applied: list[int] = []
+    original_set_private_dacl = windows_path.set_private_dacl
+
+    def record_private_dacl(
+        handle: int,
+        path: Path,
+        *,
+        inheritance: int,
+    ) -> None:
+        applied.append(inheritance)
+        original_set_private_dacl(handle, path, inheritance=inheritance)
+
+    monkeypatch.setattr(windows_path, "set_private_dacl", record_private_dacl)
+
+    with Store(db_path):
+        pass
+
+    assert applied
+    assert 0 in applied
+    assert 3 in applied
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux strong path defense")
 def test_store_rejects_symlinked_database_file(tmp_path: Path) -> None:
     target = tmp_path / "target.db"
     target.touch()
@@ -50,6 +86,7 @@ def test_store_rejects_symlinked_database_file(tmp_path: Path) -> None:
         pass
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux strong path defense")
 def test_store_rejects_symlinked_parent_directory(tmp_path: Path) -> None:
     target = tmp_path / "real-state"
     target.mkdir()
@@ -60,6 +97,7 @@ def test_store_rejects_symlinked_parent_directory(tmp_path: Path) -> None:
         pass
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux strong path defense")
 def test_store_rejects_group_writable_ancestor(tmp_path: Path) -> None:
     unsafe_ancestor = tmp_path / "shared"
     unsafe_ancestor.mkdir(mode=0o777)
@@ -72,6 +110,7 @@ def test_store_rejects_group_writable_ancestor(tmp_path: Path) -> None:
         pass
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux strong path defense")
 def test_parent_swap_cannot_redirect_database(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -100,6 +139,7 @@ def test_parent_swap_cannot_redirect_database(
     assert not (attacker_dir / "proactive.db").exists()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux descriptor accounting")
 def test_failed_store_opens_release_all_file_descriptors(tmp_path: Path) -> None:
     db_path = tmp_path / "proactive.db"
     with closing(sqlite3.connect(db_path)) as connection, connection:
