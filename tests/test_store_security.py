@@ -47,6 +47,36 @@ def test_store_enforces_private_state_permissions(tmp_path: Path) -> None:
         _ = os.umask(previous_umask)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX create-race behavior")
+def test_store_retries_transient_private_file_create_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_open = os.open
+    create_attempts = 0
+
+    def open_with_transient_create_race(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal create_attempts
+        if path == "proactive.db" and flags & os.O_CREAT:
+            create_attempts += 1
+            if create_attempts == 1:
+                raise FileNotFoundError(2, "transient create race", path)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", open_with_transient_create_race)
+
+    with Store(tmp_path / "proactive.db"):
+        pass
+
+    assert create_attempts == 2
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows ACL assertion")
 def test_windows_store_installs_protected_current_user_acl(
     tmp_path: Path,

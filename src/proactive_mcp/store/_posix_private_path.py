@@ -147,6 +147,24 @@ def _open_private_file(
             _PRIVATE_FILE_MODE,
             dir_fd=directory_fd,
         )
+    except FileNotFoundError as error:
+        if not flags & os.O_CREAT:
+            raise UnsafeDatabasePathError(
+                path,
+                "private file cannot be opened safely",
+            ) from error
+        try:
+            descriptor = os.open(
+                name,
+                flags | os.O_NOFOLLOW,
+                _PRIVATE_FILE_MODE,
+                dir_fd=directory_fd,
+            )
+        except OSError as retry_error:
+            raise UnsafeDatabasePathError(
+                path,
+                "private file cannot be opened safely",
+            ) from retry_error
     except OSError as error:
         raise UnsafeDatabasePathError(
             path,
