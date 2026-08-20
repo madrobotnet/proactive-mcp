@@ -221,7 +221,8 @@ CREATE TABLE memory_items (
 | 마일스톤 | 범위 | 완료 기준 |
 |---|---|---|
 | **M0 스캐폴딩** | uv 프로젝트, 패키지 구조(`server/`, `store/`, `sources/`, `situations/`, `delivery/`, `cli/`), SQLite 마이그레이션 기반, MCP 서버 skeleton + `get_status`, ruff/pytest CI | MCP 클라이언트에서 `get_status` 호출 성공, CI green |
-| **M1 메모리** | `remember`/`recall`/`forget` 도구, memory_items 스키마 | 도구 3종 hermetic 테스트 통과, 실제 에이전트 대화에서 저장→회수 확인 |
+| **M1 메모리** | `remember`/`recall`/`forget` 도구, memory_items 스키마. 안전한 SQLite 저장(TOCTOU/symlink 방어)은 Linux 한정으로 구현 | 도구 3종 hermetic 테스트 통과, 실제 에이전트 대화에서 저장→회수 확인 |
+| **M1.5 크로스 플랫폼 저장** | 저장 계층의 Windows/macOS 지원 — 비례적 방어(OS 기본 사용자 격리 + 사용자 전용 권한), 무거운 신규 의존성 지양, CI 테스트 매트릭스에 windows/macos 추가 | 전체 테스트가 Linux·Windows·macOS CI에서 green, Owner의 Windows 로컬 스모크 확인 |
 | **M2 Google read** | `setup` OAuth 플로우(headless 지원), Gmail/Calendar read adapter, sync 상태·신선도 추적 | 실계정 read 성공(Owner 계정, Owner 실행), fixture 기반 hermetic 테스트 통과 |
 | **M3 Situation 엔진** | 3종 감지기, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 상태 머신 | fake clock 결정론 테스트로 3종 감지·정책 검증 |
 | **M4 전달** | `proactive_check`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
