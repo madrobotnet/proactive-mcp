@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local state (never commit user data)
+*.db
+*.db-wal
+*.db-shm
+credentials/
+*.token
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
