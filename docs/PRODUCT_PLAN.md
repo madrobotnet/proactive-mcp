@@ -4,7 +4,7 @@
 > **작성일:** 2026-08-20
 > **Owner:** 경우 (Kyungwoo Seo, @madrobotnet) — 범위 변경·릴리스·실계정 연동은 Owner 승인 사항
 > **개발 주체:** AI 코딩 에이전트 (별도 Linux 서버, GitHub 저장소 중심 워크플로)
-> **저장소:** https://github.com/madrobotnet/proactive-mcp (공개)
+> **저장소:** https://github.com/madrobotnet/proactive-mcp (private — 공개 전환은 클로즈드 알파 검증 후 Owner 결정, §10)
 
 ---
 
