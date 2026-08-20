@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from multiprocessing import get_context
-from multiprocessing.queues import Queue as ProcessQueue
-from multiprocessing.synchronize import Barrier as ProcessBarrier
-from pathlib import Path
 from threading import Barrier as ThreadBarrier
+from typing import TYPE_CHECKING
 
 from proactive_mcp.store import DEFAULT_BUSY_TIMEOUT_MS, DatabaseStatus, Store
+
+if TYPE_CHECKING:
+    from multiprocessing.queues import Queue as ProcessQueue
+    from multiprocessing.synchronize import Barrier as ProcessBarrier
+    from pathlib import Path
 
 
 def _open_store_at_barrier(db_path: Path, barrier: ThreadBarrier) -> int:
