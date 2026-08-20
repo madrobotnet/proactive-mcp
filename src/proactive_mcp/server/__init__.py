@@ -9,6 +9,15 @@ from typing import ClassVar, Literal
 from mcp.server.mcpserver import MCPServer
 from pydantic import BaseModel, ConfigDict
 
+from proactive_mcp.server.memory_tools import (
+    ForgetResponse,
+    MemoryItemResponse,
+    RecallResponse,
+    RememberRequest,
+    forget,
+    recall,
+    remember,
+)
 from proactive_mcp.store import Store
 
 
@@ -95,6 +104,35 @@ def create_server() -> MCPServer[None]:
     )
     _ = tool(get_status)
 
+    remember_tool = server.tool(
+        name="remember",
+        description=(
+            "Store a memory when the user mentions dates, appointments, "
+            "preferences, or people. For dated facts, set date_anchor to an "
+            "ISO date or --MM-DD and use recurrence=yearly when it repeats "
+            "annually."
+        ),
+    )
+    _ = remember_tool(remember)
+
+    recall_tool = server.tool(
+        name="recall",
+        description=(
+            "Search stored memories by a substring of entity or content. "
+            "Optional kind filter. Does not return archived items."
+        ),
+    )
+    _ = recall_tool(recall)
+
+    forget_tool = server.tool(
+        name="forget",
+        description=(
+            "Archive a memory by id when the user asks to forget or delete it. "
+            "This is a soft archive, not a hard delete."
+        ),
+    )
+    _ = forget_tool(forget)
+
     return server
 
 
@@ -102,6 +140,10 @@ server = create_server()
 
 __all__ = [
     "DatabaseStatusResponse",
+    "ForgetResponse",
+    "MemoryItemResponse",
+    "RecallResponse",
+    "RememberRequest",
     "StatusResponse",
     "build_status",
     "create_server",

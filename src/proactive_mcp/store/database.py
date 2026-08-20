@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Self
 
+from proactive_mcp.clock import Clock, UtcClock
+
+from .memory import (
+    MemoryItem,
+    MemoryKind,
+    MemoryStore,
+    NewMemory,
+)
 from .migrations import load_migrations
+from .private_path import (
+    UnsafeDatabasePathError,
+    enforce_private_sidecars,
+    open_private_parent,
+    prepare_private_database_file,
+    private_initialization_lock,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -93,25 +109,32 @@ class Store:
 
     _path: Path
     _busy_timeout_ms: int
+    _clock: Clock
     _connection: sqlite3.Connection | None
     _reader: _ScalarReader | None
+    _memory_store: MemoryStore | None
+    _directory_fd: int | None
 
     def __init__(
         self,
         path: Path,
         *,
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MS,
+        clock: Clock | None = None,
     ) -> None:
         """Open the database and apply pending migrations."""
         if busy_timeout_ms < 0:
             raise InvalidBusyTimeoutError(busy_timeout_ms)
-        self._path = path.expanduser().resolve()
+        self._path = path.expanduser().absolute()
         self._busy_timeout_ms = busy_timeout_ms
+        self._clock = clock if clock is not None else UtcClock()
         self._connection = None
         self._reader = None
+        self._memory_store = None
+        self._directory_fd = None
         try:
             self._open()
-        except sqlite3.Error:
+        except (OSError, sqlite3.Error, UnsafeDatabasePathError):
             self.close()
             raise
 
@@ -131,10 +154,15 @@ class Store:
     def close(self) -> None:
         """Close the underlying SQLite connection if it is open."""
         connection = self._connection
+        directory_fd = self._directory_fd
         self._connection = None
         self._reader = None
+        self._memory_store = None
+        self._directory_fd = None
         if connection is not None:
             connection.close()
+        if directory_fd is not None:
+            os.close(directory_fd)
 
     def status(self) -> DatabaseStatus:
         """Return path, journal mode, busy timeout, and migration version."""
@@ -148,25 +176,55 @@ class Store:
             migration_version=_current_version(reader),
         )
 
+    def remember(self, memory: NewMemory) -> MemoryItem:
+        """Store a memory item without replacing contradictory items."""
+        return self._require_memory_store().remember(memory)
+
+    def recall(
+        self,
+        query: str,
+        *,
+        kind: MemoryKind | None = None,
+    ) -> tuple[MemoryItem, ...]:
+        """Return active memories matching a literal entity or content substring."""
+        return self._require_memory_store().recall(query, kind=kind)
+
+    def forget(self, memory_id: int) -> MemoryItem:
+        """Soft-archive an existing memory item."""
+        return self._require_memory_store().forget(memory_id)
+
     def _open(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(
-            self._path,
-            timeout=self._busy_timeout_ms / 1000,
-        )
-        connection.isolation_level = None
-        _ = connection.execute("PRAGMA journal_mode = WAL")
-        _ = connection.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms:d}")
-        reader = _ScalarReader(connection)
-        _apply_migrations(connection, reader)
-        self._connection = connection
+        directory_fd = open_private_parent(self._path)
+        self._directory_fd = directory_fd
+        prepare_private_database_file(directory_fd, self._path)
+        with private_initialization_lock(directory_fd, self._path):
+            connection = sqlite3.connect(
+                f"/proc/self/fd/{directory_fd:d}/{self._path.name}",
+                timeout=self._busy_timeout_ms / 1000,
+            )
+            self._connection = connection
+            connection.isolation_level = None
+            connection.execute(
+                f"PRAGMA busy_timeout = {self._busy_timeout_ms:d}"
+            ).close()
+            connection.execute("PRAGMA journal_mode = WAL").close()
+            reader = _ScalarReader(connection)
+            _apply_migrations(connection, reader)
+            enforce_private_sidecars(directory_fd, self._path)
         self._reader = reader
+        self._memory_store = MemoryStore(connection, self._clock)
 
     def _require_reader(self) -> _ScalarReader:
         reader = self._reader
         if reader is None:
             raise StoreClosedError
         return reader
+
+    def _require_memory_store(self) -> MemoryStore:
+        memory_store = self._memory_store
+        if memory_store is None:
+            raise StoreClosedError
+        return memory_store
 
 
 def _apply_migrations(
