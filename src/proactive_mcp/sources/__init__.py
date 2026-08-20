@@ -1,0 +1,1 @@
+"""External source adapters package."""
