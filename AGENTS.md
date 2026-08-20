@@ -1,5 +1,17 @@
 # proactive-mcp — 개발 에이전트 지침
 
+## 개발 에이전트 계정
+
+개발 에이전트는 Owner 계정이 아니라 전용 머신 계정 **`madrobot-agent`** (이 저장소의 Write collaborator)로 활동한다. 커밋·Issue·PR·댓글이 모두 이 계정으로 표시되어야 하며, 이래야 `@madrobotnet` 멘션 알림이 정상 동작한다 (자기 자신 멘션은 알림이 가지 않는다).
+
+- GitHub 인증: `gh auth login`을 `madrobot-agent`로 수행
+- git 커밋 identity:
+
+```bash
+git config --global user.name "madrobot-agent"
+git config --global user.email "318970772+madrobot-agent@users.noreply.github.com"
+```
+
 ## 정본 문서
 
 [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)가 이 프로젝트의 단일 기준 문서다. 코드·README·이 문서가 기획서와 충돌하면 기획서를 따른다. 기획서의 확정 결정(§3)과 안전 불변식(§9)을 변경하려면 Owner(@madrobotnet) 승인이 필요하다.
