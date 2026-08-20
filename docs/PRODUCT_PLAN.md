@@ -50,7 +50,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | 메모리 | MVP 포함 — `remember`/`recall` 도구, 상황 감지가 메모리를 근거로 사용 |
 | Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트, read-only scope만 |
 | 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 |
-| 배포 | 처음부터 공개 오픈소스, PyPI + uvx |
+| 배포 | 개발~1차 클로즈드 테스트 동안 저장소 private 유지. Owner가 지정한 테스터의 1차 검증에서 문제가 없으면 공개 전환 + 홍보 (Owner 결정). 공개 후 최종 배포 형태는 PyPI + uvx |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
 
 ## 4. 아키텍처
@@ -226,7 +226,9 @@ CREATE TABLE memory_items (
 | **M3 Situation 엔진** | 3종 감지기, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 상태 머신 | fake clock 결정론 테스트로 3종 감지·정책 검증 |
 | **M4 전달** | `proactive_check`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
 | **M5 연동 레시피** | Cursor Automations·Hermes Cron·Claude Desktop 연동 문서와 룰 템플릿, 실사용 검증 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 |
-| **M6 공개 릴리스** | README 정비, GCP OAuth 설정 가이드, PyPI `proactive-mcp` 0.1.0 배포 | 새 환경에서 clean install → 온보딩 완료까지 15분 이내 |
+| **M6 클로즈드 알파 릴리스** | README 정비, GCP OAuth 설정 가이드, wheel 빌드와 테스터 배포 절차 (PyPI 미사용) | 새 환경에서 clean install → 온보딩 완료까지 15분 이내, 지정 테스터에게 전달 가능한 상태 |
+
+**M6 이후 — 공개 전환 (Owner 결정):** 지정 테스터의 1차 검증에서 문제가 없으면 저장소를 공개로 전환하고 PyPI `proactive-mcp` 0.1.0을 게시하며 홍보를 시작한다. PyPI 게시는 저장소가 private이어도 패키지를 공개하는 행위이므로, 반드시 공개 전환 시점에 함께 수행한다.
 
 2단계(V2, 별도 기획): 쓰기 액션(approval-first), Google Tasks·Docs, Telegram 채널, HTTP transport(원격 데몬), 다중 계정.
 
@@ -259,7 +261,8 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 
 ## 12. 배포·온보딩
 
-- PyPI 패키지 `proactive-mcp`. 에이전트 설정 예시:
+- **클로즈드 알파 단계:** 저장소는 private. 지정 테스터에게는 wheel 파일을 직접 전달하거나(권장, 저장소 접근 불필요) collaborator(Read) 초대 후 인증된 git 설치를 안내한다. PyPI에는 게시하지 않는다.
+- **공개 전환 후:** PyPI 패키지 `proactive-mcp`. 에이전트 설정 예시:
 
 ```json
 {
