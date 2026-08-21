@@ -5,9 +5,14 @@ from __future__ import annotations
 from datetime import UTC
 from typing import TYPE_CHECKING
 
+from ._situation_consistency import (
+    DetectionSourceMismatchError,
+    SituationConsistencyStore,
+)
 from ._situation_models import (
-    SITUATION_EVIDENCE_ADAPTER,
+    DeliveryClaim,
     Detection,
+    DetectionApplySummary,
     DetectionUpsertSummary,
     InvalidSituationTransitionError,
     Situation,
@@ -16,20 +21,16 @@ from ._situation_models import (
     SituationType,
     SituationValidationError,
 )
-from ._situation_reader import SituationReader
 from ._situation_sql import (
     ACKNOWLEDGE_SITUATION,
     EXPIRE_LAPSED,
-    INSERT_SITUATION,
     INSERT_TYPE_MUTE,
     MARK_DELIVERED,
     MUTE_SITUATION,
-    REACTIVATE_SITUATION,
-    REFRESH_SITUATION,
-    RESOLVE_SITUATION,
     SNOOZE_SITUATION,
     WAKE_SNOOZED,
 )
+from ._source_generation import DelayedSourceGenerationError
 from ._sqlite_transaction import ImmediateTransaction
 
 if TYPE_CHECKING:
@@ -39,7 +40,15 @@ if TYPE_CHECKING:
 
     from proactive_mcp.clock import Clock
 
-__all__ = ["SituationStore"]
+    from ._situation_reader import SituationReader
+    from ._source_generation import SourceGeneration, SourceGenerationStatus
+    from .sync import SourceErrorCode, SyncStore
+
+__all__ = [
+    "DelayedSourceGenerationError",
+    "DetectionSourceMismatchError",
+    "SituationStore",
+]
 
 
 class SituationStore:
@@ -48,65 +57,59 @@ class SituationStore:
     _connection: sqlite3.Connection
     _clock: Clock
     _reader: SituationReader
+    _sync: SyncStore
+    _consistency: SituationConsistencyStore
 
-    def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        clock: Clock,
+        sync_store: SyncStore,
+    ) -> None:
         """Bind situation persistence to an open connection and clock."""
         self._connection = connection
         self._clock = clock
-        self._reader = SituationReader(connection)
+        self._sync = sync_store
+        self._consistency = SituationConsistencyStore(connection, clock, sync_store)
+        self._reader = self._consistency.reader
 
     def upsert_detections(
-        self,
-        detections: Sequence[Detection],
+        self, detections: Sequence[Detection]
     ) -> DetectionUpsertSummary:
-        """Persist one detection batch without ever duplicating a dedupe key.
+        """Persist one detection batch without duplicating a dedupe key."""
+        return self._consistency.upsert_detections(detections)
 
-        A new key inserts a pending situation. A key whose situation was
-        resolved or expired reactivates it as pending with a fresh
-        ``detected_at``. A key in an active state only refreshes priority,
-        title, why-now, evidence, and expiry. Acknowledged and muted
-        situations are left untouched.
-        """
-        created = reactivated = refreshed = skipped = 0
-        timestamp = self._now_iso()
-        with ImmediateTransaction(self._connection):
-            for detection in detections:
-                outcome = self._upsert_detection(detection, timestamp)
-                created += 1 if outcome == "created" else 0
-                reactivated += 1 if outcome == "reactivated" else 0
-                refreshed += 1 if outcome == "refreshed" else 0
-                skipped += 1 if outcome == "skipped" else 0
-        return DetectionUpsertSummary(
-            created=created,
-            reactivated=reactivated,
-            refreshed=refreshed,
-            skipped=skipped,
+    def apply_source_generation(
+        self,
+        generation: SourceGeneration,
+        detections: Sequence[Detection],
+        *,
+        status: SourceGenerationStatus,
+        sync_cursor: str | None = None,
+        error_code: SourceErrorCode | None = None,
+    ) -> DetectionApplySummary:
+        """Atomically accept source truth, detections, and resolutions."""
+        return self._consistency.apply_source_generation(
+            generation,
+            detections,
+            status,
+            sync_cursor=sync_cursor,
+            error_code=error_code,
         )
+
+    def apply_local_detections(
+        self, detections: Sequence[Detection]
+    ) -> DetectionApplySummary:
+        """Atomically apply local personal detections and resolutions."""
+        return self._consistency.apply_local_detections(detections)
 
     def resolve_absent(
         self,
         situation_type: SituationType,
         present_keys: Collection[str],
     ) -> int:
-        """Resolve active situations of one type whose keys are no longer detected.
-
-        Only call this with detections from a fresh, successful source read.
-        Resolving from a stale or failed source would violate the
-        no-all-clear-when-stale invariant.
-        """
-        timestamp = self._now_iso()
-        keys = set(present_keys)
-        resolved = 0
-        with ImmediateTransaction(self._connection):
-            for situation in self._reader.active_by_type(situation_type):
-                if situation.dedupe_key in keys:
-                    continue
-                _ = self._connection.execute(
-                    RESOLVE_SITUATION,
-                    (timestamp, timestamp, situation.id),
-                )
-                resolved += 1
-        return resolved
+        """Resolve active situations absent from successful source truth."""
+        return self._consistency.resolve_absent(situation_type, present_keys)
 
     def expire_lapsed(self) -> int:
         """Expire active situations whose relevance window has passed."""
@@ -135,8 +138,14 @@ class SituationStore:
                 )
                 if cursor.rowcount == 0:
                     self._raise_transition_error(situation_id, "deliver")
-                delivered.append(self._require_situation(situation_id))
+                situation = self._require_situation(situation_id)
+                self._consistency.record_delivery(situation, timestamp)
+                delivered.append(situation)
         return tuple(delivered)
+
+    def claim_for_delivery(self, claim: DeliveryClaim) -> tuple[Situation, ...]:
+        """Atomically claim only rows that pass all attention limits."""
+        return self._consistency.claim_for_delivery(claim)
 
     def acknowledge_situation(self, situation_id: int) -> Situation:
         """Mark one active situation as acknowledged by the user."""
@@ -191,51 +200,6 @@ class SituationStore:
             _utc_iso(start),
             _utc_iso(end),
         )
-
-    def _upsert_detection(self, detection: Detection, timestamp: str) -> str:
-        existing = self._situation_by_dedupe_key(detection.dedupe_key)
-        expires_at = (
-            _utc_iso(detection.expires_at) if detection.expires_at is not None else None
-        )
-        evidence = SITUATION_EVIDENCE_ADAPTER.dump_json(detection.evidence).decode(
-            "utf-8"
-        )
-        if existing is None:
-            _ = self._connection.execute(
-                INSERT_SITUATION,
-                (
-                    detection.situation_type,
-                    detection.dedupe_key,
-                    detection.priority,
-                    detection.title,
-                    detection.why_now,
-                    evidence,
-                    expires_at,
-                    timestamp,
-                    timestamp,
-                ),
-            )
-            return "created"
-        refresh_params = (
-            detection.priority,
-            detection.title,
-            detection.why_now,
-            evidence,
-            expires_at,
-        )
-        if existing.state in {"resolved", "expired"}:
-            _ = self._connection.execute(
-                REACTIVATE_SITUATION,
-                (*refresh_params, timestamp, timestamp, existing.id),
-            )
-            return "reactivated"
-        if existing.state in {"pending", "delivered", "snoozed"}:
-            _ = self._connection.execute(
-                REFRESH_SITUATION,
-                (*refresh_params, timestamp, existing.id),
-            )
-            return "refreshed"
-        return "skipped"
 
     def _transition(self, situation_id: int, sql: str, action: str) -> Situation:
         timestamp = self._now_iso()

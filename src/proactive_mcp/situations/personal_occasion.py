@@ -43,8 +43,8 @@ def detect_personal_occasions(
     occasion per occurrence year, so duplicate memories never notify twice
     (Owner decision on issue #4). Contradictory anchors within such a group
     still notify once, with every recorded date exposed in the evidence.
-    A group triggers once its earliest upcoming occurrence is at most
-    ``lead_days`` away.
+    Each row becomes eligible against its own effective lead window, then
+    the earliest eligible occurrence supplies the single group detection.
     """
     today = now.astimezone(tz).date()
     groups: dict[tuple[str, int, str], list[_Occurrence]] = {}
@@ -94,15 +94,21 @@ def _group_detection(
     tz: tzinfo,
     default_lead_days: int,
 ) -> Detection | None:
-    trigger = min(rows, key=lambda row: (row.occurrence, row.item.id))
+    eligible = tuple(
+        row
+        for row in rows
+        if (row.occurrence - today).days
+        <= (row.item.lead_days if row.item.lead_days is not None else default_lead_days)
+    )
+    if not eligible:
+        return None
+    trigger = min(eligible, key=lambda row: (row.occurrence, row.item.id))
     lead_days = (
         trigger.item.lead_days
         if trigger.item.lead_days is not None
         else default_lead_days
     )
     days_until = (trigger.occurrence - today).days
-    if days_until > lead_days:
-        return None
     anchors = sorted(
         {row.item.date_anchor for row in rows if row.item.date_anchor is not None}
     )
@@ -120,6 +126,7 @@ def _group_detection(
         why_now=why_now,
         evidence=SituationEvidence(
             facts={
+                "selected_memory_id": str(item.id),
                 "memory_ids": ",".join(
                     str(row.item.id) for row in sorted(rows, key=lambda r: r.item.id)
                 ),

@@ -25,6 +25,7 @@ __all__ = [
 
 _HOURS_PER_DAY: Final = 24
 _MAX_DAILY_BUDGET: Final = 1000
+_MAX_LEAD_DAYS: Final = 365
 _TomlValue: TypeAlias = bool | int | float | str | date | time | datetime
 
 
@@ -61,6 +62,7 @@ class _RawDetectors(BaseModel):
     reply_threshold_hours: _TomlValue | None = None
     calendar_high_hours: _TomlValue | None = None
     calendar_critical_hours: _TomlValue | None = None
+    occasion_default_lead_days: _TomlValue | None = None
 
 
 class _RawConfig(BaseModel):
@@ -106,6 +108,7 @@ class DetectorSettings:
     reply_threshold: timedelta = timedelta(hours=48)
     calendar_high_window: timedelta = timedelta(hours=24)
     calendar_critical_window: timedelta = timedelta(hours=2)
+    occasion_default_lead_days: int = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +134,21 @@ def load_config(path: Path) -> ProactiveConfig:
         raise ConfigError(field="config.toml", reason="cannot be parsed") from error
     attention = raw.attention
     detectors = raw.detectors
+    calendar_high_window = _parse_hours(
+        detectors.calendar_high_hours,
+        "calendar_high_hours",
+        timedelta(hours=24),
+    )
+    calendar_critical_window = _parse_hours(
+        detectors.calendar_critical_hours,
+        "calendar_critical_hours",
+        timedelta(hours=2),
+    )
+    if calendar_critical_window > calendar_high_window:
+        raise ConfigError(
+            field="calendar_critical_hours",
+            reason="must not exceed calendar_high_hours",
+        )
     return ProactiveConfig(
         attention=AttentionSettings(
             quiet_hours_start=_parse_time(
@@ -157,15 +175,10 @@ def load_config(path: Path) -> ProactiveConfig:
                 "reply_threshold_hours",
                 timedelta(hours=48),
             ),
-            calendar_high_window=_parse_hours(
-                detectors.calendar_high_hours,
-                "calendar_high_hours",
-                timedelta(hours=24),
-            ),
-            calendar_critical_window=_parse_hours(
-                detectors.calendar_critical_hours,
-                "calendar_critical_hours",
-                timedelta(hours=2),
+            calendar_high_window=calendar_high_window,
+            calendar_critical_window=calendar_critical_window,
+            occasion_default_lead_days=_parse_lead_days(
+                detectors.occasion_default_lead_days
             ),
         ),
     )
@@ -245,6 +258,21 @@ def _parse_hours(
     ):
         raise ConfigError(field=key, reason="must be a positive number of hours")
     return timedelta(hours=value)
+
+
+def _parse_lead_days(value: _TomlValue | None) -> int:
+    if value is None:
+        return 7
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not 0 <= value <= _MAX_LEAD_DAYS
+    ):
+        raise ConfigError(
+            field="occasion_default_lead_days",
+            reason=f"must be an integer between 0 and {_MAX_LEAD_DAYS}",
+        )
+    return value
 
 
 def _parse_timezone_name(value: _TomlValue | None) -> str | None:

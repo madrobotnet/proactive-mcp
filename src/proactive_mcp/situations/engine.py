@@ -3,21 +3,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
-from proactive_mcp.config import DetectorSettings
-from proactive_mcp.store import evaluate_source_freshness
+from proactive_mcp.config import DetectorSettings, load_config, resolve_timezone
+from proactive_mcp.store import (
+    DelayedSourceGenerationError,
+    evaluate_source_freshness,
+)
 
-from .calendar_conflict import detect_calendar_conflicts
+from .calendar_conflict import run_calendar_conflict_detection
 from .personal_occasion import detect_personal_occasions
 from .reply_deadline import detect_reply_deadlines
 
 if TYPE_CHECKING:
     from datetime import datetime, tzinfo
+    from pathlib import Path
 
     from proactive_mcp.clock import Clock
     from proactive_mcp.store import (
-        Detection,
+        DetectionApplySummary,
         SourceFreshness,
         SourceName,
         Store,
@@ -69,6 +73,22 @@ class SituationEngine:
         self._tz = tz
         self._detectors = detectors if detectors is not None else DetectorSettings()
 
+    @classmethod
+    def from_config(
+        cls,
+        store: Store,
+        clock: Clock,
+        config_path: Path,
+    ) -> Self:
+        """Construct an engine from the typed config.toml boundary."""
+        config = load_config(config_path)
+        return cls(
+            store,
+            clock,
+            resolve_timezone(config.attention.timezone, now=clock.now()),
+            config.detectors,
+        )
+
     def evaluate(self, inputs: EngineInputs) -> EvaluationResult:
         """Evaluate one pass: wake, detect, upsert, expire, resolve, report.
 
@@ -79,58 +99,76 @@ class SituationEngine:
         now = self._clock.now()
         situations = self._store.situations
         woken = situations.wake_snoozed()
-        gmail_freshness, calendar_freshness = self._freshness(now)
+        expired = situations.expire_lapsed()
         occasion_detections = detect_personal_occasions(
             self._store.list_dated_memories(),
             now=now,
             tz=self._tz,
+            default_lead_days=self._detectors.occasion_default_lead_days,
         )
-        detections: list[Detection] = list(occasion_detections)
-        if inputs.gmail_threads is not None:
-            detections.extend(
-                detect_reply_deadlines(
-                    inputs.gmail_threads,
-                    now=now,
-                    tz=self._tz,
-                    threshold=self._detectors.reply_threshold,
+        applied: list[DetectionApplySummary] = [
+            situations.apply_local_detections(occasion_detections)
+        ]
+        source_warnings: list[str] = []
+        gmail = inputs.gmail_threads
+        if gmail is not None:
+            detections = detect_reply_deadlines(
+                gmail.items,
+                now=now,
+                tz=self._tz,
+                threshold=self._detectors.reply_threshold,
+            )
+            try:
+                applied.append(
+                    situations.apply_source_generation(
+                        gmail.generation,
+                        detections,
+                        status="complete" if gmail.complete else "degraded",
+                        sync_cursor=gmail.sync_cursor,
+                        error_code=gmail.error_code,
+                    )
                 )
+            except DelayedSourceGenerationError:
+                source_warnings.append("gmail: delayed source generation ignored")
+            source_warnings.extend(f"gmail: {code}" for code in gmail.warning_codes)
+        calendar = inputs.calendar_events
+        if calendar is not None:
+            run = run_calendar_conflict_detection(
+                calendar.items,
+                now=now,
+                tz=self._tz,
+                critical_window=self._detectors.calendar_critical_window,
+                high_window=self._detectors.calendar_high_window,
             )
-        if inputs.calendar_events is not None:
-            detections.extend(
-                detect_calendar_conflicts(
-                    inputs.calendar_events,
-                    now=now,
-                    tz=self._tz,
-                    critical_window=self._detectors.calendar_critical_window,
-                    high_window=self._detectors.calendar_high_window,
+            complete = calendar.complete and run.resolution_safe
+            try:
+                applied.append(
+                    situations.apply_source_generation(
+                        calendar.generation,
+                        run.detections,
+                        status="complete" if complete else "degraded",
+                        sync_cursor=calendar.sync_cursor,
+                        error_code=calendar.error_code,
+                    )
                 )
+            except DelayedSourceGenerationError:
+                source_warnings.append("calendar: delayed source generation ignored")
+            source_warnings.extend(
+                f"calendar: {code}" for code in calendar.warning_codes
             )
-        summary = situations.upsert_detections(detections)
-        expired = situations.expire_lapsed()
-        resolved = situations.resolve_absent(
-            "personal_occasion",
-            _keys(occasion_detections),
-        )
-        if inputs.gmail_threads is not None and _is_fresh(gmail_freshness):
-            resolved += situations.resolve_absent(
-                "reply_deadline",
-                _keys_of_type(detections, "reply_deadline"),
-            )
-        if inputs.calendar_events is not None and _is_fresh(calendar_freshness):
-            resolved += situations.resolve_absent(
-                "calendar_conflict",
-                _keys_of_type(detections, "calendar_conflict"),
-            )
+            source_warnings.extend(f"calendar: {code}" for code in run.warning_codes)
+        gmail_freshness, calendar_freshness = self._freshness(now)
         warnings = _warnings(
             inputs,
             gmail=gmail_freshness,
             calendar=calendar_freshness,
+            source_warnings=tuple(source_warnings),
         )
         return EvaluationResult(
-            created=summary.created,
-            reactivated=summary.reactivated,
-            refreshed=summary.refreshed,
-            resolved=resolved,
+            created=sum(item.upsert.created for item in applied),
+            reactivated=sum(item.upsert.reactivated for item in applied),
+            refreshed=sum(item.upsert.refreshed for item in applied),
+            resolved=sum(item.resolved for item in applied),
             expired=expired,
             woken=woken,
             warnings=warnings,
@@ -149,17 +187,14 @@ class SituationEngine:
         )
 
 
-def _is_fresh(freshness: SourceFreshness) -> bool:
-    return freshness.status == "ok"
-
-
 def _warnings(
     inputs: EngineInputs,
     *,
     gmail: SourceFreshness,
     calendar: SourceFreshness,
+    source_warnings: tuple[str, ...],
 ) -> tuple[str, ...]:
-    warnings: list[str] = []
+    warnings = list(source_warnings)
     skipped: list[tuple[SourceName, bool]] = [
         ("gmail", inputs.gmail_threads is None),
         ("calendar", inputs.calendar_events is None),
@@ -173,18 +208,3 @@ def _warnings(
         if freshness.status != "ok":
             warnings.append(f"{source}: source is {freshness.status}")
     return tuple(warnings)
-
-
-def _keys(detections: tuple[Detection, ...]) -> tuple[str, ...]:
-    return tuple(detection.dedupe_key for detection in detections)
-
-
-def _keys_of_type(
-    detections: list[Detection],
-    situation_type: str,
-) -> tuple[str, ...]:
-    return tuple(
-        detection.dedupe_key
-        for detection in detections
-        if detection.situation_type == situation_type
-    )

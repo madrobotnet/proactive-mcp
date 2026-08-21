@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
     from proactive_mcp.store import Situation, SituationStore
 
+from proactive_mcp.store._situation_models import DeliveryClaim
+
 __all__ = ["AttentionPolicy", "is_quiet_time"]
 
 _PRIORITY_RANK: Final[dict[str, int]] = {"critical": 0, "high": 1, "routine": 2}
@@ -81,6 +83,26 @@ class AttentionPolicy:
             return tuple(critical)
         remaining = self._remaining_budget(now)
         return tuple(critical + others[:remaining])
+
+    def claim_for_delivery(self, now: datetime) -> tuple[Situation, ...]:
+        """Atomically claim deliverable rows under all attention limits."""
+        local_now = now.astimezone(self._tz)
+        local_today = local_now.date()
+        allow_noncritical = not is_quiet_time(
+            local_now.time(),
+            self._settings.quiet_hours_start,
+            self._settings.quiet_hours_end,
+        )
+        return self._situations.claim_for_delivery(
+            DeliveryClaim(
+                delivered_at=now.isoformat(),
+                cooldown_after=(now - self._settings.cooldown).isoformat(),
+                local_day_start=local_day_start(local_today, self._tz).isoformat(),
+                local_day_end=local_day_end(local_today, self._tz).isoformat(),
+                daily_budget=self._settings.daily_budget,
+                allow_noncritical=allow_noncritical,
+            )
+        )
 
     def _remaining_budget(self, now: datetime) -> int:
         local_today = now.astimezone(self._tz).date()

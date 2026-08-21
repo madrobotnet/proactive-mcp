@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Final
+from heapq import heappop, heappush
+from typing import TYPE_CHECKING, Final, Literal, TypeAlias
 
 from proactive_mcp.sources.calendar import AllDayDate, TimedInstant
 from proactive_mcp.store import Detection, SituationEvidence
@@ -21,12 +22,27 @@ if TYPE_CHECKING:
 __all__ = [
     "DEFAULT_CRITICAL_WINDOW",
     "DEFAULT_HIGH_WINDOW",
+    "MAX_CALENDAR_CONFLICTS",
+    "CalendarConflictRun",
+    "CalendarConflictWarningCode",
     "detect_calendar_conflicts",
+    "run_calendar_conflict_detection",
 ]
 
 DEFAULT_CRITICAL_WINDOW: Final = timedelta(hours=2)
 DEFAULT_HIGH_WINDOW: Final = timedelta(hours=24)
+MAX_CALENDAR_CONFLICTS: Final = 1_000
 _SECONDS_PER_HOUR: Final = 3600
+CalendarConflictWarningCode: TypeAlias = Literal["calendar_conflict_output_overflow"]
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarConflictRun:
+    """Bounded conflict output and whether absence is safe for resolution."""
+
+    detections: tuple[Detection, ...]
+    resolution_safe: bool
+    warning_codes: tuple[CalendarConflictWarningCode, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,34 +63,78 @@ def detect_calendar_conflicts(
     critical_window: timedelta = DEFAULT_CRITICAL_WINDOW,
     high_window: timedelta = DEFAULT_HIGH_WINDOW,
 ) -> tuple[Detection, ...]:
-    """Detect overlapping committed events, per product plan §6.2.
+    """Return the compatible tuple view of a bounded conflict run."""
+    return run_calendar_conflict_detection(
+        events,
+        now=now,
+        tz=tz,
+        critical_window=critical_window,
+        high_window=high_window,
+    ).detections
 
-    Only confirmed events the user organizes or accepted take part, and
-    only while they mark the user busy (``opaque``); free (``transparent``)
-    events never conflict. Pairs of all-day events are excluded. A conflict
-    resolves naturally once one event moves or is cancelled, because its
-    pair key is then no longer detected.
+
+def run_calendar_conflict_detection(
+    events: Sequence[CalendarEvent],
+    *,
+    now: datetime,
+    tz: tzinfo,
+    critical_window: timedelta = DEFAULT_CRITICAL_WINDOW,
+    high_window: timedelta = DEFAULT_HIGH_WINDOW,
+) -> CalendarConflictRun:
+    """Detect conflicts with deterministic ordering and bounded output.
+
+    Only confirmed, busy events the user organizes or accepted participate.
+    All-day pairs are excluded. If output overflows, ``resolution_safe`` is
+    false because an omitted pair must not be interpreted as resolved.
     """
-    intervals = _committed_intervals(events, tz)
+    intervals = sorted(
+        (
+            interval
+            for interval in _committed_intervals(events, tz)
+            if interval.end > now
+        ),
+        key=lambda interval: (interval.start, interval.end, interval.event.id),
+    )
     detections: list[Detection] = []
-    for index, first in enumerate(intervals):
-        for second in intervals[index + 1 :]:
-            if first.all_day and second.all_day:
+    active: dict[int, _Interval] = {}
+    active_timed: dict[int, _Interval] = {}
+    ends: list[tuple[datetime, int]] = []
+    for sequence, current in enumerate(intervals):
+        while ends and ends[0][0] <= current.start:
+            _, expired_sequence = heappop(ends)
+            expired = active.pop(expired_sequence)
+            if not expired.all_day:
+                _ = active_timed.pop(expired_sequence)
+        candidates = active_timed.values() if current.all_day else active.values()
+        for previous in candidates:
+            overlap_start = current.start
+            overlap_end = min(previous.end, current.end)
+            if overlap_end <= now:
                 continue
-            overlap_start = max(first.start, second.start)
-            overlap_end = min(first.end, second.end)
-            if overlap_start >= overlap_end or overlap_end <= now:
-                continue
+            if len(detections) == MAX_CALENDAR_CONFLICTS:
+                return CalendarConflictRun(
+                    detections=tuple(detections),
+                    resolution_safe=False,
+                    warning_codes=("calendar_conflict_output_overflow",),
+                )
             detections.append(
                 _detection(
-                    (first, second),
+                    (previous, current),
                     overlap=(overlap_start, overlap_end),
                     now=now,
                     tz=tz,
                     windows=(critical_window, high_window),
                 )
             )
-    return tuple(detections)
+        active[sequence] = current
+        if not current.all_day:
+            active_timed[sequence] = current
+        heappush(ends, (current.end, sequence))
+    return CalendarConflictRun(
+        detections=tuple(detections),
+        resolution_safe=True,
+        warning_codes=(),
+    )
 
 
 def _committed_intervals(
@@ -118,15 +178,14 @@ def _detection(
     first, second = pair
     overlap_start, overlap_end = overlap
     critical_window, high_window = windows
-    first_start = min(first.start, second.start)
-    priority = _priority(first_start, now, critical_window, high_window)
+    priority = _priority(overlap_start, now, critical_window, high_window)
     local_start = overlap_start.astimezone(tz)
     local_end = overlap_end.astimezone(tz)
-    lead_seconds = (first_start - now).total_seconds()
+    lead_seconds = (overlap_start - now).total_seconds()
     urgency = (
-        "the earlier event already started"
+        "the overlap already started"
         if lead_seconds <= 0
-        else f"the earlier event starts in {int(lead_seconds // _SECONDS_PER_HOUR)}h"
+        else f"the overlap starts in {int(lead_seconds // _SECONDS_PER_HOUR)}h"
     )
     low_id, high_id = sorted((first.event.id, second.event.id))
     quoted: dict[str, str] = {}
@@ -161,13 +220,13 @@ def _detection(
 
 
 def _priority(
-    first_start: datetime,
+    overlap_start: datetime,
     now: datetime,
     critical_window: timedelta,
     high_window: timedelta,
 ) -> SituationPriority:
-    if first_start <= now + critical_window:
+    if overlap_start <= now + critical_window:
         return "critical"
-    if first_start <= now + high_window:
+    if overlap_start <= now + high_window:
         return "high"
     return "routine"

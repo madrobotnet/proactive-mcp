@@ -85,6 +85,18 @@ class SituationReader:
         situations = self._capture(SELECT_SITUATION_BY_DEDUPE_KEY, (dedupe_key,))
         return situations[0] if situations else None
 
+    def has_delivery(self, situation_id: int) -> bool:
+        """Return whether immutable delivery history exists for a situation."""
+        self._ints.clear()
+        _ = self._connection.execute(
+            """
+            SELECT _proactive_capture_situation_int(COUNT(*))
+            FROM situation_deliveries WHERE situation_id = ?
+            """,
+            (situation_id,),
+        )
+        return bool(self._ints and self._ints[0] > 0)
+
     def count_delivered_between(self, start: str, end: str) -> int:
         self._ints.clear()
         _ = self._connection.execute(

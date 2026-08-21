@@ -2,7 +2,9 @@
 
 from ._situation_models import (
     ACTIVE_SITUATION_STATES,
+    DeliveryClaim,
     Detection,
+    DetectionApplySummary,
     DetectionUpsertSummary,
     InvalidSituationTransitionError,
     Situation,
@@ -12,6 +14,12 @@ from ._situation_models import (
     SituationState,
     SituationType,
     SituationValidationError,
+)
+from ._source_generation import (
+    DelayedSourceGenerationError,
+    SourceGeneration,
+    SourceGenerationState,
+    SourceGenerationStatus,
 )
 from .database import (
     DEFAULT_BUSY_TIMEOUT_MS,
@@ -54,7 +62,10 @@ __all__ = [
     "DEFAULT_BUSY_TIMEOUT_MS",
     "DEFAULT_STALE_AFTER",
     "DatabaseStatus",
+    "DelayedSourceGenerationError",
+    "DeliveryClaim",
     "Detection",
+    "DetectionApplySummary",
     "DetectionUpsertSummary",
     "Entity",
     "EntityAliasConflictError",
@@ -81,6 +92,9 @@ __all__ = [
     "SourceErrorCode",
     "SourceFreshness",
     "SourceFreshnessStatus",
+    "SourceGeneration",
+    "SourceGenerationState",
+    "SourceGenerationStatus",
     "SourceName",
     "SourceSyncFailureCode",
     "SourceSyncState",

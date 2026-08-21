@@ -89,6 +89,26 @@ class DetectionUpsertSummary:
     skipped: int
 
 
+@dataclass(frozen=True, slots=True)
+class DetectionApplySummary:
+    """Atomic detection upsert and allowed-resolution outcome."""
+
+    upsert: DetectionUpsertSummary
+    resolved: int
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryClaim:
+    """All policy values needed for one atomic delivery claim."""
+
+    delivered_at: str
+    cooldown_after: str
+    local_day_start: str
+    local_day_end: str
+    daily_budget: int
+    allow_noncritical: bool
+
+
 SITUATION_ADAPTER: Final[TypeAdapter[Situation]] = TypeAdapter(Situation)
 SITUATION_EVIDENCE_ADAPTER: Final[TypeAdapter[SituationEvidence]] = TypeAdapter(
     SituationEvidence

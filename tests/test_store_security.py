@@ -43,7 +43,7 @@ def test_macos_platform_creates_private_store(
 
     assert status.path == (tmp_path / "proactive.db").absolute()
     assert status.journal_mode.lower() == "wal"
-    assert status.migration_version == 5
+    assert status.migration_version == 6
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows permissions use ACLs")

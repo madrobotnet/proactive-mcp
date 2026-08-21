@@ -35,7 +35,7 @@ def detect_reply_deadlines(
 
     A thread triggers when its latest message came from the counterpart,
     the user is a recipient, and either the message aged past the threshold
-    or its subject or snippet holds conservative deadline language. The
+    or its subject, full body, or snippet holds conservative deadline language. The
     detection resolves naturally once the user replies, because the latest
     message is then no longer from the counterpart.
     """
@@ -46,7 +46,9 @@ def detect_reply_deadlines(
             continue
         age = now - thread.latest_message_at
         text = "\n".join(
-            part for part in (thread.subject, thread.snippet) if part is not None
+            part
+            for part in (thread.subject, thread.body_text, thread.snippet)
+            if part is not None
         )
         scan = scan_deadline_text(text, today=today)
         if age < threshold and not scan.has_marker:

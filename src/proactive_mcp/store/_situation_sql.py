@@ -33,13 +33,14 @@ REACTIVATE_SITUATION: Final = """
             UPDATE situations
             SET state = 'pending', priority = ?, title = ?, why_now = ?,
                 evidence = ?, expires_at = ?, detected_at = ?, updated_at = ?,
-                resolved_at = NULL, expired_at = NULL
+                resolved_at = NULL, expired_at = NULL, snoozed_until = NULL,
+                snooze_cooldown_exempt = 0
             WHERE id = ?
             """
 MARK_DELIVERED: Final = """
             UPDATE situations
             SET state = 'delivered', delivered_at = ?, snoozed_until = NULL,
-                updated_at = ?
+                snooze_cooldown_exempt = 0, updated_at = ?
             WHERE id = ? AND state = 'pending'
             """
 ACKNOWLEDGE_SITUATION: Final = """
@@ -49,7 +50,8 @@ ACKNOWLEDGE_SITUATION: Final = """
             """
 SNOOZE_SITUATION: Final = """
             UPDATE situations
-            SET state = 'snoozed', snoozed_until = ?, updated_at = ?
+            SET state = 'snoozed', snoozed_until = ?, snooze_cooldown_exempt = 1,
+                updated_at = ?
             WHERE id = ? AND state = 'delivered'
             """
 MUTE_SITUATION: Final = """
@@ -64,7 +66,7 @@ RESOLVE_SITUATION: Final = """
             """
 WAKE_SNOOZED: Final = """
             UPDATE situations
-            SET state = 'pending', updated_at = ?
+            SET state = 'pending', snoozed_until = NULL, updated_at = ?
             WHERE state = 'snoozed' AND snoozed_until IS NOT NULL
               AND snoozed_until <= ?
             """
@@ -80,9 +82,8 @@ INSERT_TYPE_MUTE: Final = """
             ON CONFLICT(situation_type) DO NOTHING
             """
 COUNT_DELIVERED_BETWEEN: Final = """
-            SELECT COUNT(*) FROM situations
-            WHERE delivered_at IS NOT NULL
-              AND delivered_at >= ? AND delivered_at < ?
+            SELECT COUNT(*) FROM situation_deliveries
+            WHERE delivered_at >= ? AND delivered_at < ?
               AND priority != 'critical'
             """
 # The f-strings below only interpolate the private column projection above;

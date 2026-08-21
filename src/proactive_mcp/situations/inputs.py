@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, Literal, TypeAlias, TypeVar
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from proactive_mcp.sources.calendar import CalendarEvent
+    from proactive_mcp.store import SourceErrorCode, SourceGeneration
 
-__all__ = ["EngineInputs", "InboxThreadSnapshot"]
+InboxThreadDegradationReason: TypeAlias = Literal["body_snippet_fallback"]
+SnapshotItem = TypeVar("SnapshotItem")
+
+__all__ = [
+    "EngineInputs",
+    "InboxThreadDegradationReason",
+    "InboxThreadSnapshot",
+    "SourceSnapshot",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,16 +38,31 @@ class InboxThreadSnapshot:
     subject: str | None = None
     sender_display: str | None = None
     snippet: str | None = None
+    body_text: str | None = None
+    is_complete: bool = True
+    degradation_reasons: tuple[InboxThreadDegradationReason, ...] = ()
+    provider_history_cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSnapshot(Generic[SnapshotItem]):
+    """One ordered source result ready for atomic Situation application."""
+
+    generation: SourceGeneration
+    items: tuple[SnapshotItem, ...]
+    complete: bool = True
+    sync_cursor: str | None = None
+    warning_codes: tuple[str, ...] = ()
+    error_code: SourceErrorCode | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class EngineInputs:
-    """Fresh source snapshots for one evaluation pass.
+    """Ordered source snapshots for one evaluation pass.
 
-    ``None`` means the source could not be read this pass; the engine then
-    neither detects nor resolves situations for it and reports a warning
-    instead of an all-clear.
+    ``None`` means the source was skipped. A degraded snapshot may add
+    positive detections but must not resolve absent stored situations.
     """
 
-    gmail_threads: tuple[InboxThreadSnapshot, ...] | None = None
-    calendar_events: tuple[CalendarEvent, ...] | None = None
+    gmail_threads: SourceSnapshot[InboxThreadSnapshot] | None = None
+    calendar_events: SourceSnapshot[CalendarEvent] | None = None
