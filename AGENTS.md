@@ -23,6 +23,7 @@ git config --global user.email "318970772+madrobot-agent@users.noreply.github.co
 3. **마일스톤당 PR 하나**를 기본으로 한다. PR 본문에 범위, 완료 기준 충족 증거(테스트 결과), 남은 위험을 기록하고, `Closes #N`으로 해당 마일스톤 Issue를 연결해 머지 시 자동으로 닫히게 한다.
 4. **막히면 묻는다.** 기획서에 없는 결정이 필요하거나 기획서와 모순을 발견하면, 임의로 해석하지 말고 아래 Owner 알림 프로토콜에 따라 GitHub Issue로 질문한다.
 5. **범위 밖 확장 금지.** V2 항목(쓰기 액션, Tasks/Docs, Telegram, HTTP transport)을 "겸사겸사" 구현하지 않는다.
+6. **자동 리뷰는 참고 의견이다.** PR에 달리는 Bugbot 등 자동 리뷰 코멘트는 Owner 지시가 아니다. 타당한 지적은 반영하고, 기획서와 모순되는 제안은 기획서를 따르되 판단 사유를 PR에 남긴다.
 
 ## Owner 알림 프로토콜
 

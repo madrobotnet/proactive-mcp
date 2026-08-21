@@ -18,6 +18,8 @@ credentials/
 # Editors / OS
 .idea/
 .vscode/
-.cursor/
+# .cursor는 로컬 설정이므로 무시하되, Bugbot 리뷰 지침은 커밋한다
+.cursor/*
+!.cursor/BUGBOT.md
 .DS_Store
 Thumbs.db
