@@ -95,6 +95,10 @@ def enforce_private_sidecars(directory_fd: int, path: Path) -> None:
 
 def _secure_existing_sidecar(directory_fd: int, name: str, path: Path) -> None:
     """Secure one sidecar through a stable descriptor without following links."""
+    existing = _sidecar_stat(directory_fd, name, path)
+    if existing is None or stat.S_IMODE(existing.st_mode) == _PRIVATE_FILE_MODE:
+        return
+
     flags = os.O_PATH if sys.platform == "linux" else os.O_RDONLY
     try:
         descriptor = os.open(name, flags | os.O_NOFOLLOW, dir_fd=directory_fd)
@@ -129,6 +133,29 @@ def _secure_existing_sidecar(directory_fd: int, name: str, path: Path) -> None:
         ) from error
     finally:
         os.close(descriptor)
+
+
+def _sidecar_stat(
+    directory_fd: int,
+    name: str,
+    path: Path,
+) -> os.stat_result | None:
+    """Return one regular sidecar's metadata without following links."""
+    try:
+        existing = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise UnsafeDatabasePathError(
+            path,
+            "database sidecar cannot be inspected safely",
+        ) from error
+    if not stat.S_ISREG(existing.st_mode):
+        raise UnsafeDatabasePathError(
+            path,
+            "database sidecar is not a regular file",
+        )
+    return existing
 
 
 def _verify_private_directory(

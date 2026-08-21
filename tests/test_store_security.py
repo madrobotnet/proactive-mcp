@@ -234,6 +234,41 @@ def test_sidecar_swap_cannot_chmod_symlink_target(
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX sidecar mode handling")
+def test_private_sidecar_is_not_reopened(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "proactive.db"
+    db_path.touch(mode=0o600)
+    sidecar = state_dir / "proactive.db-shm"
+    sidecar.touch(mode=0o600)
+    directory_fd = os.open(state_dir, os.O_RDONLY | os.O_DIRECTORY)
+    original_open = os.open
+
+    def reject_sidecar_reopen(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if path == sidecar.name:
+            error_message = "already-private live sidecar was reopened"
+            raise AssertionError(error_message)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", reject_sidecar_reopen)
+    try:
+        enforce_private_sidecars(directory_fd, db_path)
+    finally:
+        os.close(directory_fd)
+
+    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux descriptor accounting")
 def test_failed_store_opens_release_all_file_descriptors(tmp_path: Path) -> None:
     db_path = tmp_path / "proactive.db"
