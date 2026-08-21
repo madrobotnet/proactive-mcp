@@ -1,180 +1,148 @@
-"""Descriptor-pinned private filesystem access for the SQLite store."""
+"""Cross-platform private filesystem access for the SQLite store."""
 
 from __future__ import annotations
 
-import fcntl
+import importlib
 import os
-import stat
 import sys
-from contextlib import contextmanager, suppress
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Protocol, TypeGuard
+
+from .storage_errors import UnsafeDatabasePathError
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from contextlib import AbstractContextManager
     from pathlib import Path
-
-_PRIVATE_DIRECTORY_MODE: Final[int] = 0o700
-_PRIVATE_FILE_MODE: Final[int] = 0o600
+    from types import ModuleType
 
 
-@dataclass(frozen=True, slots=True)
-class UnsafeDatabasePathError(Exception):
-    """Raised when the database path could expose or redirect private data."""
+class _PosixBackend(Protocol):
+    """POSIX descriptor-pinned backend contract."""
 
-    path: Path
-    reason: str
+    def open_private_parent(self, path: Path) -> int: ...
 
-    def __post_init__(self) -> None:
-        """Initialize the base exception with a non-sensitive message."""
-        Exception.__init__(self, f"unsafe database path: {self.reason}")
+    def prepare_private_database_file(self, directory_fd: int, path: Path) -> None: ...
+
+    def private_initialization_lock(
+        self,
+        directory_fd: int,
+        path: Path,
+    ) -> AbstractContextManager[None]: ...
+
+    def enforce_private_sidecars(self, directory_fd: int, path: Path) -> None: ...
 
 
-def open_private_parent(path: Path) -> int:
-    """Open and pin a Linux database directory without following symlinks."""
-    if sys.platform != "linux":
-        raise UnsafeDatabasePathError(path, "secure database storage requires Linux")
+class _WindowsBackend(Protocol):
+    """Windows protected-DACL backend contract."""
+
+    def prepare_private_parent(self, path: Path) -> None: ...
+
+    def prepare_private_database_file(self, path: Path) -> None: ...
+
+    def private_initialization_lock(
+        self,
+        path: Path,
+    ) -> AbstractContextManager[None]: ...
+
+    def enforce_private_sidecars(self, path: Path) -> None: ...
+
+
+def _uses_windows_backend() -> bool:
+    return os.name == "nt"
+
+
+def _is_posix_backend(module: ModuleType) -> TypeGuard[_PosixBackend]:
+    return all(
+        hasattr(module, name)
+        for name in (
+            "open_private_parent",
+            "prepare_private_database_file",
+            "private_initialization_lock",
+            "enforce_private_sidecars",
+        )
+    )
+
+
+def _is_windows_backend(module: ModuleType) -> TypeGuard[_WindowsBackend]:
+    return all(
+        hasattr(module, name)
+        for name in (
+            "prepare_private_parent",
+            "prepare_private_database_file",
+            "private_initialization_lock",
+            "enforce_private_sidecars",
+        )
+    )
+
+
+def _posix_backend(path: Path) -> _PosixBackend:
+    module = importlib.import_module(f"{__package__}._posix_private_path")
+    if not _is_posix_backend(module):
+        raise UnsafeDatabasePathError(path, "POSIX storage backend is invalid")
+    return module
+
+
+def _windows_backend(path: Path) -> _WindowsBackend:
+    module = importlib.import_module(f"{__package__}.windows_path")
+    if not _is_windows_backend(module):
+        raise UnsafeDatabasePathError(path, "Windows storage backend is invalid")
+    return module
+
+
+def open_private_parent(path: Path) -> int | None:
+    """Prepare a private parent, pinning a descriptor on POSIX platforms."""
     if ".." in path.parts:
         raise UnsafeDatabasePathError(path, "parent traversal is not allowed")
-
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    current_fd = os.open("/", directory_flags)
-    try:
-        parent_parts = path.parent.parts[1:]
-        for index, part in enumerate(parent_parts):
-            try:
-                next_fd = os.open(part, directory_flags, dir_fd=current_fd)
-            except FileNotFoundError:
-                with suppress(FileExistsError):
-                    os.mkdir(part, _PRIVATE_DIRECTORY_MODE, dir_fd=current_fd)
-                next_fd = os.open(part, directory_flags, dir_fd=current_fd)
-            except OSError as error:
-                raise UnsafeDatabasePathError(
-                    path,
-                    "parent directory cannot be opened safely",
-                ) from error
-            os.close(current_fd)
-            current_fd = next_fd
-            _verify_private_directory(
-                current_fd,
-                path,
-                is_database_parent=index == len(parent_parts) - 1,
-            )
-        result = current_fd
-        current_fd = -1
-        return result
-    finally:
-        if current_fd >= 0:
-            os.close(current_fd)
+    if sys.platform not in ("linux", "darwin", "win32"):
+        raise UnsafeDatabasePathError(path, "unsupported storage platform")
+    if _uses_windows_backend():
+        _windows_backend(path).prepare_private_parent(path)
+        return None
+    return _posix_backend(path).open_private_parent(path)
 
 
-def prepare_private_database_file(directory_fd: int, path: Path) -> None:
+def prepare_private_database_file(directory_fd: int | None, path: Path) -> None:
     """Create or open the database file and reject unsafe sidecars."""
-    descriptor = _open_private_file(
-        directory_fd,
-        path.name,
-        os.O_CREAT | os.O_RDWR,
-        path,
-    )
-    os.close(descriptor)
-    enforce_private_sidecars(directory_fd, path)
+    if _uses_windows_backend():
+        _windows_backend(path).prepare_private_database_file(path)
+        return
+    if directory_fd is None:
+        raise UnsafeDatabasePathError(path, "POSIX directory handle is unavailable")
+    _posix_backend(path).prepare_private_database_file(directory_fd, path)
 
 
 @contextmanager
 def private_initialization_lock(
-    directory_fd: int,
+    directory_fd: int | None,
     path: Path,
 ) -> Generator[None]:
     """Serialize WAL setup and migrations across fresh Store processes."""
-    lock_fd = _open_private_file(
-        directory_fd,
-        f".{path.name}.init.lock",
-        os.O_CREAT | os.O_RDWR,
-        path,
-    )
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        os.close(lock_fd)
-
-
-def enforce_private_sidecars(directory_fd: int, path: Path) -> None:
-    """Enforce private modes on the database and existing WAL sidecars."""
-    database_fd = _open_private_file(directory_fd, path.name, os.O_RDONLY, path)
-    os.close(database_fd)
-    for suffix in ("-wal", "-shm"):
-        try:
-            sidecar_fd = os.open(
-                f"{path.name}{suffix}",
-                os.O_RDONLY | os.O_NOFOLLOW,
-                dir_fd=directory_fd,
-            )
-        except FileNotFoundError:
-            continue
-        except OSError as error:
-            raise UnsafeDatabasePathError(
-                path,
-                "database sidecar cannot be opened safely",
-            ) from error
-        try:
-            if not stat.S_ISREG(os.fstat(sidecar_fd).st_mode):
-                raise UnsafeDatabasePathError(
-                    path,
-                    "database sidecar is not a regular file",
-                )
-            os.fchmod(sidecar_fd, _PRIVATE_FILE_MODE)
-        finally:
-            os.close(sidecar_fd)
-
-
-def _verify_private_directory(
-    directory_fd: int,
-    path: Path,
-    *,
-    is_database_parent: bool,
-) -> None:
-    observed = os.fstat(directory_fd)
-    if not stat.S_ISDIR(observed.st_mode):
-        raise UnsafeDatabasePathError(path, "path component is not a directory")
-    current_user = os.getuid()
-    if observed.st_uid not in (0, current_user):
-        raise UnsafeDatabasePathError(path, "path component has an untrusted owner")
-    if is_database_parent:
-        if observed.st_uid != current_user:
-            raise UnsafeDatabasePathError(path, "database directory is not user-owned")
-        os.fchmod(directory_fd, _PRIVATE_DIRECTORY_MODE)
+    if _uses_windows_backend():
+        with _windows_backend(path).private_initialization_lock(path):
+            yield
         return
-    writable_by_others = observed.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-    if writable_by_others and not observed.st_mode & stat.S_ISVTX:
-        raise UnsafeDatabasePathError(path, "ancestor directory is writable by others")
+    if directory_fd is None:
+        raise UnsafeDatabasePathError(path, "POSIX directory handle is unavailable")
+    with _posix_backend(path).private_initialization_lock(directory_fd, path):
+        yield
 
 
-def _open_private_file(
-    directory_fd: int,
-    name: str,
-    flags: int,
-    path: Path,
-) -> int:
-    try:
-        descriptor = os.open(
-            name,
-            flags | os.O_NOFOLLOW,
-            _PRIVATE_FILE_MODE,
-            dir_fd=directory_fd,
-        )
-    except OSError as error:
-        raise UnsafeDatabasePathError(
-            path,
-            "private file cannot be opened safely",
-        ) from error
-    observed = os.fstat(descriptor)
-    if not stat.S_ISREG(observed.st_mode):
-        os.close(descriptor)
-        raise UnsafeDatabasePathError(path, "private path is not a regular file")
-    os.fchmod(descriptor, _PRIVATE_FILE_MODE)
-    return descriptor
+def enforce_private_sidecars(directory_fd: int | None, path: Path) -> None:
+    """Enforce private modes on the database and existing WAL sidecars."""
+    if _uses_windows_backend():
+        _windows_backend(path).enforce_private_sidecars(path)
+        return
+    if directory_fd is None:
+        raise UnsafeDatabasePathError(path, "POSIX directory handle is unavailable")
+    _posix_backend(path).enforce_private_sidecars(directory_fd, path)
+
+
+def sqlite_connection_target(directory_fd: int | None, path: Path) -> str:
+    """Return the Linux descriptor-pinned target or the real absolute path."""
+    if directory_fd is not None and sys.platform == "linux":
+        return f"/proc/self/fd/{directory_fd:d}/{path.name}"
+    return str(path)
 
 
 __all__ = [
@@ -183,4 +151,5 @@ __all__ = [
     "open_private_parent",
     "prepare_private_database_file",
     "private_initialization_lock",
+    "sqlite_connection_target",
 ]
