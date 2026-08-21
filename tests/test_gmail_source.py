@@ -154,8 +154,8 @@ def test_read_inbox_threads_projects_deadline_from_plain_text_body() -> None:
     assert transport.calls[2][2] == {"format": "full"}
 
 
-def test_read_inbox_threads_decodes_html_only_deadline() -> None:
-    # Given: the deadline exists only in an HTML MIME body.
+def test_read_inbox_threads_preserves_adjacent_html_block_deadline() -> None:
+    # Given: the deadline phrase spans adjacent block elements in an HTML-only body.
     thread_url = f"{GMAIL_THREADS_URL}/thread-html-deadline"
     transport = FakeGmailTransport(
         {
