@@ -49,7 +49,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | MVP Situation | Reply Deadline, Calendar Conflict, Personal Occasion 3종 |
 | 메모리 | MVP 포함 — `remember`/`recall` 도구, 상황 감지가 메모리를 근거로 사용 |
 | Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트(BYO), read-only scope만 — 공개 후 기본 경로. 클로즈드 알파에서는 Owner의 OAuth 클라이언트 JSON을 알파 패키지에 동봉해 배포 (2026-08-20 확정) |
-| 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 |
+| 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 — 구체 기준은 §7 폴백 항목 (critical만·30분, 2026-08-21 확정 #14) |
 | 배포 | 개발~1차 클로즈드 테스트 동안 저장소 private 유지. Owner가 지정한 테스터의 1차 검증에서 문제가 없으면 공개 전환 + 홍보 (Owner 결정). 공개 후 최종 배포 형태는 PyPI + uvx |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
 
@@ -199,6 +199,13 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 | 예산 초과 시 | 상황은 pending 유지, 다음 날 예산으로 이월. 우선순위 높은 순 전달 |
 
 **stale-source 규칙 (불변식):** 소스 sync가 실패했거나 오래된 상태에서 "알릴 것 없음"을 보고하지 않는다. `proactive_check`와 `get_status`는 소스별 신선도를 항상 포함하고, stale이면 warning을 명시한다.
+
+**OS 알림 폴백 (2026-08-21 Owner 확정, #14):**
+
+- 대상은 **critical만** (V1에서는 calendar_conflict 시작 2h 이내가 유일). high/routine은 폴백하지 않는다 — 세션 시작 전달(§5.2)과 에이전트 스케줄러(§5.3)로 충분하고, 폴백 남발은 침묵 우선 원칙과 충돌한다.
+- 트리거: detected 후 **30분** 내 어떤 에이전트도 수령(delivered)하지 않으면 OS 알림 1회, 재발송 없음. 두 값(대상 등급, 대기 시간)은 config.toml로 조정 가능.
+- 구현: 3개 OS 모두 OS 기본 도구 subprocess 호출로 통일 — Linux `notify-send`, macOS `osascript`, Windows는 WinRT `ToastNotificationManager`를 호출하는 고정 PowerShell 스크립트(신규 의존성 0, AUMID는 PowerShell 기본값 재사용). 구현 중 신뢰성 문제가 실측되면 `winotify`로 전환하고 사유를 PR에 기록한다.
+- 내용 제약: 토스트 본문은 §9.2에 따라 상황 유형 + 짧은 표시명 수준의 최소 컨텍스트만 (토스트는 Windows 알림 센터 DB에 남는다). 외부 입력이 섞이는 문자열의 이스케이프를 hermetic 테스트로 검증한다. 발송 실패는 조용히 삼키지 않고 redacted 로그와 `get_status`에 노출한다.
 
 ## 8. 메모리 모델
 
