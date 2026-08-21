@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 from unicodedata import normalize
 
 import pytest
+
+from proactive_mcp.store import Store
 from tests.legacy_migration_support import (
     LegacyMemoryRow,
     expected_migrated_rows,
@@ -23,8 +25,6 @@ from tests.store_migration_support import (
     scalar_int,
     text_pairs,
 )
-
-from proactive_mcp.store import Store
 
 if TYPE_CHECKING:
     from pathlib import Path

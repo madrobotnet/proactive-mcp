@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from pydantic import TypeAdapter
-from tests.store_migration_support import MigratedMemoryTuple, capture_json_rows
 
 from proactive_mcp.store.migrations import load_migrations
+from tests.store_migration_support import MigratedMemoryTuple, capture_json_rows
 
 if TYPE_CHECKING:
     from pathlib import Path

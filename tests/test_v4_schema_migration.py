@@ -5,6 +5,8 @@ from contextlib import closing
 from typing import TYPE_CHECKING
 
 import pytest
+
+from proactive_mcp.store import Store
 from tests.store_migration_support import (
     applied_versions,
     column_defaults,
@@ -14,8 +16,6 @@ from tests.store_migration_support import (
     scalar_int,
     table_names,
 )
-
-from proactive_mcp.store import Store
 
 if TYPE_CHECKING:
     from pathlib import Path
