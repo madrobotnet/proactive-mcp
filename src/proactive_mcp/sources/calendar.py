@@ -8,8 +8,39 @@ from typing import TYPE_CHECKING, ClassVar, Final, Literal, Protocol, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from ._calendar_models import (
+    AllDayDate,
+    CalendarEvent,
+    CalendarReadResult,
+    EventStatus,
+    EventTransparency,
+    ResponseStatus,
+    TimedInstant,
+)
+
 if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
+
+__all__ = [
+    "CALENDAR_EVENTS_URL",
+    "DEFAULT_LOOKAHEAD",
+    "DEFAULT_MAX_PAGES",
+    "DEFAULT_MAX_RESULTS",
+    "EVENT_FIELDS",
+    "AllDayDate",
+    "CalendarAdapter",
+    "CalendarAuthError",
+    "CalendarError",
+    "CalendarErrorCode",
+    "CalendarEvent",
+    "CalendarHttpResponse",
+    "CalendarParseError",
+    "CalendarReadResult",
+    "EventStatus",
+    "EventTransparency",
+    "ResponseStatus",
+    "TimedInstant",
+]
 
 CALENDAR_EVENTS_URL: Final[str] = (
     "https://www.googleapis.com/calendar/v3/calendars/primary/events"
@@ -25,8 +56,6 @@ _HTTP_OK: Final[int] = 200
 _HTTP_SERVER_ERROR_MIN: Final[int] = 500
 _HTTP_SERVER_ERROR_MAX: Final[int] = 600
 
-EventStatus: TypeAlias = Literal["confirmed", "tentative", "cancelled"]
-ResponseStatus: TypeAlias = Literal["needsAction", "declined", "tentative", "accepted"]
 CalendarErrorCode: TypeAlias = Literal["http_4xx", "http_5xx", "unknown"]
 _STATUSES: Final[dict[str, EventStatus]] = {
     "confirmed": "confirmed",
@@ -80,47 +109,6 @@ class _CalendarTransport(Protocol):
     ) -> CalendarHttpResponse: ...
 
 
-@dataclass(frozen=True, slots=True)
-class TimedInstant:
-    """A timezone-aware event bound expressed as a UTC instant."""
-
-    instant: datetime
-    is_all_day: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class AllDayDate:
-    """An all-day event bound expressed as a calendar date."""
-
-    all_day_date: date
-    is_all_day: bool = True
-
-
-@dataclass(frozen=True, slots=True)
-class CalendarEvent:
-    """A typed Calendar event with the flags later detectors need."""
-
-    id: str
-    status: EventStatus
-    summary: str | None
-    start: TimedInstant | AllDayDate | None
-    end: TimedInstant | AllDayDate | None
-    is_organizer: bool
-    self_response_status: ResponseStatus | None
-
-
-@dataclass(frozen=True, slots=True)
-class CalendarReadResult:
-    """In-memory result of a primary-calendar events read."""
-
-    events: tuple[CalendarEvent, ...]
-    fetched_at: str
-    window_start: str
-    window_end: str
-    page_count: int
-    skipped_count: int
-
-
 class _Wire(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="ignore")
 
@@ -147,6 +135,7 @@ class _WireEvent(_Wire):
     end: _WireEventTime | None = None
     organizer: _WireOrganizer | None = None
     attendees: tuple[_WireAttendee, ...] = ()
+    transparency: str | None = None
 
 
 class _WireEventsPage(_Wire):
@@ -260,6 +249,7 @@ def _parse_event(wire: _WireEvent) -> CalendarEvent | None:
         end=end,
         is_organizer=organizer.is_self if organizer is not None else False,
         self_response_status=self_status,
+        transparency="transparent" if wire.transparency == "transparent" else "opaque",
     )
 
 

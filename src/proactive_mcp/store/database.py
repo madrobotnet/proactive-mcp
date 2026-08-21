@@ -32,6 +32,7 @@ from .private_path import (
     private_initialization_lock,
     sqlite_connection_target,
 )
+from .situations import SituationStore
 from .sync import (
     SourceAuthState,
     SourceName,
@@ -58,6 +59,7 @@ class Store:
     _reader: ScalarReader | None
     _memory_store: MemoryStore | None
     _sync_store: SyncStore | None
+    _situation_store: SituationStore | None
     _directory_fd: int | None
 
     def __init__(
@@ -77,6 +79,7 @@ class Store:
         self._reader = None
         self._memory_store = None
         self._sync_store = None
+        self._situation_store = None
         self._directory_fd = None
         try:
             self._open()
@@ -105,6 +108,7 @@ class Store:
         self._reader = None
         self._memory_store = None
         self._sync_store = None
+        self._situation_store = None
         self._directory_fd = None
         if connection is not None:
             connection.close()
@@ -171,6 +175,18 @@ class Store:
     def forget(self, memory_id: int) -> MemoryItem:
         """Soft-archive an existing memory item."""
         return self._require_memory_store().forget(memory_id)
+
+    def list_dated_memories(self) -> tuple[MemoryItem, ...]:
+        """Return every active memory item that carries a date anchor."""
+        return self._require_memory_store().list_dated_memories()
+
+    @property
+    def situations(self) -> SituationStore:
+        """Return the situation persistence and state machine operations."""
+        situation_store = self._situation_store
+        if situation_store is None:
+            raise StoreClosedError
+        return situation_store
 
     def get_source_sync(self, source: SourceName) -> SourceSyncState:
         """Return persisted synchronization state for one Google source."""
@@ -244,6 +260,7 @@ class Store:
         self._reader = reader
         self._memory_store = MemoryStore(connection, self._clock)
         self._sync_store = SyncStore(connection, self._clock)
+        self._situation_store = SituationStore(connection, self._clock)
 
     def _require_reader(self) -> ScalarReader:
         reader = self._reader

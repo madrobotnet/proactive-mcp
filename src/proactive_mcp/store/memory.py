@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -33,13 +32,15 @@ from ._memory_sql import (
     ARCHIVE_MEMORY_ITEM,
     INSERT_MEMORY_ITEM,
     LAST_INSERT_ROWID,
+    SELECT_DATED_MEMORY_ITEMS,
     SELECT_RECALL_MEMORY_ITEMS,
     UPDATE_MEMORY_ITEM,
     UPDATE_MEMORY_TIMESTAMP,
 )
+from ._sqlite_transaction import ImmediateTransaction
 
 if TYPE_CHECKING:
-    from types import TracebackType
+    import sqlite3
 
     from proactive_mcp.clock import Clock
 
@@ -60,48 +61,23 @@ __all__ = [
 ]
 
 
-class _WriteTransaction:
-    """Serialize one multi-statement write and roll back on any failure."""
-
-    _queries: MemoryQueries
-
-    def __init__(self, queries: MemoryQueries) -> None:
-        self._queries = queries
-
-    def __enter__(self) -> None:
-        self._queries.execute("BEGIN IMMEDIATE")
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        _exc: BaseException | None,
-        _traceback: TracebackType | None,
-    ) -> None:
-        if exc_type is not None:
-            self._queries.rollback_if_active()
-            return
-        try:
-            self._queries.execute("COMMIT")
-        except sqlite3.Error:
-            self._queries.rollback_if_active()
-            raise
-
-
 class MemoryStore:
     """Persist and retrieve memory items through a SQLite connection."""
 
+    _connection: sqlite3.Connection
     _queries: MemoryQueries
     _clock: Clock
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
         """Bind persistence operations to an open connection and clock."""
+        self._connection = connection
         self._queries = MemoryQueries(connection)
         self._clock = clock
 
     def remember(self, memory: NewMemory) -> MemoryItem:
         """Store a memory, merging an identical active dated fact."""
         timestamp = self._clock.now().isoformat()
-        with _WriteTransaction(self._queries):
+        with ImmediateTransaction(self._connection):
             entity = resolve_entity(self._queries, memory, timestamp)
             duplicate_id = self._queries.dated_duplicate_id(
                 memory,
@@ -173,7 +149,7 @@ class MemoryStore:
     def update(self, memory_id: int, memory: NewMemory) -> MemoryItem:
         """Replace one memory item's mutable values while retaining its identity."""
         timestamp = self._clock.now().isoformat()
-        with _WriteTransaction(self._queries):
+        with ImmediateTransaction(self._connection):
             existing = self._queries.memory_by_id(memory_id)
             if existing is None:
                 raise MemoryNotFoundError(memory_id)
@@ -217,6 +193,10 @@ class MemoryStore:
             kind=kind,
             path_prefix=path_prefix,
         )
+
+    def list_dated_memories(self) -> tuple[MemoryItem, ...]:
+        """Return every active memory item that carries a date anchor."""
+        return self._queries.capture_items(SELECT_DATED_MEMORY_ITEMS)
 
     def forget(self, memory_id: int) -> MemoryItem:
         """Soft-archive a memory item, leaving an archived item unchanged."""

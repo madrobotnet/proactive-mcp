@@ -120,6 +120,33 @@ SELECT_RECALL_MEMORY_ITEMS: Final = """
             ) AS m
             LEFT JOIN entities AS e ON e.id = m.entity_id
             """
+SELECT_DATED_MEMORY_ITEMS: Final = """
+            SELECT SUM(_proactive_capture_memory_item(
+                json_object(
+                    'id', m.id, 'kind', m.kind, 'entity_id', m.entity_id,
+                    'entity', e.label, 'entity_kind', e.kind,
+                    'entity_path', e.path, 'attribute', m.attribute,
+                    'content', m.content, 'date_anchor', m.date_anchor,
+                    'recurrence', m.recurrence, 'lead_days', m.lead_days,
+                    'source', m.source, 'created_at', m.created_at,
+                    'updated_at', m.updated_at, 'archived', m.archived,
+                    'is_contradictory', EXISTS (
+                        SELECT 1 FROM memory_items AS other
+                        WHERE other.entity_id = m.entity_id
+                          AND other.attribute = m.attribute
+                          AND other.date_anchor != m.date_anchor
+                          AND other.archived = 0
+                          AND other.attribute != 'free'
+                    )
+                )
+            ))
+            FROM (
+                SELECT * FROM memory_items
+                WHERE archived = 0 AND date_anchor IS NOT NULL
+                ORDER BY id ASC
+            ) AS m
+            LEFT JOIN entities AS e ON e.id = m.entity_id
+            """
 SELECT_ACTIVE_ENTITIES: Final = """
             SELECT SUM(_proactive_capture_entity(
                 json_object(

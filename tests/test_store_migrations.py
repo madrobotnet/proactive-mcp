@@ -29,7 +29,7 @@ def test_temp_database_migrates_to_wal_with_busy_timeout(tmp_path: Path) -> None
     assert status.path == db_path.absolute()
     assert status.journal_mode.lower() == "wal"
     assert status.busy_timeout == DEFAULT_BUSY_TIMEOUT_MS
-    assert status.migration_version == 4
+    assert status.migration_version == 5
 
 
 def test_migration_is_idempotent(tmp_path: Path) -> None:
@@ -41,7 +41,7 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     with Store(db_path) as store:
         second = store.status()
 
-    assert second.migration_version == first.migration_version == 4
+    assert second.migration_version == first.migration_version == 5
     assert second.journal_mode.lower() == "wal"
     assert second.busy_timeout == first.busy_timeout
     assert second.path == first.path
@@ -55,7 +55,7 @@ def test_configured_busy_timeout_is_reported(tmp_path: Path) -> None:
 
     assert status.busy_timeout == 2500
     assert status.journal_mode.lower() == "wal"
-    assert status.migration_version == 4
+    assert status.migration_version == 5
 
 
 def test_concurrent_fresh_database_startup_is_reliable(tmp_path: Path) -> None:
@@ -67,7 +67,7 @@ def test_concurrent_fresh_database_startup_is_reliable(tmp_path: Path) -> None:
             executor.submit(_open_store_at_barrier, db_path, barrier) for _ in range(4)
         ]
 
-    assert [future.result(timeout=10) for future in futures] == [4, 4, 4, 4]
+    assert [future.result(timeout=10) for future in futures] == [5, 5, 5, 5]
 
 
 def _open_fresh_store_in_worker(
@@ -104,4 +104,4 @@ def test_cross_process_fresh_database_startup_is_serialized(tmp_path: Path) -> N
     ] * process_count
     observed_versions = [versions.get(timeout=10) for _ in range(process_count)]
 
-    assert observed_versions == [4] * process_count
+    assert observed_versions == [5] * process_count
