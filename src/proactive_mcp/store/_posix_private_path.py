@@ -5,14 +5,15 @@ from __future__ import annotations
 import fcntl
 import os
 import stat
+import sys
 from contextlib import contextmanager, suppress
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from .storage_errors import UnsafeDatabasePathError
 
 if TYPE_CHECKING:
     from collections.abc import Generator
-    from pathlib import Path
 
 _PRIVATE_DIRECTORY_MODE: Final[int] = 0o700
 _PRIVATE_FILE_MODE: Final[int] = 0o600
@@ -88,28 +89,46 @@ def enforce_private_sidecars(directory_fd: int, path: Path) -> None:
     database_fd = _open_private_file(directory_fd, path.name, os.O_RDONLY, path)
     os.close(database_fd)
     for suffix in ("-wal", "-shm"):
-        try:
-            sidecar_fd = os.open(
-                f"{path.name}{suffix}",
-                os.O_RDONLY | os.O_NOFOLLOW,
-                dir_fd=directory_fd,
-            )
-        except FileNotFoundError:
-            continue
-        except OSError as error:
+        name = f"{path.name}{suffix}"
+        _secure_existing_sidecar(directory_fd, name, path)
+
+
+def _secure_existing_sidecar(directory_fd: int, name: str, path: Path) -> None:
+    """Secure one sidecar through a stable descriptor without following links."""
+    flags = os.O_PATH if sys.platform == "linux" else os.O_RDONLY
+    try:
+        descriptor = os.open(name, flags | os.O_NOFOLLOW, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise UnsafeDatabasePathError(
+            path,
+            "database sidecar cannot be opened safely",
+        ) from error
+    try:
+        observed = os.fstat(descriptor)
+        if not stat.S_ISREG(observed.st_mode):
             raise UnsafeDatabasePathError(
                 path,
-                "database sidecar cannot be opened safely",
-            ) from error
-        try:
-            if not stat.S_ISREG(os.fstat(sidecar_fd).st_mode):
-                raise UnsafeDatabasePathError(
-                    path,
-                    "database sidecar is not a regular file",
-                )
-            os.fchmod(sidecar_fd, _PRIVATE_FILE_MODE)
-        finally:
-            os.close(sidecar_fd)
+                "database sidecar is not a regular file",
+            )
+        if sys.platform == "linux":
+            Path(f"/proc/self/fd/{descriptor:d}").chmod(_PRIVATE_FILE_MODE)
+        else:
+            os.fchmod(descriptor, _PRIVATE_FILE_MODE)
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (observed.st_dev, observed.st_ino):
+            raise UnsafeDatabasePathError(
+                path,
+                "database sidecar changed while being secured",
+            )
+    except OSError as error:
+        raise UnsafeDatabasePathError(
+            path,
+            "database sidecar cannot be secured safely",
+        ) from error
+    finally:
+        os.close(descriptor)
 
 
 def _verify_private_directory(

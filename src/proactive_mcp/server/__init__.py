@@ -11,13 +11,18 @@ from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp.clock import UtcClock
 from proactive_mcp.server.memory_tools import (
+    EntityResponse,
     ForgetResponse,
+    ListEntitiesResponse,
     MemoryItemResponse,
     RecallResponse,
     RememberRequest,
+    UpdateRequest,
     forget,
+    list_entities,
     recall,
     remember,
+    update,
 )
 from proactive_mcp.store import (
     SourceErrorCode,
@@ -179,10 +184,8 @@ def create_server() -> MCPServer[None]:
     remember_tool = server.tool(
         name="remember",
         description=(
-            "Store a memory when the user mentions dates, appointments, "
-            "preferences, or people. For dated facts, set date_anchor to an "
-            "ISO date or --MM-DD and use recurrence=yearly when it repeats "
-            "annually."
+            "Store a memory from the conversation. Before inventing an entity "
+            "path, call list_entities to check existing classifications."
         ),
     )
     _ = remember_tool(remember)
@@ -190,11 +193,29 @@ def create_server() -> MCPServer[None]:
     recall_tool = server.tool(
         name="recall",
         description=(
-            "Search stored memories by a substring of entity or content. "
-            "Optional kind filter. Does not return archived items."
+            "Search active memories by entity, entity alias, path, or content. "
+            "Use filters to narrow the newest-first results."
         ),
     )
     _ = recall_tool(recall)
+
+    update_tool = server.tool(
+        name="update",
+        description=(
+            "Replace a memory by id. Before inventing an entity path, call "
+            "list_entities to check existing classifications."
+        ),
+    )
+    _ = update_tool(update)
+
+    entities_tool = server.tool(
+        name="list_entities",
+        description=(
+            "List existing active entity classifications before assigning a new "
+            "entity path."
+        ),
+    )
+    _ = entities_tool(list_entities)
 
     forget_tool = server.tool(
         name="forget",
@@ -212,11 +233,14 @@ server = create_server()
 
 __all__ = [
     "DatabaseStatusResponse",
+    "EntityResponse",
     "ForgetResponse",
+    "ListEntitiesResponse",
     "MemoryItemResponse",
     "RecallResponse",
     "RememberRequest",
     "StatusResponse",
+    "UpdateRequest",
     "build_status",
     "create_server",
     "server",

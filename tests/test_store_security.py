@@ -9,9 +9,27 @@ from typing import TYPE_CHECKING
 import pytest
 
 from proactive_mcp.store import Store, UnsafeDatabasePathError
+from proactive_mcp.store.private_path import enforce_private_sidecars
 
 if TYPE_CHECKING or os.name == "nt":
     from proactive_mcp.store import windows_path
+
+
+def test_store_connection_enforces_foreign_keys(tmp_path: Path) -> None:
+    """Given a Store connection, a dangling entity reference is rejected."""
+    created = "2026-08-21T00:00:00+00:00"
+
+    with Store(tmp_path / "proactive.db") as store:
+        connection = store.connection()
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = connection.execute(
+                """
+                INSERT INTO memory_items (
+                    kind, entity_id, content, source, created_at, updated_at
+                ) VALUES ('note', 999, 'dangling entity', 'manual', ?, ?)
+                """,
+                (created, created),
+            )
 
 
 def test_macos_platform_creates_private_store(
@@ -25,7 +43,7 @@ def test_macos_platform_creates_private_store(
 
     assert status.path == (tmp_path / "proactive.db").absolute()
     assert status.journal_mode.lower() == "wal"
-    assert status.migration_version == 3
+    assert status.migration_version == 4
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows permissions use ACLs")
@@ -167,6 +185,53 @@ def test_parent_swap_cannot_redirect_database(
 
     assert (displaced_dir / "proactive.db").exists()
     assert not (attacker_dir / "proactive.db").exists()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux sidecar symlink defense")
+def test_sidecar_swap_cannot_chmod_symlink_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    db_path = state_dir / "proactive.db"
+    db_path.touch()
+    sidecar = state_dir / "proactive.db-wal"
+    sidecar.touch()
+    target = tmp_path / "target"
+    target.touch(mode=0o644)
+    directory_fd = os.open(state_dir, os.O_RDONLY | os.O_DIRECTORY)
+    original_open = os.open
+    swapped = False
+
+    def swap_after_sidecar_open(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        descriptor = original_open(
+            path,
+            flags,
+            mode,
+            dir_fd=dir_fd,
+        )
+        if path == sidecar.name and not swapped:
+            swapped = True
+            sidecar.unlink()
+            sidecar.symlink_to(target)
+        return descriptor
+
+    monkeypatch.setattr(os, "open", swap_after_sidecar_open)
+    try:
+        with pytest.raises(UnsafeDatabasePathError):
+            enforce_private_sidecars(directory_fd, db_path)
+    finally:
+        os.close(directory_fd)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux descriptor accounting")

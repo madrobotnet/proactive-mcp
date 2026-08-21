@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Self
 
 from proactive_mcp.clock import Clock, UtcClock
 
+from ._database_support import (
+    DatabaseStatus,
+    InvalidBusyTimeoutError,
+    ScalarReader,
+    StoreClosedError,
+)
+from ._memory_normalize import normalize_alias, normalize_label
 from .memory import (
+    Entity,
+    EntityKind,
     MemoryItem,
     MemoryKind,
     MemoryStore,
@@ -37,79 +45,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 DEFAULT_BUSY_TIMEOUT_MS: Final[int] = 5000
-
-
-@dataclass(frozen=True, slots=True)
-class DatabaseStatus:
-    """Observed SQLite configuration after migrations have been applied."""
-
-    path: Path
-    journal_mode: str
-    busy_timeout: int
-    migration_version: int
-
-
-@dataclass(frozen=True, slots=True)
-class InvalidBusyTimeoutError(Exception):
-    """Raised when busy_timeout_ms is negative."""
-
-    value: int
-
-
-@dataclass(frozen=True, slots=True)
-class StoreClosedError(Exception):
-    """Raised when the store is used after close()."""
-
-
-@dataclass(frozen=True, slots=True)
-class StoreQueryError(Exception):
-    """Raised when a status PRAGMA or version query returns no value."""
-
-    query: str
-
-
-class _ScalarReader:
-    """Read scalars via UDFs because sqlite3 fetchone is typed as Any."""
-
-    _connection: sqlite3.Connection
-    _ints: list[int]
-    _strs: list[str]
-
-    def __init__(self, connection: sqlite3.Connection) -> None:
-        self._connection = connection
-        self._ints = []
-        self._strs = []
-        connection.create_function("_proactive_capture_int", 1, self._capture_int)
-        connection.create_function("_proactive_capture_str", 1, self._capture_str)
-
-    def query_int(
-        self,
-        select_sql: str,
-        params: tuple[str, ...] = (),
-    ) -> int:
-        self._ints.clear()
-        _ = self._connection.execute(
-            f"SELECT _proactive_capture_int(({select_sql}))",
-            params,
-        )
-        if not self._ints:
-            raise StoreQueryError(select_sql)
-        return self._ints[0]
-
-    def query_str(self, select_sql: str) -> str:
-        self._strs.clear()
-        _ = self._connection.execute(f"SELECT _proactive_capture_str(({select_sql}))")
-        if not self._strs:
-            raise StoreQueryError(select_sql)
-        return self._strs[0]
-
-    def _capture_int(self, value: int) -> int:
-        self._ints.append(value)
-        return value
-
-    def _capture_str(self, value: str) -> str:
-        self._strs.append(value)
-        return value
+__all__ = ["DEFAULT_BUSY_TIMEOUT_MS", "DatabaseStatus", "Store"]
 
 
 class Store:
@@ -119,7 +55,7 @@ class Store:
     _busy_timeout_ms: int
     _clock: Clock
     _connection: sqlite3.Connection | None
-    _reader: _ScalarReader | None
+    _reader: ScalarReader | None
     _memory_store: MemoryStore | None
     _sync_store: SyncStore | None
     _directory_fd: int | None
@@ -187,6 +123,13 @@ class Store:
             migration_version=current_version(reader),
         )
 
+    def connection(self) -> sqlite3.Connection:
+        """Return the live SQLite connection for storage-layer integrations."""
+        connection = self._connection
+        if connection is None:
+            raise StoreClosedError
+        return connection
+
     def remember(self, memory: NewMemory) -> MemoryItem:
         """Store a memory item without replacing contradictory items."""
         return self._require_memory_store().remember(memory)
@@ -196,9 +139,34 @@ class Store:
         query: str,
         *,
         kind: MemoryKind | None = None,
+        entity_kind: EntityKind | None = None,
+        path_prefix: str | None = None,
+        limit: int = 20,
     ) -> tuple[MemoryItem, ...]:
-        """Return active memories matching a literal entity or content substring."""
-        return self._require_memory_store().recall(query, kind=kind)
+        """Return active literal matches, newest first, across memory kinds."""
+        return self._require_memory_store().recall(
+            query,
+            kind=kind,
+            entity_kind=entity_kind,
+            path_prefix=path_prefix,
+            limit=limit,
+        )
+
+    def update(self, memory_id: int, memory: NewMemory) -> MemoryItem:
+        """Replace a memory item's mutable values while retaining its identity."""
+        return self._require_memory_store().update(memory_id, memory)
+
+    def list_entities(
+        self,
+        *,
+        kind: EntityKind | None = None,
+        path_prefix: str | None = None,
+    ) -> tuple[Entity, ...]:
+        """List active entities with optional kind and path-prefix filters."""
+        return self._require_memory_store().list_entities(
+            kind=kind,
+            path_prefix=path_prefix,
+        )
 
     def forget(self, memory_id: int) -> MemoryItem:
         """Soft-archive an existing memory item."""
@@ -253,18 +221,31 @@ class Store:
             )
             self._connection = connection
             connection.isolation_level = None
+            connection.execute("PRAGMA foreign_keys = ON").close()
             connection.execute(
                 f"PRAGMA busy_timeout = {self._busy_timeout_ms:d}"
             ).close()
             connection.execute("PRAGMA journal_mode = WAL").close()
-            reader = _ScalarReader(connection)
+            reader = ScalarReader(connection)
+            connection.create_function(
+                "_proactive_alias_norm",
+                1,
+                normalize_alias,
+                deterministic=True,
+            )
+            connection.create_function(
+                "_proactive_normalize_label",
+                1,
+                normalize_label,
+                deterministic=True,
+            )
             apply_migrations(connection, reader)
             enforce_private_sidecars(directory_fd, self._path)
         self._reader = reader
         self._memory_store = MemoryStore(connection, self._clock)
         self._sync_store = SyncStore(connection, self._clock)
 
-    def _require_reader(self) -> _ScalarReader:
+    def _require_reader(self) -> ScalarReader:
         reader = self._reader
         if reader is None:
             raise StoreClosedError
