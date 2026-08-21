@@ -1,0 +1,9 @@
+{
+  "kind": "calendar#events",
+  "items": [
+    {
+      "id": "evt-cancelled",
+      "status": "cancelled"
+    }
+  ]
+}

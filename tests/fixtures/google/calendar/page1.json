@@ -1,0 +1,30 @@
+{
+  "kind": "calendar#events",
+  "items": [
+    {
+      "id": "evt-a",
+      "status": "confirmed",
+      "summary": "A",
+      "start": {
+        "dateTime": "2026-07-11T10:00:00Z"
+      },
+      "end": {
+        "dateTime": "2026-07-11T11:00:00Z"
+      },
+      "eventType": "default"
+    },
+    {
+      "id": "evt-b",
+      "status": "confirmed",
+      "summary": "B",
+      "start": {
+        "dateTime": "2026-07-11T11:00:00Z"
+      },
+      "end": {
+        "dateTime": "2026-07-11T12:00:00Z"
+      },
+      "eventType": "default"
+    }
+  ],
+  "nextPageToken": "page-2"
+}

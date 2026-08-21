@@ -1,0 +1,17 @@
+{
+  "kind": "calendar#events",
+  "items": [
+    {
+      "id": "evt-c",
+      "status": "confirmed",
+      "summary": "C",
+      "start": {
+        "dateTime": "2026-07-11T12:00:00Z"
+      },
+      "end": {
+        "dateTime": "2026-07-11T13:00:00Z"
+      },
+      "eventType": "default"
+    }
+  ]
+}

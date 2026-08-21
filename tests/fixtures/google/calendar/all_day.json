@@ -1,0 +1,20 @@
+{
+  "kind": "calendar#events",
+  "items": [
+    {
+      "id": "evt-holiday",
+      "status": "confirmed",
+      "summary": "Company Holiday",
+      "start": {
+        "date": "2026-07-18"
+      },
+      "end": {
+        "date": "2026-07-19"
+      },
+      "organizer": {
+        "self": true
+      },
+      "eventType": "default"
+    }
+  ]
+}

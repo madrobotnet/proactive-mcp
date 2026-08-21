@@ -1,0 +1,11 @@
+{
+  "token": "sanitized-access-token",
+  "refresh_token": "sanitized-refresh-token",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "client_id": "test-client.apps.googleusercontent.com",
+  "client_secret": "sanitized-test-client-secret",
+  "scopes": [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly"
+  ]
+}

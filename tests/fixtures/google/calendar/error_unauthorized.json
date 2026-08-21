@@ -1,0 +1,12 @@
+{
+  "error": {
+    "code": 401,
+    "message": "Invalid Credentials",
+    "status": "UNAUTHENTICATED",
+    "details": [
+      {
+        "token": "CANARY_TOKEN_DO_NOT_LOG"
+      }
+    ]
+  }
+}

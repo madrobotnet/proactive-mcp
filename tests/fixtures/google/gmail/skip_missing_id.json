@@ -1,0 +1,13 @@
+{
+  "threads": [
+    {
+      "snippet": "CANARY_SNIPPET_DO_NOT_KEEP missing id",
+      "historyId": "1"
+    },
+    {
+      "id": "thread-good",
+      "snippet": "CANARY_SNIPPET_DO_NOT_KEEP kept",
+      "historyId": "2"
+    }
+  ]
+}

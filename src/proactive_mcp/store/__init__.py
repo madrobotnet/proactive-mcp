@@ -5,6 +5,12 @@ from .database import (
     DatabaseStatus,
     Store,
 )
+from .freshness import (
+    DEFAULT_STALE_AFTER,
+    SourceFreshness,
+    SourceFreshnessStatus,
+    evaluate_source_freshness,
+)
 from .memory import (
     MemoryItem,
     MemoryKind,
@@ -14,9 +20,18 @@ from .memory import (
     NewMemory,
 )
 from .private_path import UnsafeDatabasePathError
+from .sync import (
+    SourceAuthState,
+    SourceErrorCode,
+    SourceName,
+    SourceSyncFailureCode,
+    SourceSyncState,
+    SyncStore,
+)
 
 __all__ = [
     "DEFAULT_BUSY_TIMEOUT_MS",
+    "DEFAULT_STALE_AFTER",
     "DatabaseStatus",
     "MemoryItem",
     "MemoryKind",
@@ -24,6 +39,15 @@ __all__ = [
     "MemoryRecurrence",
     "MemorySource",
     "NewMemory",
+    "SourceAuthState",
+    "SourceErrorCode",
+    "SourceFreshness",
+    "SourceFreshnessStatus",
+    "SourceName",
+    "SourceSyncFailureCode",
+    "SourceSyncState",
     "Store",
+    "SyncStore",
     "UnsafeDatabasePathError",
+    "evaluate_source_freshness",
 ]
