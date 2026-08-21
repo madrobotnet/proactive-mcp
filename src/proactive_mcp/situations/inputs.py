@@ -11,7 +11,11 @@ if TYPE_CHECKING:
     from proactive_mcp.sources.calendar import CalendarEvent
     from proactive_mcp.store import SourceErrorCode, SourceGeneration
 
-InboxThreadDegradationReason: TypeAlias = Literal["body_snippet_fallback"]
+InboxThreadDegradationReason: TypeAlias = Literal[
+    "body_snippet_fallback",
+    "body_truncated",
+    "mime_structure_truncated",
+]
 SnapshotItem = TypeVar("SnapshotItem")
 
 __all__ = [

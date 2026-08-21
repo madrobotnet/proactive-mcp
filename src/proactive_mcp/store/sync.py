@@ -177,47 +177,58 @@ class SyncStore:
         """Atomically require reauthorization for the shared Google grant."""
         self._update_google_auth_state("needs_reauth", "invalid_grant")
 
+    def record_google_invalid_grant_in_transaction(self) -> None:
+        """Require reauthorization inside an existing SQLite transaction."""
+        self._write_google_auth_state("needs_reauth", "invalid_grant")
+
     def _update_google_auth_state(
         self,
         auth_state: SourceAuthState,
         error_code: SourceErrorCode | None,
     ) -> None:
-        timestamp = self._clock.now().isoformat()
         _ = self._connection.execute("BEGIN IMMEDIATE")
         try:
-            for source in _GOOGLE_SOURCES:
-                _ = self._connection.execute(
-                    """
-                    INSERT INTO source_sync_state (
-                        source, auth_state, last_attempt_at, last_error_code, updated_at
-                    ) VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(source) DO UPDATE SET
-                        auth_state = excluded.auth_state,
-                        last_attempt_at = CASE
-                            WHEN excluded.last_error_code IS NULL
-                            THEN source_sync_state.last_attempt_at
-                            ELSE excluded.last_attempt_at
-                        END,
-                        last_error_code = CASE
-                            WHEN excluded.last_error_code IS NULL
-                            THEN source_sync_state.last_error_code
-                            ELSE excluded.last_error_code
-                        END,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        source,
-                        auth_state,
-                        timestamp if error_code is not None else None,
-                        error_code,
-                        timestamp,
-                    ),
-                )
+            self._write_google_auth_state(auth_state, error_code)
             _ = self._connection.execute("COMMIT")
         except sqlite3.Error:
             if self._connection.in_transaction:
                 _ = self._connection.execute("ROLLBACK")
             raise
+
+    def _write_google_auth_state(
+        self,
+        auth_state: SourceAuthState,
+        error_code: SourceErrorCode | None,
+    ) -> None:
+        timestamp = self._clock.now().isoformat()
+        for source in _GOOGLE_SOURCES:
+            _ = self._connection.execute(
+                """
+                INSERT INTO source_sync_state (
+                    source, auth_state, last_attempt_at, last_error_code, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source) DO UPDATE SET
+                    auth_state = excluded.auth_state,
+                    last_attempt_at = CASE
+                        WHEN excluded.last_error_code IS NULL
+                        THEN source_sync_state.last_attempt_at
+                        ELSE excluded.last_attempt_at
+                    END,
+                    last_error_code = CASE
+                        WHEN excluded.last_error_code IS NULL
+                        THEN source_sync_state.last_error_code
+                        ELSE excluded.last_error_code
+                    END,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    source,
+                    auth_state,
+                    timestamp if error_code is not None else None,
+                    error_code,
+                    timestamp,
+                ),
+            )
 
     def _persisted_states(self) -> tuple[SourceSyncState, ...]:
         self._states.clear()

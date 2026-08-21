@@ -1,0 +1,23 @@
+{
+  "id": "thread-html-deadline",
+  "historyId": "2002",
+  "messages": [
+    {
+      "id": "message-html",
+      "threadId": "thread-html-deadline",
+      "internalDate": "1787302800000",
+      "snippet": "Please review",
+      "payload": {
+        "mimeType": "text/html",
+        "headers": [
+          {"name": "From", "value": "Fixture Sender <sender@example.test>"},
+          {"name": "To", "value": "User <USER@EXAMPLE.COM>"},
+          {"name": "Subject", "value": "Project update"}
+        ],
+        "body": {
+          "data": "PHA-UGxlYXNlIHJlcGx5IGJ5IDIwMjYtMDgtMjIuPC9wPg"
+        }
+      }
+    }
+  ]
+}

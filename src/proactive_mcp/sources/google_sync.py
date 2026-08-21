@@ -221,6 +221,10 @@ class GoogleSyncService:
             result = self._dependencies.gmail.read_inbox_threads()
         except (GmailError, GoogleTransportError) as error:
             return self._record_failure("gmail", error.error_code)
+        self._dependencies.store.record_sync_success(
+            "gmail",
+            sync_cursor=result.provider_history_cursor,
+        )
         return _SourceReadOutcome(
             count=len(result.threads),
             ids=tuple(thread.thread_id for thread in result.threads),

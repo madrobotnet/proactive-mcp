@@ -88,6 +88,34 @@ def test_delayed_generation_rejection_and_whole_batch_rollback(tmp_path: Path) -
         ) == ("newer",)
 
 
+def test_invalid_grant_updates_auth_inside_generation_transaction(
+    tmp_path: Path,
+) -> None:
+    # Given: both sources share one configured Google grant.
+    clock = FakeClock(utc_datetime(2026, 8, 21, 16))
+    with Store(tmp_path / "db", clock=clock) as store:
+        store.set_google_auth_state("configured")
+        generation = store.reserve_source_generation("gmail")
+
+        # When: a generation finishes with invalid_grant.
+        summary = store.situations.apply_source_generation(
+            generation,
+            (),
+            status="degraded",
+            error_code="invalid_grant",
+        )
+        generation_state = store.source_generation_state("gmail")
+        gmail_state, calendar_state = store.list_source_sync()
+
+    # Then: generation and shared auth state commit in the same transaction.
+    assert summary.upsert.created == 0
+    assert generation_state.applied == generation.number
+    assert gmail_state.auth_state == "needs_reauth"
+    assert calendar_state.auth_state == "needs_reauth"
+    assert gmail_state.last_error_code == "invalid_grant"
+    assert calendar_state.last_error_code == "invalid_grant"
+
+
 def test_degraded_generation_preserves_absent_source_truth(tmp_path: Path) -> None:
     # Given: one existing Gmail situation and a newly reserved generation.
     clock = FakeClock(utc_datetime(2026, 8, 21, 16))
@@ -134,6 +162,23 @@ def test_two_stores_atomically_claim_once_and_share_budget(tmp_path: Path) -> No
     results = tuple(future.result(timeout=10) for future in futures)
     # Then: only a successfully claimed row is returned.
     assert sorted(len(result) for result in results) == [0, 1]
+
+
+def test_atomic_claim_prioritizes_high_before_older_routine(tmp_path: Path) -> None:
+    # Given: an older routine row and a newer high row share one budget slot.
+    clock = FakeClock(utc_datetime(2026, 8, 21, 16))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections((detection("routine-old"),))
+        clock.advance(timedelta(seconds=1))
+        _ = store.situations.upsert_detections(
+            (detection("high-new", priority="high"),)
+        )
+
+        # When: the atomic policy claims one non-critical delivery.
+        claimed = policy(store).claim_for_delivery(clock.now())
+
+    # Then: priority outranks age within the transaction.
+    assert tuple(item.dedupe_key for item in claimed) == ("high-new",)
 
 
 def test_budget_uses_immutable_claim_time_priority(tmp_path: Path) -> None:

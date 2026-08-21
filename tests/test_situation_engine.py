@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from textwrap import dedent
 from typing import TYPE_CHECKING
 
 from proactive_mcp import situations
@@ -344,14 +345,23 @@ def test_delayed_source_snapshot_cannot_overwrite_newer_truth(
         assert older_store.situations.list_situations() == ()
 
 
-def test_engine_factory_loads_configured_occasion_default(
+def test_runtime_factory_wires_detector_and_attention_config(
     tmp_path: Path,
 ) -> None:
-    # Given: config sets an 11-day fallback and memory leaves lead_days unset.
+    # Given: config sets detector fallback plus non-default quiet hours.
     clock = FakeClock(utc_datetime(2026, 8, 21, 9))
     config_path = tmp_path / "config.toml"
     _ = config_path.write_text(
-        '[attention]\ntimezone = "UTC"\n[detectors]\noccasion_default_lead_days = 11\n',
+        dedent(
+            """\
+            [attention]
+            timezone = "UTC"
+            quiet_hours_start = "08:00"
+            quiet_hours_end = "10:00"
+            [detectors]
+            occasion_default_lead_days = 11
+            """
+        ),
         encoding="utf-8",
     )
     database_path = tmp_path / "situations.db"
@@ -374,21 +384,22 @@ def test_engine_factory_loads_configured_occasion_default(
             )
             connection.commit()
 
-        # When: production factory loads config and evaluates D-11.
-        engine = situations.SituationEngine.from_config(
+        # When: one production factory wires both engine and attention policy.
+        runtime = situations.SituationRuntime.from_config(
             store,
             clock,
             config_path,
         )
-        result = engine.evaluate(
+        result = runtime.engine.evaluate(
             situations.EngineInputs(
                 gmail_threads=_gmail_snapshot(store, ()),
                 calendar_events=_calendar_snapshot(store, ()),
             )
         )
 
-        # Then: the configured fallback reaches the detector through the engine.
+        # Then: detector fallback and configured quiet hours both take effect.
         assert result.created == 1
         assert store.situations.list_situations()[0].situation_type == (
             "personal_occasion"
         )
+        assert runtime.attention.select_for_delivery(clock.now()) == ()

@@ -12,6 +12,7 @@ from .inputs import EngineInputs, InboxThreadSnapshot, SourceSnapshot
 from .personal_occasion import DEFAULT_LEAD_DAYS, detect_personal_occasions
 from .policy import AttentionPolicy, is_quiet_time
 from .reply_deadline import DEFAULT_REPLY_THRESHOLD, detect_reply_deadlines
+from .runtime import SituationRuntime
 
 __all__ = [
     "DEFAULT_CRITICAL_WINDOW",
@@ -24,6 +25,7 @@ __all__ = [
     "EvaluationResult",
     "InboxThreadSnapshot",
     "SituationEngine",
+    "SituationRuntime",
     "SourceSnapshot",
     "detect_calendar_conflicts",
     "detect_personal_occasions",

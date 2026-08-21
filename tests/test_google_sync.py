@@ -122,10 +122,10 @@ def _gmail_inbox_result() -> GmailInboxReadResult:
     )
 
 
-def test_sync_prepares_gmail_projection_without_recording_success(
+def test_sync_records_successful_gmail_projection_and_cursor(
     tmp_path: Path,
 ) -> None:
-    # Given: a complete Gmail projection ready for later engine application.
+    # Given: a complete Gmail projection for the legacy sync/read-smoke surface.
     credentials = FakeCredentials()
     with Store(tmp_path / "proactive.db") as store:
         service = GoogleSyncService(
@@ -137,15 +137,15 @@ def test_sync_prepares_gmail_projection_without_recording_success(
             )
         )
 
-        # When: synchronization prepares the source read.
+        # When: the legacy synchronization surface completes.
         summary = service.sync()
         gmail_state = store.get_source_sync("gmail")
 
-    # Then: snapshot identity is returned but freshness awaits engine application.
+    # Then: snapshot identity and freshness preserve the public sync contract.
     assert summary.gmail_count == 1
     assert summary.gmail_ids == ("thread-1",)
-    assert gmail_state.last_success_at is None
-    assert gmail_state.sync_cursor is None
+    assert gmail_state.last_success_at is not None
+    assert gmail_state.sync_cursor == "history-2"
 
 
 def test_prepare_evaluation_reserves_ordered_detector_snapshots(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from proactive_mcp import situations
 from proactive_mcp.sources.gmail import (
     DEFAULT_MAX_PAGES,
     GMAIL_PROFILE_URL,
@@ -150,6 +152,69 @@ def test_read_inbox_threads_projects_deadline_from_plain_text_body() -> None:
         thread_url,
     ]
     assert transport.calls[2][2] == {"format": "full"}
+
+
+def test_read_inbox_threads_decodes_html_only_deadline() -> None:
+    # Given: the deadline exists only in an HTML MIME body.
+    thread_url = f"{GMAIL_THREADS_URL}/thread-html-deadline"
+    transport = FakeGmailTransport(
+        {
+            GMAIL_PROFILE_URL: {None: (200, _fixture("profile.json"))},
+            GMAIL_THREADS_URL: {None: (200, _fixture("threads_html_deadline.json"))},
+            thread_url: {None: (200, _fixture("thread_html_deadline.json"))},
+        }
+    )
+
+    # When: the adapter projects the HTML-only message.
+    result = _adapter(transport).read_inbox_threads()
+    detected = situations.detect_reply_deadlines(
+        result.threads,
+        now=NOW,
+        tz=UTC,
+    )
+
+    # Then: tags are removed and the body deadline reaches the detector.
+    assert result.threads[0].body_text == "Please reply by 2026-08-22."
+    assert result.is_complete is True
+    assert len(detected) == 1
+    assert detected[0].evidence.facts["deadline_date"] == "2026-08-22"
+
+
+def test_read_inbox_threads_bounds_thread_count_and_body_text() -> None:
+    # Given: more thread IDs than allowed and an oversized plain-text body.
+    listed = json.dumps({"threads": [{"id": "first"}, {"id": "second"}]}).encode()
+    oversized = "deadline " + "x" * 5_000
+    encoded = base64.urlsafe_b64encode(oversized.encode()).decode().rstrip("=")
+    detail = _fixture("thread_deadline.json").replace(
+        b"UGxlYXNlIHJlcGx5IGJ5IDIwMjYtMDgtMjIu",
+        encoded.encode(),
+    )
+    transport = FakeGmailTransport(
+        {
+            GMAIL_PROFILE_URL: {None: (200, _fixture("profile.json"))},
+            GMAIL_THREADS_URL: {None: (200, listed)},
+            f"{GMAIL_THREADS_URL}/first": {None: (200, detail)},
+        }
+    )
+    adapter = GmailAdapter(
+        transport,
+        FixedClock(NOW),
+        max_projected_threads=1,
+    )
+
+    # When: the detector-ready projection is read.
+    result = adapter.read_inbox_threads()
+
+    # Then: only one bounded body is retained and the generation is degraded.
+    assert len(result.threads) == 1
+    assert result.threads[0].body_text is not None
+    assert len(result.threads[0].body_text) == 4_000
+    assert result.is_complete is False
+    assert result.degradation_reasons == (
+        "thread_projection_limit",
+        "body_truncated",
+    )
+    assert all("/second" not in call[1] for call in transport.calls)
 
 
 def test_read_inbox_threads_marks_snippet_body_fallback_as_degraded() -> None:

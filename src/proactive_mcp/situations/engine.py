@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
-from proactive_mcp.config import DetectorSettings, load_config, resolve_timezone
+from proactive_mcp.config import DetectorSettings
 from proactive_mcp.store import (
     DelayedSourceGenerationError,
     evaluate_source_freshness,
@@ -17,7 +17,6 @@ from .reply_deadline import detect_reply_deadlines
 
 if TYPE_CHECKING:
     from datetime import datetime, tzinfo
-    from pathlib import Path
 
     from proactive_mcp.clock import Clock
     from proactive_mcp.store import (
@@ -72,22 +71,6 @@ class SituationEngine:
         self._clock = clock
         self._tz = tz
         self._detectors = detectors if detectors is not None else DetectorSettings()
-
-    @classmethod
-    def from_config(
-        cls,
-        store: Store,
-        clock: Clock,
-        config_path: Path,
-    ) -> Self:
-        """Construct an engine from the typed config.toml boundary."""
-        config = load_config(config_path)
-        return cls(
-            store,
-            clock,
-            resolve_timezone(config.attention.timezone, now=clock.now()),
-            config.detectors,
-        )
 
     def evaluate(self, inputs: EngineInputs) -> EvaluationResult:
         """Evaluate one pass: wake, detect, upsert, expire, resolve, report.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from ._situation_models import Situation, SituationNotFoundError
 from ._sqlite_transaction import ImmediateTransaction
@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from ._situation_models import DeliveryClaim
     from ._situation_reader import SituationReader
 
+_PRIORITY_RANK: Final[dict[str, int]] = {"critical": 0, "high": 1, "routine": 2}
+
 
 def claim_for_delivery(
     connection: sqlite3.Connection,
@@ -22,7 +24,15 @@ def claim_for_delivery(
     """Atomically enforce suppression and claim only rows this call owns."""
     claimed: list[Situation] = []
     with ImmediateTransaction(connection):
-        for candidate in reader.list_situations("pending"):
+        candidates = sorted(
+            reader.list_situations("pending"),
+            key=lambda item: (
+                _PRIORITY_RANK[item.priority],
+                item.detected_at,
+                item.id,
+            ),
+        )
+        for candidate in candidates:
             if not claim.allow_noncritical and candidate.priority != "critical":
                 continue
             cursor = connection.execute(

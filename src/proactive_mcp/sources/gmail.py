@@ -1,43 +1,44 @@
 """Read-only Gmail profile and inbox-thread adapter."""
 
-# noqa: SIZE_OK - Stable APIs and their provider wire models share one boundary.
-
 from __future__ import annotations
 
-import base64
-import binascii
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from email.utils import getaddresses, parseaddr
 from typing import TYPE_CHECKING, ClassVar, Final, Literal, Protocol, TypeAlias, TypeVar
 from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from proactive_mcp.situations.inputs import (
-    InboxThreadDegradationReason,
-    InboxThreadSnapshot,
+from ._gmail_projection import (
+    THREAD_DETAIL_ADAPTER,
+    ProjectionDegradationReason,
+    project_thread,
 )
 
 if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
+    from proactive_mcp.situations.inputs import InboxThreadSnapshot
 
 GMAIL_PROFILE_URL: Final[str] = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_THREADS_URL: Final[str] = "https://gmail.googleapis.com/gmail/v1/users/me/threads"
 DEFAULT_MAX_PAGES: Final[int] = 20
 DEFAULT_MAX_RESULTS: Final[int] = 100
+DEFAULT_MAX_PROJECTED_THREADS: Final[int] = 200
 THREAD_FIELDS: Final[str] = "nextPageToken,threads(id,historyId)"
 _HTTP_OK: Final[int] = 200
 _HTTP_SERVER_ERROR_MIN: Final[int] = 500
 _HTTP_SERVER_ERROR_MAX: Final[int] = 600
-_MILLISECONDS_PER_SECOND: Final[int] = 1000
+_MAX_THREAD_RESPONSE_BYTES: Final[int] = 1_000_000
 
 GmailErrorCode: TypeAlias = Literal["http_4xx", "http_5xx", "unknown"]
-GmailDegradationReason: TypeAlias = Literal[
-    "body_snippet_fallback",
-    "thread_list_entry_skipped",
-    "thread_without_projectable_message",
-]
+GmailDegradationReason: TypeAlias = (
+    Literal[
+        "thread_projection_limit",
+        "thread_response_too_large",
+        "thread_list_entry_skipped",
+        "thread_without_projectable_message",
+    ]
+    | ProjectionDegradationReason
+)
 _T = TypeVar("_T")
 
 
@@ -141,36 +142,8 @@ class _WireThreadsPage(_Wire):
     next_page_token: str | None = Field(default=None, alias="nextPageToken")
 
 
-class _WireHeader(_Wire):
-    name: str
-    value: str
-
-
-class _WireBody(_Wire):
-    data: str | None = None
-
-
-class _WirePart(_Wire):
-    mime_type: str | None = Field(default=None, alias="mimeType")
-    headers: tuple[_WireHeader, ...] = ()
-    body: _WireBody | None = None
-    parts: tuple[_WirePart, ...] = ()
-
-
-class _WireMessage(_Wire):
-    id: str | None = None
-    internal_date: int | None = Field(default=None, alias="internalDate")
-    snippet: str | None = None
-    payload: _WirePart | None = None
-
-
-class _WireThreadDetail(_Wire):
-    messages: tuple[_WireMessage, ...] = ()
-
-
 _PROFILE_ADAPTER: Final[TypeAdapter[_WireProfile]] = TypeAdapter(_WireProfile)
 _PAGE_ADAPTER: Final[TypeAdapter[_WireThreadsPage]] = TypeAdapter(_WireThreadsPage)
-_THREAD_ADAPTER: Final[TypeAdapter[_WireThreadDetail]] = TypeAdapter(_WireThreadDetail)
 
 
 class GmailAdapter:
@@ -178,11 +151,19 @@ class GmailAdapter:
 
     _transport: _GmailTransport
     _clock: Clock
+    _max_projected_threads: int
 
-    def __init__(self, transport: _GmailTransport, clock: Clock) -> None:
+    def __init__(
+        self,
+        transport: _GmailTransport,
+        clock: Clock,
+        *,
+        max_projected_threads: int = DEFAULT_MAX_PROJECTED_THREADS,
+    ) -> None:
         """Bind a GET-only transport and a UTC clock."""
         self._transport = transport
         self._clock = clock
+        self._max_projected_threads = max_projected_threads
 
     def read_profile(self) -> GmailProfile:
         """Return the authenticated user's typed Gmail profile."""
@@ -238,16 +219,28 @@ class GmailAdapter:
         reasons: list[GmailDegradationReason] = []
         if listed.skipped_count:
             reasons.append("thread_list_entry_skipped")
-        for thread in listed.threads:
-            detail = _parse_json(
-                _THREAD_ADAPTER,
-                _get(
-                    self._transport,
-                    f"{GMAIL_THREADS_URL}/{quote(thread.id, safe='')}",
-                    {"format": "full"},
-                ),
+        projected_threads = listed.threads[: self._max_projected_threads]
+        if len(projected_threads) < len(listed.threads):
+            reasons.append("thread_projection_limit")
+        for thread in projected_threads:
+            response_body = _get(
+                self._transport,
+                f"{GMAIL_THREADS_URL}/{quote(thread.id, safe='')}",
+                {"format": "full"},
             )
-            snapshot = _project_thread(thread.id, detail, profile)
+            if len(response_body) > _MAX_THREAD_RESPONSE_BYTES:
+                reasons.append("thread_response_too_large")
+                continue
+            detail = _parse_json(
+                THREAD_DETAIL_ADAPTER,
+                response_body,
+            )
+            snapshot = project_thread(
+                thread.id,
+                detail,
+                profile_email=profile.email_address,
+                profile_history_cursor=profile.history_id,
+            )
             if snapshot is None:
                 reasons.append("thread_without_projectable_message")
             else:
@@ -291,79 +284,3 @@ def _parse_thread(wire: _WireThread) -> GmailThread | None:
     if thread_id is None or thread_id == "":
         return None
     return GmailThread(id=thread_id, history_id=wire.history_id)
-
-
-def _project_thread(
-    thread_id: str,
-    wire: _WireThreadDetail,
-    profile: GmailProfile,
-) -> InboxThreadSnapshot | None:
-    candidates: list[tuple[datetime, str, _WireMessage]] = []
-    for message in wire.messages:
-        if message.id is None or message.internal_date is None:
-            continue
-        try:
-            sent_at = datetime.fromtimestamp(
-                message.internal_date / _MILLISECONDS_PER_SECOND,
-                tz=UTC,
-            )
-        except (OSError, OverflowError, ValueError):
-            continue
-        candidates.append((sent_at, message.id, message))
-    if not candidates:
-        return None
-    sent_at, message_id, latest = max(candidates, key=lambda item: (item[0], item[1]))
-    headers = _headers(latest.payload)
-    sender_name, sender_address = parseaddr(headers.get("from", ""))
-    recipients = getaddresses([headers.get("to", "")])
-    user_address = profile.email_address.casefold()
-    body_text = _plain_text(latest.payload)
-    degradation_reasons: tuple[InboxThreadDegradationReason, ...] = ()
-    if body_text is None:
-        body_text = latest.snippet
-        degradation_reasons = ("body_snippet_fallback",)
-    return InboxThreadSnapshot(
-        thread_id=thread_id,
-        latest_message_id=message_id,
-        latest_from_user=sender_address.casefold() == user_address,
-        user_is_recipient=any(
-            address.casefold() == user_address for _, address in recipients
-        ),
-        latest_message_at=sent_at,
-        subject=headers.get("subject") or None,
-        sender_display=sender_name or sender_address or None,
-        snippet=latest.snippet,
-        body_text=body_text,
-        is_complete=not degradation_reasons,
-        degradation_reasons=degradation_reasons,
-        provider_history_cursor=profile.history_id,
-    )
-
-
-def _headers(payload: _WirePart | None) -> dict[str, str]:
-    if payload is None:
-        return {}
-    return {header.name.casefold(): header.value for header in payload.headers}
-
-
-def _plain_text(part: _WirePart | None) -> str | None:
-    if part is None:
-        return None
-    if part.mime_type is not None and part.mime_type.casefold() == "text/plain":
-        if part.body is None or part.body.data is None:
-            return None
-        encoded = part.body.data
-        padded = encoded + "=" * (-len(encoded) % 4)
-        try:
-            return base64.b64decode(
-                padded,
-                altchars=b"-_",
-                validate=True,
-            ).decode()
-        except (binascii.Error, UnicodeDecodeError):
-            return None
-    for child in part.parts:
-        body_text = _plain_text(child)
-        if body_text is not None:
-            return body_text
-    return None

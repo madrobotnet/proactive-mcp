@@ -8,7 +8,7 @@
       "internalDate": "1787302800000",
       "snippet": "Fallback preview",
       "payload": {
-        "mimeType": "text/html",
+        "mimeType": "application/octet-stream",
         "headers": [
           {"name": "From", "value": "Fixture Sender <sender@example.test>"},
           {"name": "To", "value": "USER@EXAMPLE.COM"}

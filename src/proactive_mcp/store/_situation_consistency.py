@@ -119,7 +119,7 @@ class SituationConsistencyStore:
                     sync_cursor=sync_cursor,
                 )
             elif error_code == "invalid_grant":
-                self._sync.record_google_invalid_grant()
+                self._sync.record_google_invalid_grant_in_transaction()
             else:
                 self._sync.record_sync_failure(
                     generation.source,
