@@ -1,0 +1,28 @@
+{
+  "kind": "calendar#events",
+  "items": [
+    {
+      "status": "confirmed",
+      "summary": "No Id",
+      "start": {
+        "dateTime": "2026-07-11T10:00:00Z"
+      },
+      "end": {
+        "dateTime": "2026-07-11T11:00:00Z"
+      },
+      "eventType": "default"
+    },
+    {
+      "id": "evt-good",
+      "status": "confirmed",
+      "summary": "Good",
+      "start": {
+        "dateTime": "2026-07-11T11:00:00Z"
+      },
+      "end": {
+        "dateTime": "2026-07-11T12:00:00Z"
+      },
+      "eventType": "default"
+    }
+  ]
+}

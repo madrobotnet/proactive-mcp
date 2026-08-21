@@ -24,6 +24,13 @@ from .private_path import (
     private_initialization_lock,
     sqlite_connection_target,
 )
+from .sync import (
+    SourceAuthState,
+    SourceName,
+    SourceSyncFailureCode,
+    SourceSyncState,
+    SyncStore,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -114,6 +121,7 @@ class Store:
     _connection: sqlite3.Connection | None
     _reader: _ScalarReader | None
     _memory_store: MemoryStore | None
+    _sync_store: SyncStore | None
     _directory_fd: int | None
 
     def __init__(
@@ -132,6 +140,7 @@ class Store:
         self._connection = None
         self._reader = None
         self._memory_store = None
+        self._sync_store = None
         self._directory_fd = None
         try:
             self._open()
@@ -159,6 +168,7 @@ class Store:
         self._connection = None
         self._reader = None
         self._memory_store = None
+        self._sync_store = None
         self._directory_fd = None
         if connection is not None:
             connection.close()
@@ -194,6 +204,44 @@ class Store:
         """Soft-archive an existing memory item."""
         return self._require_memory_store().forget(memory_id)
 
+    def get_source_sync(self, source: SourceName) -> SourceSyncState:
+        """Return persisted synchronization state for one Google source."""
+        return self._require_sync_store().get_source_sync(source)
+
+    def list_source_sync(self) -> tuple[SourceSyncState, SourceSyncState]:
+        """Return Gmail and Calendar synchronization states in a stable order."""
+        return self._require_sync_store().list_source_sync()
+
+    def set_source_auth(self, source: SourceName, auth_state: SourceAuthState) -> None:
+        """Persist the authorization state for one Google source."""
+        self._require_sync_store().set_source_auth(source, auth_state)
+
+    def set_google_auth_state(self, auth_state: SourceAuthState) -> None:
+        """Persist the shared Google authorization state for both sources."""
+        self._require_sync_store().set_google_auth_state(auth_state)
+
+    def record_sync_success(
+        self,
+        source: SourceName,
+        *,
+        sync_cursor: str | None = None,
+    ) -> None:
+        """Record a successful source synchronization attempt."""
+        self._require_sync_store().record_sync_success(source, sync_cursor=sync_cursor)
+
+    def record_sync_failure(
+        self,
+        source: SourceName,
+        *,
+        error_code: SourceSyncFailureCode,
+    ) -> None:
+        """Record a normalized source synchronization failure."""
+        self._require_sync_store().record_sync_failure(source, error_code=error_code)
+
+    def record_google_invalid_grant(self) -> None:
+        """Atomically mark both Google sources as requiring reauthorization."""
+        self._require_sync_store().record_google_invalid_grant()
+
     def _open(self) -> None:
         directory_fd = open_private_parent(self._path)
         self._directory_fd = directory_fd
@@ -214,6 +262,7 @@ class Store:
             enforce_private_sidecars(directory_fd, self._path)
         self._reader = reader
         self._memory_store = MemoryStore(connection, self._clock)
+        self._sync_store = SyncStore(connection, self._clock)
 
     def _require_reader(self) -> _ScalarReader:
         reader = self._reader
@@ -226,3 +275,9 @@ class Store:
         if memory_store is None:
             raise StoreClosedError
         return memory_store
+
+    def _require_sync_store(self) -> SyncStore:
+        sync_store = self._sync_store
+        if sync_store is None:
+            raise StoreClosedError
+        return sync_store

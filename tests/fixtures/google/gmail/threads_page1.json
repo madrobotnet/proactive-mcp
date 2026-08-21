@@ -1,0 +1,15 @@
+{
+  "threads": [
+    {
+      "id": "thread-a",
+      "snippet": "CANARY_SNIPPET_DO_NOT_KEEP Hello Alice",
+      "historyId": "1001"
+    },
+    {
+      "id": "thread-b",
+      "snippet": "CANARY_SNIPPET_DO_NOT_KEEP Hello Bob",
+      "historyId": "1002"
+    }
+  ],
+  "nextPageToken": "page-2"
+}

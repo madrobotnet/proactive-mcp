@@ -1,0 +1,29 @@
+{
+  "kind": "calendar#events",
+  "items": [
+    {
+      "id": "evt-first",
+      "status": "confirmed",
+      "summary": "Planning",
+      "start": {
+        "dateTime": "2026-07-11T10:00:00Z"
+      },
+      "end": {
+        "dateTime": "2026-07-11T11:00:00Z"
+      },
+      "eventType": "default"
+    },
+    {
+      "id": "evt-second",
+      "status": "confirmed",
+      "summary": "Review",
+      "start": {
+        "dateTime": "2026-07-11T10:30:00Z"
+      },
+      "end": {
+        "dateTime": "2026-07-11T11:30:00Z"
+      },
+      "eventType": "default"
+    }
+  ]
+}

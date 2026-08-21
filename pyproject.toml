@@ -5,6 +5,9 @@ description = "A proactive layer for every AI agent."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "google-auth>=2.0,<3.0",
+    "google-auth-oauthlib>=1.2,<2.0",
+    "keyring>=25,<26",
     "mcp>=2.0.0,<3.0.0",
     "pydantic>=2.0.0,<3.0.0",
 ]
@@ -80,6 +83,7 @@ docstring-code-line-length = "dynamic"
 typeCheckingMode = "all"
 pythonVersion = "3.11"
 pythonPlatform = "All"
+stubPath = "typings"
 include = ["src", "tests"]
 exclude = ["**/__pycache__", "**/.venv", "**/build", "**/dist"]
 reportUnusedCallResult = "warning"

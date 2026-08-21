@@ -1,0 +1,29 @@
+{
+  "kind": "calendar#events",
+  "items": [
+    {
+      "id": "evt-standup",
+      "status": "confirmed",
+      "summary": "Standup",
+      "start": {
+        "dateTime": "2026-07-11T10:00:00Z"
+      },
+      "end": {
+        "dateTime": "2026-07-11T10:30:00Z"
+      },
+      "organizer": {
+        "email": "user@example.com",
+        "self": true
+      },
+      "attendees": [
+        {
+          "email": "user@example.com",
+          "self": true,
+          "responseStatus": "accepted"
+        }
+      ],
+      "transparency": "opaque",
+      "eventType": "default"
+    }
+  ]
+}

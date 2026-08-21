@@ -1,0 +1,9 @@
+{
+  "threads": [
+    {
+      "id": "thread-c",
+      "snippet": "CANARY_SNIPPET_DO_NOT_KEEP Hello Carol",
+      "historyId": "1003"
+    }
+  ]
+}
