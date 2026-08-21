@@ -120,6 +120,8 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 | `forget` | 메모리 삭제(아카이브) | `id` |
 | `get_status` | 연결 상태, 소스 신선도, 데몬 상태, 예산 사용량 | 입력 없음 → 상태 객체 |
 
+메모리 도구의 시그니처는 M2.5부터 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md)가 정본이다 — `remember`/`recall` 확장과 `update`/`list_entities` 추가 (2026-08-21 개정, §8 참조).
+
 ### 5.1 전달 상태 머신
 
 ```text
@@ -135,6 +137,25 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 ### 5.2 세션 시작 전달
 
 에이전트 플랫폼 스케줄러가 없어도, 사용자가 에이전트에게 말을 걸어 도구를 호출하는 순간이 전달 기회다. 이를 위해 `proactive_check` 도구 설명에 "세션 시작 시 1회 호출 권장"을 명시하고, 연동 레시피(M5)에서 각 플랫폼의 룰/시스템 프롬프트에 이 관례를 넣는 방법을 문서화한다.
+
+### 5.3 플랫폼 전달 매트릭스 (2026-08-21 Owner 조사, M5 정본)
+
+"먼저 말 걸기"의 성립 조건은 MCP 지원 여부가 아니라 다음 둘이다.
+
+1. **로컬 stdio 실행** — V1 transport는 stdio뿐이므로, 클라우드에서 실행되는 에이전트는 사용자 머신의 서버에 닿을 수 없다.
+2. **스케줄 트리거** — 없으면 §5.2 세션 시작 전달만 가능하다.
+
+| 플랫폼 | stdio 로컬 | 스케줄 트리거 | 판정 |
+|---|---|---|---|
+| Cursor | O | Automations | M5 1순위 |
+| Grok CLI | O — `grok mcp add` 또는 `~/.grok/config.toml`. Cursor(`.cursor/mcp.json`)·Claude(`~/.claude.json`) 설정을 자동 로드하므로 추가 설정이 사실상 0 | 없음 → OS 스케줄러 | M5 1순위 |
+| Codex CLI | O — `~/.codex/config.toml` | 없음 → OS 스케줄러 | M5 1순위 |
+| Hermes | O | Native Cron | Owner 전용 검증 |
+| Claude Code Desktop | O | 로컬 예약 작업(최소 간격 1분, 로컬 MCP 접근 가능) | 레시피 문서화만 (Owner 미설치, 실증 제외) |
+| ChatGPT 웹/데스크톱 | X — 웹은 원격 HTTPS 커넥터만. 데스크톱은 stdio를 표방하나 도구가 채팅 세션에 노출되지 않는 미해결 버그([openai/codex#38162](https://github.com/openai/codex/issues/38162)) | Tasks (클라우드 실행) | **V2 HTTP transport 대기** |
+| Claude 클라우드 Routines | X — 로컬 파일·프로세스 접근 없음 | O | **V2 HTTP transport 대기** |
+
+주의: 같은 "Claude"라도 Desktop 로컬 예약 작업(로컬 MCP 접근 가능)과 클라우드 Routines(불가)는 다르다. 연동 문서에서 반드시 구분한다. ChatGPT 웹·Claude 클라우드 Routines 등 원격 실행 에이전트 지원은 V2 HTTP transport의 대표 동기다. **V2 전까지 이 두 플랫폼을 M5 대상으로 삼지 않는다** — 우리 코드가 아닌 플랫폼 제약에 시간을 쓰게 된다.
 
 ## 6. Situation 카탈로그 v1
 
@@ -161,7 +182,8 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 - **소스:** 메모리 (`memory_items` 중 `date_anchor`가 있는 항목)
 - **트리거:** D-N 도달 (기본 N=7, 항목별 설정 가능). 반복(recurrence=yearly) 항목은 매년 재생성
 - **우선순위:** high (Critical 아님 — 기념일은 Quiet Hours를 우회하지 않는다)
-- **dedupe key:** memory item id + occurrence 연도
+- **dedupe key:** entity id + attribute + occurrence 연도 (M2.5 반영, 2026-08-21 개정 — 같은 대상의 같은 기념일은 행이 몇 개든 연 1회만 알린다. entity 없는 항목은 memory item id + occurrence 연도)
+- **모순 처리:** 동일 entity+attribute에 모순된 `date_anchor` 행이 둘 다 active면 알림은 dedupe key 기준 연 1회만 나가되, 요약과 evidence에 모순 사실과 두 날짜를 함께 명시한다
 - **Mother's Birthday Test가 이 유형의 대표 acceptance 시나리오다 (§11.3)**
 
 ## 7. Attention 정책
@@ -229,12 +251,12 @@ CREATE TABLE memory_items (
 | **M2.5 메모리 모델 v2** | entity 테이블·별칭, 1차 카테고리 고정 enum + 하위 자유 경로 계층, 중복 병합과 모순 보존, `update`/`list_entities` 도구 — 설계 정본 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md) | 해당 문서 §8 완료 기준 충족 |
 | **M3 Situation 엔진** | 3종 감지기, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 상태 머신 | fake clock 결정론 테스트로 3종 감지·정책 검증 |
 | **M4 전달** | `proactive_check`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
-| **M5 연동 레시피** | Cursor Automations·Hermes Cron·Claude Desktop 연동 문서와 룰 템플릿, 실사용 검증 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 |
+| **M5 연동 레시피** | §5.3 매트릭스 1순위(Cursor Automations·Grok CLI·Codex CLI·Hermes Cron) 연동 문서와 룰 템플릿, OS 스케줄러 등록 예시(cron·Windows 작업 스케줄러), Claude Code Desktop은 문서만 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 — 기본 조합은 Owner 머신의 Cursor + (Grok CLI 또는 Codex CLI) |
 | **M6 클로즈드 알파 릴리스** | README 정비, GCP OAuth 설정 가이드, wheel 빌드와 테스터 배포 절차 (PyPI 미사용) | 새 환경에서 clean install → 온보딩 완료까지 15분 이내, 지정 테스터에게 전달 가능한 상태 |
 
 **M6 이후 — 공개 전환 (Owner 결정):** 지정 테스터의 1차 검증에서 문제가 없으면 저장소를 공개로 전환하고 PyPI `proactive-mcp` 0.1.0을 게시하며 홍보를 시작한다. PyPI 게시는 저장소가 private이어도 패키지를 공개하는 행위이므로, 반드시 공개 전환 시점에 함께 수행한다.
 
-2단계(V2, 별도 기획): 쓰기 액션(approval-first), Google Tasks·Docs, Telegram 채널, HTTP transport(원격 데몬), 다중 계정.
+2단계(V2, 별도 기획): 쓰기 액션(approval-first), Google Tasks·Docs, Telegram 채널, HTTP transport(원격 데몬 — ChatGPT 웹·Claude 클라우드 Routines 등 원격 실행 에이전트 지원의 전제, §5.3), 다중 계정.
 
 ## 11. 테스트 전략
 
@@ -251,8 +273,9 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 ### 11.3 Mother's Birthday E2E (M4 acceptance)
 
 ```text
-1. remember(kind=person_fact, entity=mother, content="엄마 생신",
+1. remember(kind=fact, entity="엄마", attribute=birthday, content="엄마 생신",
             date_anchor=--07-18, recurrence=yearly, lead_days=7)
+   — M2.5 v2 시그니처 기준 (정본: MEMORY_MODEL_V2.md). "엄마"는 별칭으로 entity에 자동 연결
 2. fake clock을 07-11 09:00으로 설정, watcher 평가 실행
 3. personal_occasion 상황 생성 확인 (priority=high, why_now에 D-7 명시)
 4. proactive_check → 상황 수령, delivered 마킹 확인
@@ -291,6 +314,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 | reply_deadline의 마감 패턴 감지 정밀도 | V1은 보수적 규칙으로 시작, 실사용 후 조정 |
 | LLM 결합 감지(요약·중요도 판단) | V1 제외, V2 검토 |
 | 다국어(한국어 메일) 패턴 | V1 규칙에 한국어·영어 마감 표현 포함 |
+| 음력 기념일 recurrence | V1 제외 — yearly는 양력만. 한국 사용자에게 실수요가 있으므로(음력 생신 등) V2 백로그로 기록 |
 
 ---
 
