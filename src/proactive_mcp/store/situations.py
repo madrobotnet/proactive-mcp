@@ -73,6 +73,11 @@ class SituationStore:
         self._consistency = SituationConsistencyStore(connection, clock, sync_store)
         self._reader = self._consistency.reader
 
+    @property
+    def reader(self) -> SituationReader:
+        """Return the one reader whose capture callbacks this connection owns."""
+        return self._reader
+
     def upsert_detections(
         self, detections: Sequence[Detection]
     ) -> DetectionUpsertSummary:
@@ -172,12 +177,22 @@ class SituationStore:
         """Mute one active situation instance."""
         return self._transition(situation_id, MUTE_SITUATION, "mute")
 
-    def mute_situation_type(self, situation_type: SituationType) -> None:
-        """Mute every current and future situation of one type."""
-        _ = self._connection.execute(
-            INSERT_TYPE_MUTE,
-            (situation_type, self._now_iso()),
-        )
+    def mute_situation_type(self, situation_id: int) -> Situation:
+        """Mute one delivered situation and its whole type in one transaction."""
+        timestamp = self._now_iso()
+        with ImmediateTransaction(self._connection):
+            cursor = self._connection.execute(
+                MUTE_SITUATION,
+                (timestamp, timestamp, situation_id),
+            )
+            if cursor.rowcount == 0:
+                self._raise_transition_error(situation_id, "mute type")
+            situation = self._require_situation(situation_id)
+            _ = self._connection.execute(
+                INSERT_TYPE_MUTE,
+                (situation.situation_type, timestamp),
+            )
+            return situation
 
     def muted_situation_types(self) -> tuple[SituationType, ...]:
         """Return the muted situation types in stable order."""

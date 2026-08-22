@@ -178,12 +178,12 @@ def _warnings(
     source_warnings: tuple[str, ...],
 ) -> tuple[str, ...]:
     warnings = list(source_warnings)
-    skipped: list[tuple[SourceName, bool]] = [
-        ("gmail", inputs.gmail_threads is None),
-        ("calendar", inputs.calendar_events is None),
-    ]
-    for source, was_skipped in skipped:
-        if was_skipped:
+    skipped: tuple[tuple[SourceName, bool, SourceFreshness], ...] = (
+        ("gmail", inputs.gmail_threads is None, gmail),
+        ("calendar", inputs.calendar_events is None, calendar),
+    )
+    for source, was_skipped, freshness in skipped:
+        if was_skipped and freshness.status != "ok":
             warnings.append(
                 f"{source}: skipped this pass (no snapshot); situations kept"
             )

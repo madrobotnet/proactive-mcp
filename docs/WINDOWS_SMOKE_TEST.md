@@ -584,3 +584,241 @@ git -C "$env:USERPROFILE\src\proactive-mcp" rev-parse HEAD
 Screenshots of the Agent chat are not helpful here. They usually show memory content.
 
 If every scenario passed, comment that M2.5 scenarios 1 to 6 passed (alias, duplicate id, path-prefix, update, list_entities, forget/re-recall) plus the storage path and ACL checks. Give `migration_version` and a redacted `icacls` line such as `HOST\<you>:(F)`. Leave the DB and the memory JSON off the comment. That is enough success evidence.
+
+## M4 전달
+
+Watcher daemon, Cursor situation tools, degraded no-daemon check, shared SQLite, and one-shot WinRT fallback. Finish the opening 준비 절차 (uv, clone, `mcp.json`) first. Keep the default DB. Do not set `PROACTIVE_DATABASE`. Do not run `setup` or `google-smoke`. All memories stay synthetic. Do not paste real names, dates, mail, credentials, DB files, or `evidence`.
+
+CLI help advertises `daemon --once` and `--poll-interval-minutes`. Tools: `proactive_check`, `list_situations(state?)`, `get_situation(id)`, `acknowledge_situation(id)`, `snooze_situation(id, until)`, `mute_situation(id, scope instance|type)`. Config keys: `[daemon] poll_interval_minutes`, `[fallback] priorities` / `wait_minutes`. Opening the DB on this branch applies **migration 7**.
+
+### M4 준비
+
+Quit Cursor. From the clone:
+
+```powershell
+Set-Location "$env:USERPROFILE\src\proactive-mcp"
+git fetch origin
+git checkout feat/m4-delivery
+uv sync --locked
+
+$dir = Join-Path $env:USERPROFILE ".proactive-mcp"
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText((Join-Path $dir "config.toml"), @"
+[daemon]
+poll_interval_minutes = 1
+[fallback]
+priorities = ["high"]
+wait_minutes = 1
+[attention]
+quiet_hours_start = "00:00"
+quiet_hours_end = "00:00"
+"@, $utf8)
+
+uv run proactive-mcp status
+Write-Output "exit=$LASTEXITCODE"
+Write-Output "ANCHOR=$((Get-Date).Date.AddDays(3).ToString('--MM-dd'))"
+```
+
+Use `feat/m4-delivery` while the M4 PR is open; after merge, `main`. Equal quiet-hour bounds turn off the default 21:00–07:00 hold so `high` `personal_occasion` can deliver during this smoke.
+
+Checkpoint: exit 0; `database.status` is `healthy`; `database.journal_mode` is `wal`; **`database.migration_version` is `7`**; `overall` is `degraded`; `google.gmail.status` and `google.calendar.status` are `not_configured`; `daemon.status` is `not_running`. Version `4` is M2.5 code. `degraded` is expected.
+
+Reopen Cursor on the clone and refresh MCP. `proactive` must list `get_status`, `proactive_check`, `list_situations`, `get_situation`, `acknowledge_situation`, `snooze_situation`, `mute_situation`, `remember`, `recall`, `update`, `list_entities`, `forget`.
+
+New Agent chat: call `get_status`. Same checkpoint. Redact `database.path` to `.proactive-mcp\proactive.db`.
+
+| Tool | Arguments |
+|---|---|
+| `proactive_check` | none |
+| `list_situations` | optional `state`: `pending`, `delivered`, `acknowledged`, `snoozed`, `muted`, `resolved`, `expired` |
+| `get_situation` | `id` |
+| `acknowledge_situation` | `id` |
+| `snooze_situation` | `id`, `until` (ISO-8601 with a UTC offset, in the future) |
+| `mute_situation` | `id`, `scope` = `instance` or `type` (default `instance`) |
+
+Do not call `scope=type` here. That mutes every `personal_occasion` and blocks scenario 7.
+
+### M4 Scenario 1: `daemon --once`
+
+```powershell
+Set-Location "$env:USERPROFILE\src\proactive-mcp"
+uv run proactive-mcp daemon --once
+Write-Output "exit=$LASTEXITCODE"
+uv run proactive-mcp status
+```
+
+Checkpoint: exit 0. Once-JSON `gmail`, `calendar`, and `sources` are `not_configured`; `warning_count` > 0; `notifications` is 0. Status: `daemon.status=not_running`, `daemon.liveness=stopped`, `daemon.cycle_count=1`, `migration_version=7`. No traceback.
+
+Failure: non-zero exit, hang, traceback, or `migration_version` not 7.
+
+### M4 Scenario 2: continuous daemon
+
+Window A (leave running):
+
+```powershell
+Set-Location "$env:USERPROFILE\src\proactive-mcp"
+uv run proactive-mcp daemon --poll-interval-minutes 1
+```
+
+Window B:
+
+```powershell
+uv run proactive-mcp status
+```
+
+Checkpoint: `daemon.status=running`, `daemon.liveness=running`, `pid` set, `cycle_count` >= 1, `heartbeat_at` set. Ctrl+C in A. Status then: `status=not_running`, `liveness=stopped`.
+
+Failure: immediate exit, liveness stays `never_started`, or a lock error (see scenario 5).
+
+### M4 Scenario 3: Cursor `proactive_check` / list / get / acknowledge / snooze / mute
+
+```powershell
+(Get-Date).ToUniversalTime().AddHours(2).ToString("yyyy-MM-ddTHH:mm:ss+00:00")
+```
+
+New Agent chat. Substitute prep `ANCHOR` and that `until`. Do not paste `evidence`, `title`, or `why_now`.
+
+```
+Call these tools in order. Don't skip. Don't invent argument names.
+
+1. remember kind=fact entity=스모크A entity_kind=person entity_path=테스트/스모크A attribute=birthday content=스모크 기념 A date_anchor=ANCHOR recurrence=yearly lead_days=7
+2. proactive_check
+3. list_situations with no state
+4. list_situations state=delivered
+5. get_situation id=<id from step 2>
+6. acknowledge_situation id=<that id>
+7. remember kind=fact entity=스모크B entity_kind=person entity_path=테스트/스모크B attribute=birthday content=스모크 기념 B date_anchor=ANCHOR recurrence=yearly lead_days=7
+8. proactive_check
+9. snooze_situation id=<new id> until=<PowerShell until>
+10. remember kind=fact entity=스모크C entity_kind=person entity_path=테스트/스모크C attribute=birthday content=스모크 기념 C date_anchor=ANCHOR recurrence=yearly lead_days=7
+11. proactive_check
+12. mute_situation id=<new id> scope=instance
+```
+
+Checkpoint: three `remember`, three `proactive_check`, both lists, `get`, `acknowledge`, `snooze`, `mute`. Each check: one `personal_occasion`, `priority=high`, `state=delivered`, `all_clear=false`. After 6: `acknowledged`. After 9: `snoozed` with `snoozed_until` set. After 12: `muted`, `scope=instance`, `muted_types=[]`. Report `items` length only.
+
+Failure: skipped tool, `all_clear=true` with Google unset, ack/snooze/mute on `pending`, `scope=type`, or `until` without an offset.
+
+### M4 Scenario 4: degraded no-daemon check
+
+Daemon stopped (`liveness` is `stopped` or `never_started`). New Agent chat:
+
+```
+Call proactive_check. Don't guess.
+```
+
+Checkpoint: the tool runs with no daemon. `all_clear=false`. `freshness.gmail.status` and `freshness.calendar.status` are `not_configured`. `warnings` is non-empty.
+
+Failure: tool missing, hang, or `all_clear=true`.
+
+### M4 Scenario 5: simultaneous daemon + Cursor SQLite
+
+Start scenario 2 window A again. New Agent chat:
+
+```
+Call get_status, then list_situations with no state. Don't guess.
+```
+
+Window B: `uv run proactive-mcp status`
+
+Checkpoint: both sides return. Cursor `get_status` shows `daemon.status=running`, `database.journal_mode=wal`, `migration_version=7`. `list_situations` returns `items` (no error). CLI exit 0. No `SQLITE_BUSY`.
+
+Ctrl+C the daemon.
+
+Failure: red MCP, locked DB, or one side errors while the other is open.
+
+### M4 Scenario 6: real Windows WinRT toast
+
+Run scenario 7, then confirm the toast here.
+
+Checkpoint: one Action Center toast from WinRT `ToastNotificationManager` (not a MessageBox). The OS payload is a fixed PII-free label: `Reply needed`, `Calendar conflict`, or `Upcoming personal occasion`. Mother's Birthday is `Upcoming personal occasion`. No mail, calendar text, names, dates, or `evidence`. A later `--once` must not send a second toast.
+
+Failure: no toast, console-only text, two toasts, or any payload that is not one of those three labels.
+
+### M4 Scenario 7: shortened fallback trigger
+
+Config must already have `[fallback] priorities = ["high"]` and `wait_minutes = 1`. Create a synthetic Mother's Birthday. Run one daemon evaluation. **Leave the situation pending — do not `proactive_check`.** Cross the 1-minute boundary. Run another pass. Expect one toast and no resend.
+
+If `fallback.sent` is already > 0, use a different synthetic entity than `엄마` and repeat.
+
+```powershell
+Set-Location "$env:USERPROFILE\src\proactive-mcp"
+Write-Output "ANCHOR=$((Get-Date).Date.AddDays(3).ToString('--MM-dd'))"
+```
+
+New Agent chat. Remember only:
+
+```
+Use remember with kind=fact entity=엄마 entity_kind=person entity_path=가족/어머니 attribute=birthday content=엄마 생신 date_anchor=ANCHOR recurrence=yearly lead_days=7
+Don't call proactive_check.
+```
+
+Record the memory `id` only. Then:
+
+```powershell
+uv run proactive-mcp daemon --once
+Write-Output "pass1=$LASTEXITCODE"
+```
+
+List only (same or new chat):
+
+```
+Call list_situations state=pending. Do not call proactive_check.
+```
+
+Checkpoint after pass 1: exit 0; `created` is 1 if this occasion is new (0 if it already existed); `notifications=0`. List has one `personal_occasion`, `state=pending`, `priority=high`. No toast yet.
+
+```powershell
+Start-Sleep -Seconds 70
+uv run proactive-mcp daemon --once
+Write-Output "pass2=$LASTEXITCODE"
+uv run proactive-mcp daemon --once
+Write-Output "pass3=$LASTEXITCODE"
+uv run proactive-mcp status
+```
+
+Checkpoint after the wait: pass 2 `notifications=1` and one toast (scenario 6). Pass 3 `notifications=0`. Status `fallback.sent=1`, `fallback.failed=0`, `fallback.claimed=0`, `failure_codes=[]`, `migration_version=7`. A later `list_situations state=pending` still shows it (`pending`; fallback does not deliver).
+
+Failure: toast on pass 1, `notifications=0` on pass 2, resend on pass 3, any `proactive_check`, `fallback.failed>0`, or a prior `scope=type` mute.
+
+### M4 cleanup
+
+Ctrl+C any daemon. Do not attach `proactive.db`, `-wal`, `-shm`, `.proactive.db.init.lock`, `config.toml`, or credential files.
+
+Optional reset (quit Cursor first):
+
+```powershell
+$dir = Join-Path $env:USERPROFILE ".proactive-mcp"
+Remove-Item -Force -ErrorAction SilentlyContinue @(
+  (Join-Path $dir "proactive.db"),
+  (Join-Path $dir "proactive.db-wal"),
+  (Join-Path $dir "proactive.db-shm")
+)
+```
+
+### M4 문제 발생 시
+
+Comment on the M4 PR. No DB files, no memory/situation `content`, no entity labels, no `evidence`, no mail, no credentials, no real names or dates.
+
+Collect:
+
+1. Scenario number (prep, 1 `--once`, 2 continuous, 3 Cursor tools, 4 no-daemon, 5 simultaneous, 6 WinRT toast, 7 fallback)
+2. Commands and each exit code
+3. `generated_at` (when you captured this dump, ISO)
+4. PowerShell version and Windows build:
+
+```powershell
+$PSVersionTable.PSVersion
+[System.Environment]::OSVersion.VersionString
+uv --version
+git -C "$env:USERPROFILE\src\proactive-mcp" rev-parse --abbrev-ref HEAD
+git -C "$env:USERPROFILE\src\proactive-mcp" rev-parse HEAD
+```
+
+5. From `uv run proactive-mcp status` or `get_status`: `overall`, `database.status`, `database.journal_mode`, `database.migration_version`, `database.busy_timeout`, `google.gmail.status`, `google.calendar.status`, `google.*.error_code`, `daemon.status`, `daemon.liveness`, `daemon.cycle_count`, `fallback.claimed`, `fallback.sent`, `fallback.failed`, `fallback.failure_codes`, `budget.used`, `budget.remaining`, `budget.daily_budget`, `warnings`. Redact `database.path` to `.proactive-mcp\proactive.db`. Never include memory rows or situation `evidence` / `title` / `why_now`.
+6. From `--once`: exit code plus `created`, `notifications`, `gmail`, `calendar`, `sources`, `warning_count`
+7. Tool names and counts only (`items` length, `situations` length, `held_count`, `all_clear`, `state`, `priority`, `situation_type`, `scope`, `muted_types`)
+8. Redacted `icacls` on `%USERPROFILE%\.proactive-mcp` and `proactive.db` (`HOST\<you>:(F)`, no username)
+
+If every M4 scenario passed: scenarios 1 to 7 passed, `migration_version=7`, `fallback.sent=1` after scenario 7, one WinRT toast, no resend. Leave the DB and evidence off the comment.

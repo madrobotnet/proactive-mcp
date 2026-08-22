@@ -20,8 +20,8 @@ def test_migration_006_adds_generation_and_delivery_contract(tmp_path: Path) -> 
         connection = store.connection()
         version = store.status().migration_version
         # Then: generation state and delivery history exist.
-        assert tuple(number for number, _sql in load_migrations())[-1] == 6
-        assert version == 6
+        assert 6 in tuple(number for number, _sql in load_migrations())
+        assert version == 7
         assert table_names(connection) >= {
             "source_detection_generations",
             "situation_deliveries",

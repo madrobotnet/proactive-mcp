@@ -38,6 +38,9 @@ from .transport import GoogleAuthenticatedGetTransport
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from proactive_mcp.clock import Clock
+    from proactive_mcp.sources.credentials import GoogleCredential
+
 
 @dataclass(frozen=True, slots=True)
 class GoogleSetupOptions:
@@ -112,6 +115,27 @@ class _CalendarReadTransport:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class GoogleReadServiceFactory:
+    """Build one authenticated read service per loaded credential."""
+
+    store: Store
+    clock: Clock
+    credentials: CredentialStore
+
+    def open(self, credential: GoogleCredential) -> GoogleSyncService:
+        """Bind the read adapters of both sources to one credential."""
+        transport = GoogleAuthenticatedGetTransport(credential)
+        return GoogleSyncService(
+            GoogleReadDependencies(
+                store=self.store,
+                gmail=GmailAdapter(_GmailReadTransport(transport), self.clock),
+                calendar=CalendarAdapter(_CalendarReadTransport(transport), self.clock),
+                credentials=self.credentials,
+            )
+        )
+
+
 def run_google_read_smoke(
     database_path: Path,
     *,
@@ -146,6 +170,7 @@ __all__ = [
     "GoogleOAuthAuthorizationTimeoutError",
     "GoogleOAuthAuthorizer",
     "GoogleReadDependencies",
+    "GoogleReadServiceFactory",
     "GoogleReadSmokeDisabledError",
     "GoogleReadSummary",
     "GoogleSetupOptions",

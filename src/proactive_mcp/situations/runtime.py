@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
-from proactive_mcp.config import load_config, resolve_timezone
+from proactive_mcp.config import ProactiveConfig, load_config, resolve_timezone
 
 from .engine import SituationEngine
 from .policy import AttentionPolicy
@@ -25,6 +25,7 @@ class SituationRuntime:
 
     engine: SituationEngine
     attention: AttentionPolicy
+    config: ProactiveConfig
 
     @classmethod
     def from_config(
@@ -43,4 +44,5 @@ class SituationRuntime:
                 timezone,
                 config.attention,
             ),
+            config=config,
         )
