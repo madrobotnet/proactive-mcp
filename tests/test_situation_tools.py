@@ -5,15 +5,30 @@ from typing import TYPE_CHECKING, Final
 
 import pytest
 
+from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server.situation_requests import SituationRequestError
 from proactive_mcp.server.situation_responses import (
     ListSituationsResponse,
     ProactiveCheckResponse,
 )
-from proactive_mcp.store import InvalidSituationTransitionError, SituationNotFoundError
-from tests.daemon_test_support import birthday_memory
+from proactive_mcp.server.situation_tools import open_situation_service
+from proactive_mcp.sources.lazy_sync import LazySyncPolicy, SourceAccess
+from proactive_mcp.store import (
+    DaemonStatus,
+    DaemonStatusStore,
+    InvalidSituationTransitionError,
+    SituationNotFoundError,
+    Store,
+)
+from tests.daemon_test_support import (
+    FakeCredential,
+    FakeCredentialStore,
+    FakeReaderFactory,
+    StoreBackedReader,
+    birthday_memory,
+)
 from tests.memory_tools_stdio import json_text, memory_session
-from tests.situation_test_support import utc_datetime
+from tests.situation_test_support import FakeClock, utc_datetime
 from tests.situation_tool_support import (
     UNTRUSTED_SUBJECT,
     deliver_one,
@@ -23,9 +38,12 @@ from tests.situation_tool_support import (
     tool_schema,
     write_config,
 )
+from tests.test_daemon_cli import start_live_overridden_watcher
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from proactive_mcp.clock import Clock
 
 _NOON = utc_datetime(2026, 8, 21, 12)
 _QUIET_NIGHT = utc_datetime(2026, 8, 21, 22)
@@ -326,3 +344,104 @@ async def test_acknowledging_an_unknown_situation_reports_that_over_stdio(
 
     # Then: the store's refusal survives the tool boundary intact.
     assert "404" in error_text(refused)
+
+
+def test_proactive_check_does_not_inline_read_a_sixty_minute_override_daemon(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: configured sources and a still-running daemon started at 60 minutes.
+    paths, clock = start_live_overridden_watcher(tmp_path, monkeypatch)
+    clock.advance(timedelta(minutes=16))
+    seen: list[timedelta | None] = []
+    original_status = DaemonStatusStore.status
+
+    def capture_status(
+        self: DaemonStatusStore, *, stale_after: timedelta | None = None
+    ) -> DaemonStatus:
+        seen.append(stale_after)
+        return original_status(self, stale_after=stale_after)
+
+    monkeypatch.setattr(DaemonStatusStore, "status", capture_status)
+    with Store(paths.database, clock=clock) as store:
+        store.set_google_auth_state("configured")
+        reader = StoreBackedReader(store=store)
+
+        def open_access(
+            _paths: ProactivePaths, bound: Store, _clock: Clock
+        ) -> SourceAccess:
+            return SourceAccess(
+                sync_state=bound,
+                credentials=FakeCredentialStore(FakeCredential()),
+                readers=FakeReaderFactory(reader=reader),
+            )
+
+        monkeypatch.setattr(
+            "proactive_mcp.server.situation_tools.open_source_access",
+            open_access,
+        )
+        service = open_situation_service(store, clock, paths)
+
+        # When: proactive_check evaluates lazy-sync 16 minutes after the beat.
+        _ = service.proactive_check()
+
+    # Then: liveness uses the 60-minute cadence, so no duplicate inline read.
+    assert seen == [
+        None,
+        LazySyncPolicy.for_poll_interval(timedelta(minutes=60)).daemon_stale_after,
+    ]
+    assert reader.reads == []
+
+
+def test_never_started_lazy_sync_uses_configured_poll_interval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a 7-minute config and no daemon start record.
+    paths = ProactivePaths.for_database(tmp_path / "proactive.db")
+    _ = paths.config.write_text(
+        "[daemon]\npoll_interval_minutes = 7\n",
+        encoding="utf-8",
+    )
+    clock = FakeClock(_NOON)
+    seen: list[timedelta | None] = []
+    original_status = DaemonStatusStore.status
+
+    def capture_status(
+        self: DaemonStatusStore, *, stale_after: timedelta | None = None
+    ) -> DaemonStatus:
+        seen.append(stale_after)
+        return original_status(self, stale_after=stale_after)
+
+    monkeypatch.setattr(DaemonStatusStore, "status", capture_status)
+    with Store(paths.database, clock=clock) as store:
+        store.set_google_auth_state("configured")
+        reader = StoreBackedReader(store=store)
+
+        def open_access(
+            _paths: ProactivePaths, bound: Store, _clock: Clock
+        ) -> SourceAccess:
+            return SourceAccess(
+                sync_state=bound,
+                credentials=FakeCredentialStore(FakeCredential()),
+                readers=FakeReaderFactory(reader=reader),
+            )
+
+        monkeypatch.setattr(
+            "proactive_mcp.server.situation_tools.open_source_access",
+            open_access,
+        )
+        service = open_situation_service(store, clock, paths)
+
+        # When: proactive_check evaluates lazy-sync with no persisted cadence.
+        persisted = store.daemon.status().poll_interval
+        _ = service.proactive_check()
+
+    # Then: the configured interval is the never-started liveness fallback.
+    assert persisted is None
+    assert seen == [
+        None,
+        None,
+        LazySyncPolicy.for_poll_interval(timedelta(minutes=7)).daemon_stale_after,
+    ]
+    assert reader.reads == [1]

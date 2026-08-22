@@ -130,6 +130,9 @@ def run_daemon(*, once: bool, poll_interval_minutes: float | None) -> int:
         interval = config.daemon.poll_interval if override is None else override
         with Store(paths.database, clock=clock) as store:
             daemon = open_watcher_daemon(store, clock)
+            # Persist the effective CLI/config cadence before the library start
+            # so a later same-owner claim keeps this interval on the liveness row.
+            store.daemon.record_start(os.getpid(), poll_interval=interval)
             if once:
                 _emit_once(daemon.run_once())
                 return 0

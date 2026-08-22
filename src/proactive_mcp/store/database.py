@@ -20,9 +20,11 @@ from .migrate import current_version
 
 if TYPE_CHECKING:
     import sqlite3
+    from datetime import timedelta
     from pathlib import Path
     from types import TracebackType
 
+    from ._lazy_sync_lease import LazySyncLease
     from ._source_generation import SourceGeneration, SourceGenerationState
     from .daemon_status import DaemonStatusStore
     from .fallbacks import FallbackStore
@@ -167,6 +169,20 @@ class Store:
     def fallbacks(self) -> FallbackStore:
         """Return the one-shot OS notification fallback operations."""
         return self._require().fallbacks
+
+    def acquire_lazy_sync_lease(
+        self,
+        *,
+        lease_duration: timedelta,
+    ) -> LazySyncLease | None:
+        """Atomically reserve one degraded remote read until release or expiry."""
+        return self._require().sync.acquire_lazy_sync_lease(
+            lease_duration=lease_duration
+        )
+
+    def release_lazy_sync_lease(self, lease: LazySyncLease) -> bool:
+        """Release a degraded-read reservation if this lease still owns it."""
+        return self._require().sync.release_lazy_sync_lease(lease)
 
     def reserve_source_generation(self, source: SourceName) -> SourceGeneration:
         """Atomically issue the next detector generation for one source."""

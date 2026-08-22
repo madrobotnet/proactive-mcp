@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
+from typing import NoReturn
+
+import pytest
 
 from proactive_mcp.delivery.daemon import (
     DaemonDependencies,
@@ -44,6 +48,54 @@ def _daemon(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _RaisingEvaluation:
+    """Fail the evaluation pass the way a lost database or socket would."""
+
+    error: Exception
+
+    def run_once(self) -> NoReturn:
+        raise self.error
+
+
+@dataclass(frozen=True, slots=True)
+class _RaisingNotifier:
+    """Succeed at evaluation but fail while raising the OS notification."""
+
+    error: Exception
+
+    def dispatch(self, now: object) -> NoReturn:
+        del now
+        raise self.error
+
+
+@dataclass(frozen=True, slots=True)
+class _FencedHeartbeat:
+    """Refuse a second live claimant while still recording every call."""
+
+    incumbent_pid: int
+    events: list[str] = field(default_factory=list)
+
+    def try_record_start(
+        self, pid: int, *, poll_interval: timedelta | None = None
+    ) -> bool:
+        del poll_interval
+        if pid != self.incumbent_pid:
+            self.events.append(f"reject:{pid}")
+            return False
+        self.events.append(f"start:{pid}")
+        return True
+
+    def record_start(self, pid: int) -> None:
+        _ = self.try_record_start(pid)
+
+    def record_heartbeat(self) -> None:
+        self.events.append("heartbeat")
+
+    def record_stop(self) -> None:
+        self.events.append("stop")
+
+
 def test_once_path_runs_exactly_one_pass_and_never_waits() -> None:
     # Given: a watcher whose collaborators record every call they receive.
     clock = FakeClock(_START)
@@ -64,6 +116,30 @@ def test_once_path_runs_exactly_one_pass_and_never_waits() -> None:
     assert len(completed.notifications) == 1
     assert notifier.dispatches == [_START + timedelta(minutes=2)]
     assert clock.now() == _START + timedelta(minutes=2)
+
+
+def test_once_path_stops_daemon_status_when_evaluation_raises() -> None:
+    # Given: a watcher whose evaluation fails after start is recorded.
+    clock = FakeClock(_START)
+    heartbeat = RecordingHeartbeat()
+    notifier = RecordingNotifier()
+    daemon = WatcherDaemon(
+        DaemonDependencies(
+            pid=_PID,
+            clock=clock,
+            heartbeat=heartbeat,
+            evaluation=_RaisingEvaluation(RuntimeError("evaluation failed")),
+            notifier=notifier,
+        )
+    )
+
+    # When: the library once-path is interrupted by that evaluation error.
+    with pytest.raises(RuntimeError, match="evaluation failed"):
+        _ = daemon.run_once()
+
+    # Then: the dead process must not keep the liveness row running.
+    assert notifier.dispatches == []
+    assert heartbeat.events == [f"start:{_PID}", "stop"]
 
 
 def test_continuous_loop_waits_the_poll_interval_left_after_each_pass() -> None:
@@ -92,6 +168,122 @@ def test_continuous_loop_waits_the_poll_interval_left_after_each_pass() -> None:
         "heartbeat",
         "stop",
     ]
+
+
+def test_non_owner_once_path_does_not_record_stop() -> None:
+    # Given: a live incumbent and a second watcher that fails its pass.
+    heartbeat = _FencedHeartbeat(incumbent_pid=1111)
+    notifier = RecordingNotifier()
+    daemon = WatcherDaemon(
+        DaemonDependencies(
+            pid=_PID,
+            clock=FakeClock(_START),
+            heartbeat=heartbeat,
+            evaluation=_RaisingEvaluation(RuntimeError("evaluation failed")),
+            notifier=notifier,
+        )
+    )
+
+    # When: the once-path cannot claim ownership and then the pass raises.
+    with pytest.raises(RuntimeError, match="evaluation failed"):
+        _ = daemon.run_once()
+
+    # Then: the challenger must not heartbeat or stop the incumbent.
+    assert notifier.dispatches == []
+    assert heartbeat.events == [f"reject:{_PID}"]
+
+
+def test_non_owner_continuous_loop_does_not_record_stop() -> None:
+    # Given: a live incumbent and a second watcher that completes one pass.
+    clock = FakeClock(_START)
+    runner = FakeEvaluationRunner(result=local_only_pass(), clock=clock)
+    heartbeat = _FencedHeartbeat(incumbent_pid=1111)
+
+    # When: the loop runs until the scheduler stops it.
+    run = WatcherDaemon(
+        DaemonDependencies(
+            pid=_PID,
+            clock=clock,
+            heartbeat=heartbeat,
+            evaluation=runner,
+            notifier=RecordingNotifier(),
+        )
+    ).run_forever(
+        DaemonSchedule(
+            scheduler=RecordingScheduler(stop_after=1),
+            poll_interval=_POLL_INTERVAL,
+        )
+    )
+
+    # Then: work may run, but liveness writes stay with the owner.
+    assert run.pass_count == 1
+    assert len(runner.passes) == 1
+    assert heartbeat.events == [f"reject:{_PID}"]
+
+
+def test_second_live_watcher_does_not_stop_the_owner(tmp_path: Path) -> None:
+    # Given: a live owner that has already completed one cycle.
+    clock = FakeClock(_START)
+    database = tmp_path / "proactive.db"
+    with (
+        Store(database, clock=clock) as owner_store,
+        Store(database, clock=clock) as other_store,
+    ):
+        claimed = owner_store.daemon.try_record_start(
+            pid=_PID,
+            poll_interval=_POLL_INTERVAL,
+        )
+        owner_store.daemon.record_heartbeat()
+        challenger = WatcherDaemon(
+            DaemonDependencies(
+                pid=7777,
+                clock=clock,
+                heartbeat=other_store.daemon,
+                evaluation=_RaisingEvaluation(RuntimeError("evaluation failed")),
+                notifier=RecordingNotifier(),
+            )
+        )
+
+        # When: a second watcher starts and then fails its pass.
+        with pytest.raises(RuntimeError, match="evaluation failed"):
+            _ = challenger.run_once()
+        status = owner_store.daemon.status(stale_after=_POLL_INTERVAL)
+
+    # Then: the incumbent is still running under its own pid.
+    assert claimed is True
+    assert status.liveness == "running"
+    assert status.pid == _PID
+    assert status.cycle_count == 1
+    assert status.started_at == _START.isoformat()
+
+
+def test_continuous_loop_stops_daemon_status_when_notification_raises() -> None:
+    # Given: a watcher whose OS notification fails after the first evaluation.
+    clock = FakeClock(_START)
+    runner = FakeEvaluationRunner(result=local_only_pass(), clock=clock)
+    heartbeat = RecordingHeartbeat()
+    daemon = WatcherDaemon(
+        DaemonDependencies(
+            pid=_PID,
+            clock=clock,
+            heartbeat=heartbeat,
+            evaluation=runner,
+            notifier=_RaisingNotifier(RuntimeError("notification failed")),
+        )
+    )
+
+    # When: the loop is interrupted by that notification error.
+    with pytest.raises(RuntimeError, match="notification failed"):
+        _ = daemon.run_forever(
+            DaemonSchedule(
+                scheduler=RecordingScheduler(stop_after=3),
+                poll_interval=_POLL_INTERVAL,
+            )
+        )
+
+    # Then: the dead process must not keep the liveness row running.
+    assert len(runner.passes) == 1
+    assert heartbeat.events == [f"start:{_PID}", "stop"]
 
 
 def test_pass_longer_than_the_poll_interval_schedules_no_negative_wait() -> None:

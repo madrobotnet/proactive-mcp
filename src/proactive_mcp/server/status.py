@@ -130,10 +130,11 @@ def status_response(
         evaluate_source_freshness(gmail_state, now),
         evaluate_source_freshness(calendar_state, now),
     )
+    poll_interval = (
+        store.daemon.status().poll_interval or runtime.config.daemon.poll_interval
+    )
     daemon = store.daemon.status(
-        stale_after=LazySyncPolicy.for_poll_interval(
-            runtime.config.daemon.poll_interval
-        ).daemon_stale_after
+        stale_after=LazySyncPolicy.for_poll_interval(poll_interval).daemon_stale_after
     )
     fallback = _fallback_status(store)
     observed = store.status()

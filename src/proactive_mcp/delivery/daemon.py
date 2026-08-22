@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from proactive_mcp.scheduler import remaining_delay
 
@@ -42,6 +42,27 @@ class HeartbeatRecorder(Protocol):
     def record_stop(self) -> None:
         """Record a clean shutdown of this process."""
         ...
+
+
+@runtime_checkable
+class _ClaimableHeartbeat(Protocol):
+    """A recorder that returns whether this run owns the singleton row."""
+
+    def try_record_start(
+        self,
+        pid: int,
+        *,
+        poll_interval: timedelta | None = None,
+    ) -> bool:
+        """Claim the row and return whether this run is the owner."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnerToken:
+    """Proof that this watcher claimed the singleton liveness row."""
+
+    pid: int
 
 
 class EvaluationRunner(Protocol):
@@ -122,34 +143,62 @@ class WatcherDaemon:
     def run_once(self) -> DaemonPass:
         """Claim liveness, run exactly one pass, and stop without waiting."""
         heartbeat = self._dependencies.heartbeat
-        heartbeat.record_start(self._dependencies.pid)
-        completed = self._run_pass()
-        heartbeat.record_stop()
-        return completed
+        owner = self._claim(heartbeat)
+        try:
+            return self._run_pass(owner)
+        finally:
+            self._release(heartbeat, owner)
 
     def run_forever(self, schedule: DaemonSchedule) -> DaemonRun:
         """Run passes on a fixed cadence until the scheduler ends the loop."""
         clock = self._dependencies.clock
         heartbeat = self._dependencies.heartbeat
-        heartbeat.record_start(self._dependencies.pid)
+        owner = self._claim(heartbeat, poll_interval=schedule.poll_interval)
         passes = 0
         notifications = 0
-        running = True
-        while running:
-            started = clock.now()
-            completed = self._run_pass()
-            passes += 1
-            notifications += len(completed.notifications)
-            running = schedule.scheduler.wait(
-                remaining_delay(schedule.poll_interval, clock.now() - started)
-            )
-        heartbeat.record_stop()
-        return DaemonRun(pass_count=passes, notification_count=notifications)
+        try:
+            running = True
+            while running:
+                started = clock.now()
+                completed = self._run_pass(owner)
+                passes += 1
+                notifications += len(completed.notifications)
+                running = schedule.scheduler.wait(
+                    remaining_delay(schedule.poll_interval, clock.now() - started)
+                )
+            return DaemonRun(pass_count=passes, notification_count=notifications)
+        finally:
+            self._release(heartbeat, owner)
 
-    def _run_pass(self) -> DaemonPass:
+    def _claim(
+        self,
+        heartbeat: HeartbeatRecorder,
+        *,
+        poll_interval: timedelta | None = None,
+    ) -> _OwnerToken | None:
+        """Return an owner token when this run claimed the singleton row."""
+        pid = self._dependencies.pid
+        if isinstance(heartbeat, _ClaimableHeartbeat):
+            claimed = heartbeat.try_record_start(pid, poll_interval=poll_interval)
+            return _OwnerToken(pid) if claimed else None
+        heartbeat.record_start(pid)
+        return _OwnerToken(pid)
+
+    def _run_pass(self, owner: _OwnerToken | None) -> DaemonPass:
+        """Evaluate, notify, and heartbeat only when this run owns liveness."""
         evaluation = self._dependencies.evaluation.run_once()
         notifications = self._dependencies.notifier.dispatch(
             self._dependencies.clock.now()
         )
-        self._dependencies.heartbeat.record_heartbeat()
+        if owner is not None:
+            self._dependencies.heartbeat.record_heartbeat()
         return DaemonPass(evaluation=evaluation, notifications=tuple(notifications))
+
+    @staticmethod
+    def _release(
+        heartbeat: HeartbeatRecorder,
+        owner: _OwnerToken | None,
+    ) -> None:
+        """Stop only the row this run owns."""
+        if owner is not None:
+            heartbeat.record_stop()

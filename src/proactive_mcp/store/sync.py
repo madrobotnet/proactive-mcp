@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import TypeAdapter
 
+from ._lazy_sync_lease import LazySyncLease, LazySyncLeaseStore
 from ._source_generation import (
     SourceGeneration,
     SourceGenerationState,
@@ -19,6 +20,8 @@ from ._source_generation import (
 )
 
 if TYPE_CHECKING:
+    from datetime import timedelta
+
     from proactive_mcp.clock import Clock
 
 SourceName = Literal["gmail", "calendar"]
@@ -68,6 +71,7 @@ class SyncStore:
     _clock: Clock
     _states: list[SourceSyncState]
     _generations: SourceGenerationStore
+    _lazy_sync_leases: LazySyncLeaseStore
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
         """Bind source synchronization operations to a connection and clock."""
@@ -75,11 +79,24 @@ class SyncStore:
         self._clock = clock
         self._states = []
         self._generations = SourceGenerationStore(connection)
+        self._lazy_sync_leases = LazySyncLeaseStore(connection, clock)
         connection.create_function(
             "_proactive_capture_source_sync_state",
             1,
             self._capture_state,
         )
+
+    def acquire_lazy_sync_lease(
+        self,
+        *,
+        lease_duration: timedelta,
+    ) -> LazySyncLease | None:
+        """Atomically reserve one degraded remote read until release or expiry."""
+        return self._lazy_sync_leases.acquire(lease_duration=lease_duration)
+
+    def release_lazy_sync_lease(self, lease: LazySyncLease) -> bool:
+        """Release a degraded-read reservation only when its token still owns it."""
+        return self._lazy_sync_leases.release(lease)
 
     def reserve_source_generation(self, source: SourceName) -> SourceGeneration:
         """Atomically issue the next generation for one source."""

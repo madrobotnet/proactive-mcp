@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, timedelta
+from threading import Barrier, Event, Lock
 from typing import TYPE_CHECKING
+
+import pytest
 
 from proactive_mcp.delivery.evaluation import (
     EvaluationDependencies,
     EvaluationService,
     PreparedSources,
     SkippedSources,
+    SourceOutcome,
 )
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.situations.engine import SituationEngine
@@ -30,9 +35,13 @@ from tests.daemon_test_support import (
     stale_reply_thread,
 )
 from tests.situation_test_support import FakeClock, utc_datetime
+from tests.situation_tool_support import RACE_TIMEOUT, BarrierClock
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
+
+    from proactive_mcp.sources.credentials import GoogleCredential
 
 _PID = 4242
 _POLL_INTERVAL = timedelta(minutes=5)
@@ -48,6 +57,72 @@ class _Degraded:
     provider: LazySourceProvider
     evaluator: SituationEngine
     reader: StoreBackedReader
+
+
+@dataclass(frozen=True, slots=True)
+class _LazyAttempt:
+    """What one racing instance observed at the lazy-sync gate."""
+
+    outcome: SourceOutcome
+    openings: int
+    reads: int
+
+
+class _InFlightGate:
+    """Hold the first remote open until the peer has also resolved.
+
+    Two openings release immediately (the current missing-lease path).
+    One opening waits for the peer to finish without opening, which is
+    the overlap a later atomic reservation must preserve.
+    """
+
+    _lock: Lock
+    _in_read: int
+    _finished: int
+    _release: Event
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._in_read = 0
+        self._finished = 0
+        self._release = Event()
+
+    def enter_read(self) -> None:
+        with self._lock:
+            self._in_read += 1
+            if self._in_read == 2 or self._finished >= 1:
+                self._release.set()
+        assert self._release.wait(timeout=RACE_TIMEOUT)
+
+    def finish(self) -> None:
+        with self._lock:
+            self._finished += 1
+            if self._in_read >= 1:
+                self._release.set()
+
+
+@dataclass(frozen=True, slots=True)
+class _GatedReaderFactory:
+    """Open the prepared reader only after the shared in-flight gate."""
+
+    inner: FakeReaderFactory
+    gate: _InFlightGate
+
+    def open(self, credential: GoogleCredential) -> StoreBackedReader:
+        self.gate.enter_read()
+        return self.inner.open(credential)
+
+
+_REMOTE_OPEN_FAILED = RuntimeError("remote open failed")
+
+
+@dataclass(frozen=True, slots=True)
+class _BoomReaderFactory:
+    """Fail the remote open after the lazy-sync lease has already been taken."""
+
+    def open(self, credential: GoogleCredential) -> StoreBackedReader:
+        del credential
+        raise _REMOTE_OPEN_FAILED
 
 
 def _degraded(
@@ -81,6 +156,38 @@ def _synced_store(store: Store, clock: FakeClock, age: timedelta) -> None:
     store.record_sync_success("gmail")
     store.record_sync_success("calendar")
     clock.advance(age)
+
+
+def _prepare_in_worker(
+    database: Path,
+    now: datetime,
+    barrier: Barrier,
+    gate: _InFlightGate,
+) -> _LazyAttempt:
+    """Enter the lazy-sync gate from one instance sharing the database."""
+    clock = FakeClock(now)
+    with Store(database, clock=clock) as store:
+        reader = StoreBackedReader(store=store)
+        factory = FakeReaderFactory(reader=reader)
+        provider = LazySourceProvider(
+            access=SourceAccess(
+                sync_state=store,
+                credentials=FakeCredentialStore(FakeCredential()),
+                readers=_GatedReaderFactory(factory, gate),
+            ),
+            liveness=store.daemon,
+            clock=BarrierClock(clock, barrier),
+            policy=LazySyncPolicy.for_poll_interval(_POLL_INTERVAL),
+        )
+        try:
+            outcome = provider.prepare_sources()
+        finally:
+            gate.finish()
+        return _LazyAttempt(
+            outcome=outcome,
+            openings=len(factory.openings),
+            reads=len(reader.reads),
+        )
 
 
 def test_lazy_sync_reads_sources_when_no_daemon_ran_and_data_is_stale(
@@ -183,6 +290,71 @@ def test_lazy_sync_yields_to_a_read_attempt_another_instance_just_made(
     assert (
         "google: another read attempt is in flight; read skipped"
     ) in completed.warnings
+
+
+def test_concurrent_lazy_reads_share_one_in_flight_remote_attempt(
+    tmp_path: Path,
+) -> None:
+    # Given: two server instances sharing one stale configured database.
+    database = tmp_path / "proactive.db"
+    clock = FakeClock(_START)
+    with Store(database, clock=clock) as store:
+        _synced_store(store, clock, _STALE)
+        now = clock.now()
+    barrier = Barrier(2)
+    gate = _InFlightGate()
+
+    # When: both pass the degraded-mode clock read at the same instant.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(
+            executor.submit(_prepare_in_worker, database, now, barrier, gate)
+            for _ in range(2)
+        )
+    attempts = tuple(future.result(timeout=RACE_TIMEOUT) for future in futures)
+
+    # Then: one remote reader runs and the other names the in-flight skip.
+    remote_reads = (
+        sum(item.openings for item in attempts),
+        sum(item.reads for item in attempts),
+    )
+    assert remote_reads == (1, 1)
+    prepared = tuple(
+        item.outcome for item in attempts if isinstance(item.outcome, PreparedSources)
+    )
+    skipped = tuple(
+        item.outcome for item in attempts if isinstance(item.outcome, SkippedSources)
+    )
+    assert len(prepared) == 1
+    assert skipped == (SkippedSources("sync_in_flight"),)
+
+
+def test_lazy_sync_releases_the_lease_when_the_remote_open_fails(
+    tmp_path: Path,
+) -> None:
+    # Given: stale configured sources whose first remote open raises.
+    clock = FakeClock(_START)
+    with Store(tmp_path / "proactive.db", clock=clock) as store:
+        _synced_store(store, clock, _STALE)
+        failing = LazySourceProvider(
+            access=SourceAccess(
+                sync_state=store,
+                credentials=FakeCredentialStore(FakeCredential()),
+                readers=_BoomReaderFactory(),
+            ),
+            liveness=store.daemon,
+            clock=clock,
+            policy=LazySyncPolicy.for_poll_interval(_POLL_INTERVAL),
+        )
+        with pytest.raises(RuntimeError, match="remote open failed"):
+            _ = failing.prepare_sources()
+
+        # When: a later instance evaluates after that failed open.
+        recovered = _degraded(store, clock, StoreBackedReader(store=store))
+        completed = recovered.service.run_once()
+
+    # Then: the failed attempt released the lease instead of wedging the gate.
+    assert isinstance(completed.sources, PreparedSources)
+    assert recovered.reader.reads == [1]
 
 
 def test_missing_credentials_still_detect_the_local_birthday(tmp_path: Path) -> None:

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
+
+if TYPE_CHECKING:
+    from datetime import timedelta
 
 from pydantic import TypeAdapter
 
@@ -20,6 +23,8 @@ class DaemonHeartbeat:
     started_at: str
     heartbeat_at: str
     cycle_count: int
+    owner_token: str | None
+    poll_interval_seconds: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +36,7 @@ class DaemonStatus:
     started_at: str | None
     heartbeat_at: str | None
     cycle_count: int
+    poll_interval: timedelta | None = None
 
 
 NEVER_STARTED: Final[DaemonStatus] = DaemonStatus(

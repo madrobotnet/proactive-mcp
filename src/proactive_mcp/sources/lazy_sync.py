@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from proactive_mcp.store import (
         DaemonLiveness,
         DaemonStatus,
+        LazySyncLease,
         SourceSyncState,
         Store,
     )
@@ -67,10 +68,20 @@ class CredentialLoader(Protocol):
 
 
 class SourceStateReader(Protocol):
-    """Read the persisted synchronization state of both Google sources."""
+    """Read persisted source state and reserve one in-flight lazy read."""
 
     def list_source_sync(self) -> _SourceStates:
         """Return Gmail and Calendar sync state in a stable order."""
+        ...
+
+    def acquire_lazy_sync_lease(
+        self, *, lease_duration: timedelta
+    ) -> LazySyncLease | None:
+        """Atomically reserve one degraded remote read until release or expiry."""
+        ...
+
+    def release_lazy_sync_lease(self, lease: LazySyncLease) -> bool:
+        """Release a degraded-read reservation if this lease still owns it."""
         ...
 
 
@@ -95,8 +106,9 @@ class SourceAccess:
 class LazySyncPolicy:
     """When a tool-time read may stand in for the watcher daemon (§4.1).
 
-    ``min_attempt_interval`` keeps concurrent server instances off the same
-    read: the last recorded attempt, not a lease row, is the shared signal.
+    ``min_attempt_interval`` still throttles retries after a recorded attempt.
+    Concurrent first attempts take an atomic store lease of the same duration
+    before credentials or the remote reader are opened.
     """
 
     daemon_stale_after: timedelta
@@ -143,7 +155,10 @@ class LazySourceProvider:
             blocked = self._degraded_skip(states)
         if blocked is not None:
             return SkippedSources(blocked)
-        return _read(self.access)
+        return _read_with_lease(
+            self.access,
+            lease_duration=self.policy.min_attempt_interval,
+        )
 
     def _degraded_skip(self, states: _SourceStates) -> SourceSkipReason | None:
         if _daemon_owns_reads(
@@ -186,6 +201,19 @@ def open_source_access(
             credentials=credentials,
         ),
     )
+
+
+def _read_with_lease(
+    access: SourceAccess, *, lease_duration: timedelta
+) -> SourceOutcome:
+    """Read only after winning the singleton lease; always release it."""
+    lease = access.sync_state.acquire_lazy_sync_lease(lease_duration=lease_duration)
+    if lease is None:
+        return SkippedSources("sync_in_flight")
+    try:
+        return _read(access)
+    finally:
+        _ = access.sync_state.release_lazy_sync_lease(lease)
 
 
 def _read(access: SourceAccess) -> SourceOutcome:

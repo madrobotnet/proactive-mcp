@@ -12,6 +12,7 @@ from ._fallback_models import (
     FallbackOutcome,
     FallbackRecord,
 )
+from ._lazy_sync_lease import InvalidLazySyncLeaseDurationError, LazySyncLease
 from ._situation_models import (
     ACTIVE_SITUATION_STATES,
     DeliveryClaim,
@@ -33,7 +34,7 @@ from ._source_generation import (
     SourceGenerationState,
     SourceGenerationStatus,
 )
-from .daemon_status import DaemonStatusStore
+from .daemon_status import DaemonStatusStore, InvalidDaemonPollIntervalError
 from .database import (
     DEFAULT_BUSY_TIMEOUT_MS,
     DatabaseStatus,
@@ -95,7 +96,10 @@ __all__ = [
     "FallbackOutcome",
     "FallbackRecord",
     "FallbackStore",
+    "InvalidDaemonPollIntervalError",
+    "InvalidLazySyncLeaseDurationError",
     "InvalidSituationTransitionError",
+    "LazySyncLease",
     "MemoryAttribute",
     "MemoryItem",
     "MemoryKind",

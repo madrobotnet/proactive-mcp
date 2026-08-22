@@ -155,6 +155,9 @@ def open_situation_service(
 ) -> SituationToolService:
     """Wire one degraded-mode tool service for an already open store (§4.1)."""
     runtime = SituationRuntime.from_config(store, clock, paths.config)
+    poll_interval = (
+        store.daemon.status().poll_interval or runtime.config.daemon.poll_interval
+    )
     return SituationToolService(
         SituationToolDependencies(
             store=store,
@@ -167,9 +170,7 @@ def open_situation_service(
                         access=open_source_access(paths, store, clock),
                         liveness=store.daemon,
                         clock=clock,
-                        policy=LazySyncPolicy.for_poll_interval(
-                            runtime.config.daemon.poll_interval
-                        ),
+                        policy=LazySyncPolicy.for_poll_interval(poll_interval),
                     ),
                 )
             ),

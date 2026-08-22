@@ -7,12 +7,14 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 
+from proactive_mcp.config import load_config
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server import StatusResponse, build_status
 from proactive_mcp.server.status import status_response
 from proactive_mcp.store import FallbackClaim, Store
 from tests.situation_test_support import FakeClock, utc_datetime
 from tests.situation_tool_support import UNTRUSTED_SUBJECT, pending_detection
+from tests.test_daemon_cli import start_live_overridden_watcher
 
 _PID = 4242
 _FALLBACK_WAIT = timedelta(minutes=30)
@@ -149,3 +151,44 @@ def test_status_is_healthy_only_when_no_surface_warns(tmp_path: Path) -> None:
     assert status.daemon.liveness == "running"
     assert status.warnings == ()
     assert status.overall == "ok"
+
+
+def test_status_keeps_a_sixty_minute_override_daemon_running_at_sixteen_minutes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a 5-minute config and a still-running daemon started at 60 minutes.
+    paths, clock = start_live_overridden_watcher(tmp_path, monkeypatch)
+
+    # When: status is built 16 minutes after the last heartbeat.
+    clock.advance(timedelta(minutes=16))
+    with Store(paths.database, clock=clock) as store:
+        status = status_response(store, clock, paths)
+
+    # Then: the override is visible, so the watcher is not reported stale.
+    assert load_config(paths.config).daemon.poll_interval == timedelta(minutes=5)
+    assert status.daemon.liveness == "running"
+    assert status.daemon.status == "running"
+    assert all("heartbeat is stale" not in warning for warning in status.warnings)
+
+
+def test_status_never_started_falls_back_to_configured_cadence(
+    tmp_path: Path,
+) -> None:
+    # Given: a non-default poll interval and no daemon start record.
+    paths = ProactivePaths.for_database(tmp_path / "proactive.db")
+    _ = paths.config.write_text(
+        "[daemon]\npoll_interval_minutes = 60\n",
+        encoding="utf-8",
+    )
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+
+    # When: status is built before any watcher has claimed the row.
+    with Store(paths.database, clock=clock) as store:
+        status = status_response(store, clock, paths)
+
+    # Then: missing persisted cadence is never-started, not an implied stale beat.
+    assert load_config(paths.config).daemon.poll_interval == timedelta(minutes=60)
+    assert status.daemon.liveness == "never_started"
+    assert status.daemon.status == "not_running"
+    assert any("never run" in warning for warning in status.warnings)
