@@ -516,9 +516,27 @@ A Routine will happily run on schedule and accomplish nothing here, because its 
 
 ## OS scheduler handoff
 
-Grok CLI and Codex CLI have no scheduler, so the OS supplies one. The pattern is identical on both: a small wrapper script sets an explicit `PATH`, runs the CLI once with a headless prompt, discards the agent's output, and appends a single fixed-format success or failure marker to a log.
+Grok CLI and Codex CLI have no scheduler, so the OS supplies one. A scheduled
+run must do more than claim a situation: it must make the result visible.
+Otherwise `proactive_check` marks the situation `delivered`, the discarded
+response becomes its only delivery, and the user never sees it.
 
-**Discard the output.** The agent's stdout can contain email subjects, sender names, and calendar details. Writing that to a log file violates §9.2. See [Log privacy rules](#log-privacy-rules).
+The wrappers below use a narrow boundary:
+
+1. Capture the agent's final stdout in process memory only.
+2. Accept exactly `PROACTIVE_ATTENTION` or `PROACTIVE_NONE`.
+3. Translate `PROACTIVE_ATTENTION` into a fixed, PII-free native OS
+   notification. Never pass agent output into the notification.
+4. Persist only a timestamp, CLI name, fixed result/reason, notification status,
+   and exit code.
+
+The scheduled prompt maps either a non-empty `situations` array or any freshness
+warning to `PROACTIVE_ATTENTION`; healthy empty results map to
+`PROACTIVE_NONE`. Unexpected output is a failure, not text to salvage. After an
+attention or failure notification, open the named agent and inspect recent
+delivered situations with `list_situations(state=delivered)` and source
+freshness with `get_status`;
+`proactive_check` will not return an already claimed situation.
 
 ### Linux and macOS: cron
 
@@ -532,18 +550,79 @@ PATH="/home/you/.local/bin:/home/you/.grok/bin:/usr/local/bin:/usr/bin:/bin"
 REPO="/home/you/src/proactive-mcp"
 LOGDIR="$HOME/.proactive-mcp/logs"
 LOG="$LOGDIR/grok-cron.log"
+PROMPT='Call the proactive_check MCP tool exactly once and call no other tool. Your entire final response must be exactly PROACTIVE_ATTENTION if situations is non-empty or warnings is non-empty. Otherwise it must be exactly PROACTIVE_NONE. Output one token only, with no Markdown, punctuation, explanation, situation content, title, why_now, evidence, names, dates, mail, or calendar text.'
 
 mkdir -p "$LOGDIR"
 chmod 700 "$LOGDIR"
 
-if grok --cwd "$REPO" --no-alt-screen --output-format json \
-    --single 'Call the proactive_check MCP tool exactly once. Report any returned situations and freshness warnings.' \
-    >/dev/null 2>&1
-then
-  printf '%s grok success\n' "$(date -u +%FT%TZ)" >>"$LOG"
-else
-  printf '%s grok failure exit=%s\n' "$(date -u +%FT%TZ)" "$?" >>"$LOG"
+PLATFORM=$(uname -s)
+case "$PLATFORM" in
+  Linux)
+    command -v notify-send >/dev/null 2>&1 || {
+      printf '%s cli=grok result=failure reason=notifier_unavailable notify=none exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+      exit 3
+    }
+    ;;
+  Darwin)
+    command -v osascript >/dev/null 2>&1 || {
+      printf '%s cli=grok result=failure reason=notifier_unavailable notify=none exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+      exit 3
+    }
+    MACOS_SCRIPT=$(uv run --directory "$REPO" python -c 'from proactive_mcp.delivery.notify import MACOS_NOTIFICATION_SCRIPT; print(MACOS_NOTIFICATION_SCRIPT)')
+    [ -f "$MACOS_SCRIPT" ] || {
+      printf '%s cli=grok result=failure reason=notifier_unavailable notify=none exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+      exit 3
+    }
+    ;;
+  *)
+    printf '%s cli=grok result=failure reason=notifier_unavailable notify=none exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+    exit 3
+    ;;
+esac
+
+notify_fixed() {
+  if [ "$PLATFORM" = "Linux" ]; then
+    notify-send -- "$1" "$2"
+  else
+    osascript "$MACOS_SCRIPT" "$1" "$2"
+  fi
+}
+
+RAW=$(grok --cwd "$REPO" --no-alt-screen --single "$PROMPT" 2>/dev/null)
+CODE=$?
+
+if [ "$CODE" -ne 0 ]; then
+  if notify_fixed "Proactive check failed" "Open Grok to retry or inspect proactive status." >/dev/null 2>&1; then
+    NOTIFY=sent
+  else
+    NOTIFY=failed
+  fi
+  printf '%s cli=grok result=failure reason=agent_failed notify=%s exit=%s\n' "$(date -u +%FT%TZ)" "$NOTIFY" "$CODE" >>"$LOG"
+  exit "$CODE"
 fi
+
+case "$RAW" in
+  PROACTIVE_NONE)
+    printf '%s cli=grok result=none notify=none exit=0\n' "$(date -u +%FT%TZ)" >>"$LOG"
+    ;;
+  PROACTIVE_ATTENTION)
+    if notify_fixed "Proactive alert" "Open Grok to review proactive status." >/dev/null 2>&1; then
+      printf '%s cli=grok result=attention notify=sent exit=0\n' "$(date -u +%FT%TZ)" >>"$LOG"
+    else
+      printf '%s cli=grok result=failure reason=notify_failed notify=failed exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+      exit 3
+    fi
+    ;;
+  *)
+    if notify_fixed "Proactive check failed" "Open Grok to retry or inspect proactive status." >/dev/null 2>&1; then
+      NOTIFY=sent
+    else
+      NOTIFY=failed
+    fi
+    printf '%s cli=grok result=failure reason=invalid_token notify=%s exit=2\n' "$(date -u +%FT%TZ)" "$NOTIFY" >>"$LOG"
+    exit 2
+    ;;
+esac
 ```
 
 Create `~/bin/proactive-cron-codex`:
@@ -556,18 +635,79 @@ PATH="/home/you/.local/bin:/usr/local/bin:/usr/bin:/bin"
 REPO="/home/you/src/proactive-mcp"
 LOGDIR="$HOME/.proactive-mcp/logs"
 LOG="$LOGDIR/codex-cron.log"
+PROMPT='Call the proactive_check MCP tool exactly once and call no other tool. Your entire final response must be exactly PROACTIVE_ATTENTION if situations is non-empty or warnings is non-empty. Otherwise it must be exactly PROACTIVE_NONE. Output one token only, with no Markdown, punctuation, explanation, situation content, title, why_now, evidence, names, dates, mail, or calendar text.'
 
 mkdir -p "$LOGDIR"
 chmod 700 "$LOGDIR"
 
-if codex exec --ephemeral --sandbox read-only --skip-git-repo-check -C "$REPO" \
-    'Call the proactive_check MCP tool exactly once. Report its situations, freshness, and warnings concisely. Do not modify files and do not run unrelated commands.' \
-    >/dev/null 2>&1
-then
-  printf '%s codex success\n' "$(date -u +%FT%TZ)" >>"$LOG"
-else
-  printf '%s codex failure exit=%s\n' "$(date -u +%FT%TZ)" "$?" >>"$LOG"
+PLATFORM=$(uname -s)
+case "$PLATFORM" in
+  Linux)
+    command -v notify-send >/dev/null 2>&1 || {
+      printf '%s cli=codex result=failure reason=notifier_unavailable notify=none exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+      exit 3
+    }
+    ;;
+  Darwin)
+    command -v osascript >/dev/null 2>&1 || {
+      printf '%s cli=codex result=failure reason=notifier_unavailable notify=none exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+      exit 3
+    }
+    MACOS_SCRIPT=$(uv run --directory "$REPO" python -c 'from proactive_mcp.delivery.notify import MACOS_NOTIFICATION_SCRIPT; print(MACOS_NOTIFICATION_SCRIPT)')
+    [ -f "$MACOS_SCRIPT" ] || {
+      printf '%s cli=codex result=failure reason=notifier_unavailable notify=none exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+      exit 3
+    }
+    ;;
+  *)
+    printf '%s cli=codex result=failure reason=notifier_unavailable notify=none exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+    exit 3
+    ;;
+esac
+
+notify_fixed() {
+  if [ "$PLATFORM" = "Linux" ]; then
+    notify-send -- "$1" "$2"
+  else
+    osascript "$MACOS_SCRIPT" "$1" "$2"
+  fi
+}
+
+RAW=$(codex exec --ephemeral --sandbox read-only --skip-git-repo-check -C "$REPO" "$PROMPT" 2>/dev/null)
+CODE=$?
+
+if [ "$CODE" -ne 0 ]; then
+  if notify_fixed "Proactive check failed" "Open Codex to retry or inspect proactive status." >/dev/null 2>&1; then
+    NOTIFY=sent
+  else
+    NOTIFY=failed
+  fi
+  printf '%s cli=codex result=failure reason=agent_failed notify=%s exit=%s\n' "$(date -u +%FT%TZ)" "$NOTIFY" "$CODE" >>"$LOG"
+  exit "$CODE"
 fi
+
+case "$RAW" in
+  PROACTIVE_NONE)
+    printf '%s cli=codex result=none notify=none exit=0\n' "$(date -u +%FT%TZ)" >>"$LOG"
+    ;;
+  PROACTIVE_ATTENTION)
+    if notify_fixed "Proactive alert" "Open Codex to review proactive status." >/dev/null 2>&1; then
+      printf '%s cli=codex result=attention notify=sent exit=0\n' "$(date -u +%FT%TZ)" >>"$LOG"
+    else
+      printf '%s cli=codex result=failure reason=notify_failed notify=failed exit=3\n' "$(date -u +%FT%TZ)" >>"$LOG"
+      exit 3
+    fi
+    ;;
+  *)
+    if notify_fixed "Proactive check failed" "Open Codex to retry or inspect proactive status." >/dev/null 2>&1; then
+      NOTIFY=sent
+    else
+      NOTIFY=failed
+    fi
+    printf '%s cli=codex result=failure reason=invalid_token notify=%s exit=2\n' "$(date -u +%FT%TZ)" "$NOTIFY" >>"$LOG"
+    exit 2
+    ;;
+esac
 ```
 
 macOS paths differ; Homebrew usually puts `uv` in `/opt/homebrew/bin`. Get the real values from `command -v uv grok codex` and substitute them.
@@ -579,7 +719,8 @@ chmod 700 ~/bin/proactive-cron-grok ~/bin/proactive-cron-codex
 crontab -e
 ```
 
-Add one line, not both, unless you actually want two agents racing for the same situations:
+Add one line, not both. Two scheduled collectors sharing a database race to
+claim the same situations:
 
 ```cron
 */15 * * * * /home/you/bin/proactive-cron-grok
@@ -619,69 +760,101 @@ codex mcp get proactive
 ~/bin/proactive-cron-grok && tail -n 1 ~/.proactive-mcp/logs/grok-cron.log
 ```
 
-A `success` marker means the process exited zero. It does **not** prove the model called `proactive_check`. To prove that, run the CLI once interactively against synthetic data and watch the tool call, or check that a `pending` situation moved to `delivered` with `list_situations` in an agent session.
+For a synthetic pending situation, a valid scheduled delivery requires all
+three: `pending` moves to `delivered`, the marker says
+`result=attention notify=sent exit=0`, and a fixed native notification appears.
+A marker or state transition alone is not delivery. If the notification says
+the check failed, open the named agent and inspect recent delivered situations;
+do not call `proactive_check` again as a retry.
 
 ### Windows: Task Scheduler
 
 Save `C:\Users\you\src\proactive-mcp-scripts\Invoke-ProactiveCheck.ps1`:
 
 ```powershell
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("grok", "codex")]
+    [string] $Cli
+)
+
 # Continue, not Stop: the script inspects the exit code itself and must reach its logging lines.
 $ErrorActionPreference = "Continue"
 
 $Repo   = "C:\Users\you\src\proactive-mcp"
 $LogDir = Join-Path $env:USERPROFILE ".proactive-mcp\logs"
-$Log    = Join-Path $LogDir "codex-task.log"
+$Log    = Join-Path $LogDir "$Cli-task.log"
+$Uv     = (Get-Command uv).Source
+$ToastScript = (& $Uv run --directory $Repo python -c `
+    "from proactive_mcp.delivery.notify import WINDOWS_TOAST_SCRIPT; print(WINDOWS_TOAST_SCRIPT)").Trim()
+$Prompt = "Call the proactive_check MCP tool exactly once and call no other tool. Your entire final response must be exactly PROACTIVE_ATTENTION if situations is non-empty or warnings is non-empty. Otherwise it must be exactly PROACTIVE_NONE. Output one token only, with no Markdown, punctuation, explanation, situation content, title, why_now, evidence, names, dates, mail, or calendar text."
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-# Agent output is discarded on purpose: it can carry mail and calendar content.
-& codex exec --ephemeral --sandbox read-only --skip-git-repo-check -C $Repo `
-    'Call the proactive_check MCP tool exactly once. Report its situations, freshness, and warnings concisely. Do not modify files and do not run unrelated commands.' `
-    *> $null
+function Send-FixedToast {
+    param([string] $Title, [string] $Body)
+    & powershell.exe -NoProfile -NonInteractive -File $ToastScript $Title $Body *> $null
+    return ($LASTEXITCODE -eq 0)
+}
 
-$code  = $LASTEXITCODE
-$stamp = (Get-Date -Format o)
+if (-not (Test-Path -LiteralPath $ToastScript -PathType Leaf)) {
+    Add-Content -LiteralPath $Log -Value "$(Get-Date -Format o) cli=$Cli result=failure reason=notifier_unavailable notify=none exit=3"
+    exit 3
+}
 
-if ($code -eq 0) {
-    Add-Content -LiteralPath $Log -Value "$stamp codex success exit=0"
+# Capture stdout in memory only. It is never written or passed to the notifier.
+if ($Cli -eq "codex") {
+    $raw = & codex exec --ephemeral --sandbox read-only --skip-git-repo-check -C $Repo $Prompt 2>$null
 }
 else {
-    Add-Content -LiteralPath $Log -Value "$stamp codex failure exit=$code"
+    $raw = & grok --cwd $Repo --no-alt-screen --single $Prompt 2>$null
 }
 
-exit $code
-```
-
-Order matters in that script. The timestamp is taken after the process finishes, and `$LASTEXITCODE` is copied into `$code` on the very next line, before any other command can overwrite it. Those two values, plus the fixed word `codex`, are the entire log record. Nothing derived from the agent's output is ever written.
-
-The Grok variant is the same file with the invocation swapped, `$Log` pointed at `grok-task.log`, and `grok` in place of `codex` in the two log lines. The exit-code capture and logging block stay exactly as they are:
-
-```powershell
-& grok --cwd $Repo --no-alt-screen --output-format json `
-    --single 'Call the proactive_check MCP tool exactly once. Report any returned situations and freshness warnings.' `
-    *> $null
-
-$code  = $LASTEXITCODE
+$code = $LASTEXITCODE
+$token = (($raw | ForEach-Object { "$_" }) -join "`n").Trim()
 $stamp = (Get-Date -Format o)
 
-if ($code -eq 0) {
-    Add-Content -LiteralPath $Log -Value "$stamp grok success exit=0"
-}
-else {
-    Add-Content -LiteralPath $Log -Value "$stamp grok failure exit=$code"
+if ($code -ne 0) {
+    $sent = Send-FixedToast "Proactive check failed" "Open $Cli to retry or inspect proactive status."
+    $notify = if ($sent) { "sent" } else { "failed" }
+    Add-Content -LiteralPath $Log -Value "$stamp cli=$Cli result=failure reason=agent_failed notify=$notify exit=$code"
+    exit $code
 }
 
-exit $code
+if ($token -ceq "PROACTIVE_NONE") {
+    Add-Content -LiteralPath $Log -Value "$stamp cli=$Cli result=none notify=none exit=0"
+    exit 0
+}
+
+if ($token -ceq "PROACTIVE_ATTENTION") {
+    $sent = Send-FixedToast "Proactive alert" "Open $Cli to review proactive status."
+    if ($sent) {
+        Add-Content -LiteralPath $Log -Value "$stamp cli=$Cli result=attention notify=sent exit=0"
+        exit 0
+    }
+    Add-Content -LiteralPath $Log -Value "$stamp cli=$Cli result=failure reason=notify_failed notify=failed exit=3"
+    exit 3
+}
+
+$sent = Send-FixedToast "Proactive check failed" "Open $Cli to retry or inspect proactive status."
+$notify = if ($sent) { "sent" } else { "failed" }
+Add-Content -LiteralPath $Log -Value "$stamp cli=$Cli result=failure reason=invalid_token notify=$notify exit=2"
+exit 2
 ```
 
-Register the task as the interactive user:
+The token is compared by exact equality after trimming surrounding whitespace.
+It is never written, echoed, substring-matched, or used as notification text.
+The notifier path is checked before the agent can claim a situation. A
+notification failure is non-zero and must not trigger an automatic retry,
+because `proactive_check` may already have delivered a situation.
+
+Register the Codex task as the interactive user:
 
 ```powershell
 $Script = "C:\Users\you\src\proactive-mcp-scripts\Invoke-ProactiveCheck.ps1"
 
 $Action = New-ScheduledTaskAction `
     -Execute "PowerShell.exe" `
-    -Argument "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Script`"" `
+    -Argument "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Script`" -Cli codex" `
     -WorkingDirectory "C:\Users\you\src\proactive-mcp"
 
 $Trigger = New-ScheduledTaskTrigger `
@@ -700,7 +873,10 @@ Register-ScheduledTask `
     -Force
 ```
 
-Swap `codex` for `grok` in the task name, script path, and description for the Grok version. Reference: [Register-ScheduledTask](https://learn.microsoft.com/powershell/module/scheduledtasks/register-scheduledtask).
+For Grok, reuse the same script and register a separate task with `-Cli grok`,
+`grok` in the task name, and a Grok description. Do not enable both recurring
+tasks against the same database; they would race to claim the same situations.
+Reference: [Register-ScheduledTask](https://learn.microsoft.com/powershell/module/scheduledtasks/register-scheduledtask).
 
 Run the watcher on Windows the same way, as its own task with a logon trigger:
 
@@ -731,12 +907,19 @@ uv run --directory C:\Users\you\src\proactive-mcp proactive-mcp status
 
 `LogonType Interactive` matters: a task set to run whether or not the user is logged on gets a different session and often can't reach the agent's credentials or config. If the task reports `0x1` right away, run the script by hand in the same shell first. The cause is almost always a path.
 
+For a synthetic pending situation, pass only when the state moves to
+`delivered`, the marker says `result=attention notify=sent exit=0`, and the
+fixed toast appears in the user's session. If state changes without a toast,
+the task consumed rather than delivered the situation and must be treated as a
+failure.
+
 ## Log privacy rules
 
 From §9.2, non-negotiable.
 
 - **Never persist raw `proactive_check` payloads.** Not to a cron log, not to a task log, not to a debug file. The response deliberately carries the minimum context a human summary needs: sender display names, subjects, event titles. Fine in a chat window you own, not fine on disk.
-- Redirect agent stdout and stderr to `/dev/null` (or `*> $null`) in every wrapper. Log a fixed marker plus timestamp and exit code, nothing derived from the output.
+- A scheduler may capture final stdout in process memory only to compare it by exact equality with `PROACTIVE_ATTENTION` or `PROACTIVE_NONE`. Never persist, echo, parse fields from, or pass that output to another process.
+- Log only fixed fields: timestamp, CLI, `result`, optional fixed `reason`, `notify`, and exit code. Nothing derived from raw agent output belongs on disk.
 - Keep the log directory private: `chmod 700 ~/.proactive-mcp/logs` on Linux and macOS. At the documented Windows store path, those files already get a restricted DACL.
 - Never log OAuth tokens, email bodies or addresses, calendar details, or situation `evidence` fields.
 - Reporting a problem in an Issue? Attach exit codes, tool names, call counts, situation type, state, priority, and integer IDs. Don't attach the database, WAL files, config, or screenshots of tool results.
@@ -760,7 +943,7 @@ Per platform, in order:
 | Server healthy | `grok mcp doctor proactive` | `codex mcp get proactive` | `hermes mcp test proactive` | `get_status` from a chat |
 | Daemon or degraded | `status` shows daemon state, or the missing-fallback warning is understood and accepted | same | same | same |
 | Session-start rule | `AGENTS.md` at project root | `AGENTS.md` at workspace root | system prompt or `--workdir` `AGENTS.md` | project instructions |
-| Scheduled trigger | cron or Task Scheduler | cron or Task Scheduler | `hermes cron list` | local scheduled task, ≥1 min |
+| Scheduled trigger | synthetic state transition plus visible fixed OS notification | synthetic state transition plus visible fixed OS notification | `hermes cron list` and delivered channel message | local scheduled task, ≥1 min |
 | Dedupe | situation delivered once, never twice | same | same | same |
 | Logs clean | no payloads on disk | no payloads on disk | no payloads on disk | no payloads on disk |
 

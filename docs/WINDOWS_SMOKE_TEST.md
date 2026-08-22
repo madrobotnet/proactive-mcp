@@ -836,7 +836,12 @@ M4 proved the engine can produce and deliver a situation. M5 proves an agent pic
 
 What you're signing off here is the Issue #6 완료 기준: "먼저 말 걸기" demonstrated on two agent platforms. Per the Owner decision in [#20](https://github.com/madrobotnet/proactive-mcp/issues/20), those two platforms are **Grok CLI and Codex CLI**, and both are required. Recipes live in [`docs/INTEGRATIONS.md`](INTEGRATIONS.md), which ships in the same PR as this section.
 
-Both CLIs get the same treatment: a fresh interactive session has to claim its own fresh pending situation, and a Windows Task Scheduler trigger has to claim another one with nobody at the keyboard. Four scenarios cover that, and a fifth proves a claimed situation is never handed out twice.
+Both CLIs get the same treatment: a fresh interactive session has to claim its
+own fresh pending situation, and a Windows Task Scheduler trigger has to claim
+another one and raise a fixed, PII-free toast with nobody at the keyboard. A
+state transition without that visible notification is not delivery. Four
+scenarios cover the two paths, and a fifth proves a claimed situation is never
+handed out twice.
 
 Not Owner smoke targets:
 
@@ -897,7 +902,7 @@ The config below is **for this smoke only**. It shortens timing and turns off th
 | `[attention] quiet_hours_start` / `quiet_hours_end` | `21:00` / `07:00` | `00:00` / `00:00` | Equal bounds disable the quiet hold so a `high` situation can deliver at any hour |
 | `[attention] daily_budget` | 4 | 20 | This section delivers more than 4 situations in one day; the real budget would hold the later ones as `pending` and look like a failure |
 | `[attention] cooldown_hours` | 24 | 1 | Lets you rerun a scenario the same day if you have to retry |
-| `[fallback] priorities` | `["critical"]` | `["critical"]` (unchanged) | Keep the default so no OS toast fires during M5. Toast behavior was already proved in M4 scenario 6 |
+| `[fallback] priorities` | `["critical"]` | `["critical"]` (unchanged) | Prevent a fallback toast from competing with the fixed scheduler toast expected in scenarios 3 and 4 |
 | `[fallback] wait_minutes` | 30 | 30 (unchanged) | Same reason |
 
 ```powershell
@@ -1129,7 +1134,11 @@ Neither CLI has a scheduler of its own, so the OS provides one. This mirrors the
 
 The isolated database is what makes an unattended run safe. The task talks to `m5-smoke`, which has no credentials, so no real mail or calendar text can enter the process even though nobody is watching the screen. Your real database is not opened.
 
-The wrapper below **never writes agent output to disk.** Grok prints situation text, and `proactive_check` returns full payloads, so all of it goes to `$null`. The only thing the task records is a marker line: a timestamp, the CLI name, and an exit code. Proof that the tool actually ran comes from the state transition, which you read afterwards in a separate local session.
+The wrapper below **never writes agent output to disk.** It asks Grok to reduce
+the tool result to exactly `PROACTIVE_ATTENTION` or `PROACTIVE_NONE`, captures
+that token in process memory, and translates attention into a fixed WinRT toast.
+The toast contains no situation content. The task records only fixed marker
+fields; proof requires both the state transition and the visible toast.
 
 Scheduled tasks get a bare environment. They inherit nothing from your console, so the wrapper sets the database variable itself and every path is absolute:
 
@@ -1140,9 +1149,13 @@ $smokeDb = Join-Path $smokeDir "proactive.db"
 $logDir = Join-Path $smokeDir "m5-logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $grok = (Get-Command grok).Source
+$uv = (Get-Command uv).Source
+$toastScript = (& $uv run --directory $repo python -c `
+  "from proactive_mcp.delivery.notify import WINDOWS_TOAST_SCRIPT; print(WINDOWS_TOAST_SCRIPT)").Trim()
 Write-Output "grok=$grok"
 Write-Output "smokeDb=$smokeDb"
 Write-Output "markers=$logDir"
+Write-Output "toastScript=$toastScript"
 ```
 
 Write the wrapper so the task has exactly one thing to run. This wrapper only ever invokes Grok, so `-p` can't reach the wrong CLI:
@@ -1155,16 +1168,59 @@ Set-Location "$repo"
 `$env:PROACTIVE_DATABASE = "$smokeDb"
 `$stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
 `$marker = Join-Path "$logDir" "grok-`$stamp.marker"
-& "$grok" -p "Call the proactive_check MCP tool exactly once. Report returned situations and freshness warnings; do not run unrelated tools." *> `$null
+`$prompt = "Call the proactive_check MCP tool exactly once and call no other tool. Your entire final response must be exactly PROACTIVE_ATTENTION if situations is non-empty or warnings is non-empty. Otherwise it must be exactly PROACTIVE_NONE. Output one token only, with no Markdown, punctuation, explanation, situation content, title, why_now, evidence, names, dates, mail, or calendar text."
+
+function Send-FixedToast {
+  param([string] `$Title, [string] `$Body)
+  & powershell.exe -NoProfile -NonInteractive -File "$toastScript" `$Title `$Body *> `$null
+  return (`$LASTEXITCODE -eq 0)
+}
+
+if (-not (Test-Path -LiteralPath "$toastScript" -PathType Leaf)) {
+  Set-Content -Path `$marker -Value "stamp=`$stamp cli=grok result=failure reason=notifier_unavailable notify=none exit=3" -Encoding utf8
+  exit 3
+}
+
+`$raw = & "$grok" -p `$prompt 2>`$null
 `$code = `$LASTEXITCODE
-Set-Content -Path `$marker -Value "stamp=`$stamp cli=grok exit=`$code" -Encoding utf8
-exit `$code
+`$token = ((`$raw | ForEach-Object { "`$_" }) -join "``n").Trim()
+
+if (`$code -ne 0) {
+  `$sent = Send-FixedToast "Proactive check failed" "Open Grok to retry or inspect proactive status."
+  `$notify = if (`$sent) { "sent" } else { "failed" }
+  Set-Content -Path `$marker -Value "stamp=`$stamp cli=grok result=failure reason=agent_failed notify=`$notify exit=`$code" -Encoding utf8
+  exit `$code
+}
+
+if (`$token -ceq "PROACTIVE_NONE") {
+  Set-Content -Path `$marker -Value "stamp=`$stamp cli=grok result=none notify=none exit=0" -Encoding utf8
+  exit 0
+}
+
+if (`$token -ceq "PROACTIVE_ATTENTION") {
+  `$sent = Send-FixedToast "Proactive alert" "Open Grok to review proactive status."
+  if (`$sent) {
+    Set-Content -Path `$marker -Value "stamp=`$stamp cli=grok result=attention notify=sent exit=0" -Encoding utf8
+    exit 0
+  }
+  Set-Content -Path `$marker -Value "stamp=`$stamp cli=grok result=failure reason=notify_failed notify=failed exit=3" -Encoding utf8
+  exit 3
+}
+
+`$sent = Send-FixedToast "Proactive check failed" "Open Grok to retry or inspect proactive status."
+`$notify = if (`$sent) { "sent" } else { "failed" }
+Set-Content -Path `$marker -Value "stamp=`$stamp cli=grok result=failure reason=invalid_token notify=`$notify exit=2" -Encoding utf8
+exit 2
 "@, $utf8)
 ```
 
 That `$env:PROACTIVE_DATABASE` line is belt and braces. The Grok registration already carries the variable into the server, and this sets it for the CLI process too, so the task stays isolated even if someone later re-registers the server without `-e`.
 
-`*> $null` covers every stream, so stdout, stderr, verbose, and warning all go nowhere. Don't redirect it to a file to "see what happened." If a run fails and you need the error text, rerun the same command by hand in your own console, read it on screen, and retype one sanitized line. Nothing gets saved. The wrapper captures `$LASTEXITCODE` before writing the marker and then exits with it, so the marker and `LastTaskResult` always agree.
+Only stderr is discarded. Final stdout exists transiently in `$raw` solely for
+exact token comparison; it is never written, echoed, or used as toast text. If a
+run fails and you need the error text, rerun the same command by hand in your
+own console, read it on screen, and retype one sanitized line. The wrapper
+captures `$LASTEXITCODE` before any other native command.
 
 ```powershell
 Register-ScheduledTask -TaskName "proactive-m5-grok" -Force -Action (
@@ -1193,7 +1249,8 @@ Get-ChildItem $logDir -Filter "grok-*.marker" |
   Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content
 ```
 
-The marker tells you the task ran and how Grok exited. It says nothing about the tool call, by design. For that, open a **separate** session after the run and read the counts again:
+The marker and fixed toast together show that the unattended delivery path ran.
+Open a **separate** session after the run and read the counts again:
 
 ```powershell
 grok -p "Call list_situations with state=pending and report only the items length. Then call list_situations with state=delivered and report only the items length. Do not call proactive_check. Do not paste any item content."
@@ -1204,20 +1261,35 @@ The unattended run claimed the situation if and only if pending dropped by one a
 Pass:
 
 - `LastTaskResult` is `0` and `LastRunTime` is after you planted the situation
-- The newest `grok-*.marker` exists, holds one line, and its `exit=` value is `0`
+- The newest `grok-*.marker` exists, holds one line, and says `result=attention notify=sent exit=0`
+- One fixed **Proactive alert** toast appears and says to open Grok to review proactive status; it contains no situation content
 - Pending is `PENDING_BEFORE - 1` and delivered is `DELIVERED_BEFORE + 1`, with nobody at the keyboard
 
 Fail:
 
-- Non-zero `LastTaskResult`, non-zero `exit=` in the marker, no marker at all, or `uv`/`grok` not found (go back to absolute paths)
-- The counts didn't move, so the situation is still `pending`
+- Non-zero `LastTaskResult`, non-zero `exit=` in the marker, no marker at all, or `uv`/`grok`/the toast script not found
+- The counts didn't move, or they moved but no fixed toast appeared
 - Any file in `m5-logs` that isn't a wrapper or a one-line marker
 
-Marker files hold a timestamp, a CLI name, and an exit code. Nothing else belongs in `m5-logs`. If you find a `.log` file there, you edited the wrapper. Delete it and start the scenario over.
+Marker files hold only timestamp, CLI, fixed result/reason, notification status,
+and exit code. Nothing else belongs in `m5-logs`.
+
+Before scenario 4, remove the repeating Grok task so it cannot claim Codex's
+fresh situation:
+
+```powershell
+Unregister-ScheduledTask -TaskName "proactive-m5-grok" -Confirm:$false -ErrorAction SilentlyContinue
+Get-ScheduledTask -TaskName "proactive-m5-grok" -ErrorAction SilentlyContinue
+```
+
+The second command must print nothing.
 
 #### M5 Scenario 4: Codex CLI, Windows Task Scheduler trigger
 
-Same shape as scenario 3, with its own wrapper, its own task, and its own marker prefix. It uses the same isolated database. Leave the scenario 3 task registered or unregister it first; either is fine, because the two tasks are independent.
+Same shape as scenario 3, with its own wrapper, its own task, and its own marker
+prefix. It uses the same isolated database. The Grok task from scenario 3 must
+already be unregistered and absent. Only the Codex task may be eligible to claim
+this scenario's situation.
 
 ```powershell
 $repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
@@ -1226,9 +1298,13 @@ $smokeDb = Join-Path $smokeDir "proactive.db"
 $logDir = Join-Path $smokeDir "m5-logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $codex = (Get-Command codex).Source
+$uv = (Get-Command uv).Source
+$toastScript = (& $uv run --directory $repo python -c `
+  "from proactive_mcp.delivery.notify import WINDOWS_TOAST_SCRIPT; print(WINDOWS_TOAST_SCRIPT)").Trim()
 Write-Output "codex=$codex"
 Write-Output "smokeDb=$smokeDb"
 Write-Output "markers=$logDir"
+Write-Output "toastScript=$toastScript"
 ```
 
 This wrapper only ever invokes Codex, so `-p` can't reach it by accident:
@@ -1241,14 +1317,54 @@ Set-Location "$repo"
 `$env:PROACTIVE_DATABASE = "$smokeDb"
 `$stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
 `$marker = Join-Path "$logDir" "codex-`$stamp.marker"
-& "$codex" exec --ephemeral --sandbox read-only "Call the proactive_check MCP tool exactly once. Report returned situations and freshness warnings; do not run unrelated tools." *> `$null
+`$prompt = "Call the proactive_check MCP tool exactly once and call no other tool. Your entire final response must be exactly PROACTIVE_ATTENTION if situations is non-empty or warnings is non-empty. Otherwise it must be exactly PROACTIVE_NONE. Output one token only, with no Markdown, punctuation, explanation, situation content, title, why_now, evidence, names, dates, mail, or calendar text."
+
+function Send-FixedToast {
+  param([string] `$Title, [string] `$Body)
+  & powershell.exe -NoProfile -NonInteractive -File "$toastScript" `$Title `$Body *> `$null
+  return (`$LASTEXITCODE -eq 0)
+}
+
+if (-not (Test-Path -LiteralPath "$toastScript" -PathType Leaf)) {
+  Set-Content -Path `$marker -Value "stamp=`$stamp cli=codex result=failure reason=notifier_unavailable notify=none exit=3" -Encoding utf8
+  exit 3
+}
+
+`$raw = & "$codex" exec --ephemeral --sandbox read-only `$prompt 2>`$null
 `$code = `$LASTEXITCODE
-Set-Content -Path `$marker -Value "stamp=`$stamp cli=codex exit=`$code" -Encoding utf8
-exit `$code
+`$token = ((`$raw | ForEach-Object { "`$_" }) -join "``n").Trim()
+
+if (`$code -ne 0) {
+  `$sent = Send-FixedToast "Proactive check failed" "Open Codex to retry or inspect proactive status."
+  `$notify = if (`$sent) { "sent" } else { "failed" }
+  Set-Content -Path `$marker -Value "stamp=`$stamp cli=codex result=failure reason=agent_failed notify=`$notify exit=`$code" -Encoding utf8
+  exit `$code
+}
+
+if (`$token -ceq "PROACTIVE_NONE") {
+  Set-Content -Path `$marker -Value "stamp=`$stamp cli=codex result=none notify=none exit=0" -Encoding utf8
+  exit 0
+}
+
+if (`$token -ceq "PROACTIVE_ATTENTION") {
+  `$sent = Send-FixedToast "Proactive alert" "Open Codex to review proactive status."
+  if (`$sent) {
+    Set-Content -Path `$marker -Value "stamp=`$stamp cli=codex result=attention notify=sent exit=0" -Encoding utf8
+    exit 0
+  }
+  Set-Content -Path `$marker -Value "stamp=`$stamp cli=codex result=failure reason=notify_failed notify=failed exit=3" -Encoding utf8
+  exit 3
+}
+
+`$sent = Send-FixedToast "Proactive check failed" "Open Codex to retry or inspect proactive status."
+`$notify = if (`$sent) { "sent" } else { "failed" }
+Set-Content -Path `$marker -Value "stamp=`$stamp cli=codex result=failure reason=invalid_token notify=`$notify exit=2" -Encoding utf8
+exit 2
 "@, $utf8)
 ```
 
-Codex output is discarded the same way, for the same reason, and the exit code propagates the same way. The marker is the only thing that survives.
+Codex output follows the same two-token, in-memory-only contract. The marker
+contains only fixed fields; the fixed toast is the user-visible delivery.
 
 ```powershell
 Register-ScheduledTask -TaskName "proactive-m5-codex" -Force -Action (
@@ -1286,18 +1402,40 @@ codex exec --ephemeral --sandbox read-only "Call list_situations with state=pend
 Pass:
 
 - `LastTaskResult` is `0` and `LastRunTime` is after you planted the situation
-- The newest `codex-*.marker` exists, holds one line, and its `exit=` value is `0`
+- The newest `codex-*.marker` exists, holds one line, and says `result=attention notify=sent exit=0`
+- One fixed **Proactive alert** toast appears and says to open Codex to review proactive status; it contains no situation content
 - Pending is `PENDING_BEFORE - 1` and delivered is `DELIVERED_BEFORE + 1`, with nobody at the keyboard
 
 Fail:
 
-- Non-zero `LastTaskResult`, non-zero `exit=` in the marker, no marker at all, or `uv`/`codex` not found
-- The counts didn't move, so the situation is still `pending`
+- Non-zero `LastTaskResult`, non-zero `exit=` in the marker, no marker at all, or `uv`/`codex`/the toast script not found
+- The counts didn't move, or they moved but no fixed toast appeared
 - The sandbox blocked the server spawn under the task account, which is a different account context than your console
+
+Before scenario 5, remove the repeating Codex task and verify that neither M5
+scheduler remains:
+
+```powershell
+Unregister-ScheduledTask -TaskName "proactive-m5-codex" -Confirm:$false -ErrorAction SilentlyContinue
+Get-ScheduledTask -TaskName "proactive-m5-*" -ErrorAction SilentlyContinue
+```
+
+The second command must print nothing.
 
 #### M5 Scenario 5: delivered once, not twice
 
 This is the dedupe half of PRODUCT_PLAN §5.1, and it runs after scenarios 1 to 4. Pick either CLI and stay on it for all three commands. The Grok form is shown; for Codex, swap `grok -p` for `codex exec --ephemeral --sandbox read-only`.
+
+Before planting the dedupe situation, defensively unregister both repeating
+tasks and verify that no scheduler can claim it:
+
+```powershell
+Unregister-ScheduledTask -TaskName "proactive-m5-grok" -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "proactive-m5-codex" -Confirm:$false -ErrorAction SilentlyContinue
+Get-ScheduledTask -TaskName "proactive-m5-*" -ErrorAction SilentlyContinue
+```
+
+The verification command must print nothing.
 
 Run M5-P4 for a new `TAG`. Before claiming it:
 
@@ -1328,6 +1466,7 @@ Fail:
 - The same situation comes back on the second check
 - The delivered count grows by two for one situation
 - It stays `pending` after a successful `proactive_check`
+- Any M5 scheduler task is still registered before the situation is planted
 
 ### M5 확인 포인트
 
@@ -1339,8 +1478,8 @@ Go through this before you write the sign-off comment. Counts and states only, n
 4. Every claim used a fresh `TAG` and its own `daemon --once` pass
 5. **Grok CLI passed a fresh session** (scenario 1)
 6. **Codex CLI passed a fresh session** (scenario 2)
-7. **Grok CLI passed a scheduled trigger** (scenario 3), with no human in the loop
-8. **Codex CLI passed a scheduled trigger** (scenario 4), with no human in the loop
+7. **Grok CLI passed a scheduled trigger** (scenario 3), including the fixed visible toast, with no human in the loop
+8. **Codex CLI passed a scheduled trigger** (scenario 4), including the fixed visible toast, with no human in the loop
 9. Scenario 5 passed: `pending` became `delivered`, once, with no repeat
 10. `grok --version` and `codex --version` recorded, along with any flag that differed from this document
 11. Artifacts sit where they're supposed to, and the DACL still holds (below)
@@ -1406,7 +1545,10 @@ Claude Code Desktop and Hermes stay out of this decision. Their absence is not a
 
 ### M5 cleanup
 
-Do this even when everything passed. Three things have to be undone: the repeating tasks, the pinned database in both MCP registrations, and the smoke directory.
+Do this even when everything passed. Scenarios 3 and 4 already unregister their
+tasks to prevent races; the commands below are idempotent final safety cleanup.
+Three things have to be undone: the repeating tasks, the pinned database in both
+MCP registrations, and the smoke directory.
 
 First the tasks:
 
@@ -1471,7 +1613,7 @@ Include all of this:
 7. **Branch and SHA.** The output of `git rev-parse --abbrev-ref HEAD` and `git rev-parse HEAD`.
 8. **Redacted status fields only,** from `uv run proactive-mcp status`: `overall`, `database.status`, `database.journal_mode`, `database.migration_version`, `daemon.status`, `budget.daily_budget`, and the budget counts. Retype them. Don't paste the whole document.
 9. **Tool evidence as names and numbers.** Which tools were called, how many times each, and the `items` length returned. For `proactive_check`, report `situation_type`, `priority`, `state`, `held_count`, and `all_clear`, and nothing else.
-10. **Scheduler result** for scenario 3 or 4: the task name, whether the trigger fired unattended, `LastRunTime`, `NextRunTime`, `LastTaskResult`, and the marker filename.
+10. **Scheduler result** for scenario 3 or 4: the task name, whether the trigger fired unattended, `LastRunTime`, `NextRunTime`, `LastTaskResult`, the marker filename and fixed `result`/`reason`/`notify`/`exit` fields, and whether the fixed toast appeared. Do not include a screenshot.
 11. **Registration shape, not contents.** Whether the failing CLI's entry carried `PROACTIVE_DATABASE`, as a yes or no. Never paste the registration block or the CLI config file.
 12. **A sanitized error line** if a CLI failed. Rerun the command by hand, read the message on screen, and retype one line with paths shortened to `%USERPROFILE%\...` and any identifier or token replaced with `<redacted>`. For Grok, its stderr logs under `%USERPROFILE%\.grok\logs\mcp\` are for your eyes only. Read, retype the one line, attach nothing.
 
