@@ -9,7 +9,7 @@ proactive-mcp is a local-first MCP server that watches your Gmail and Google Cal
 ## How it works
 
 - A background watcher syncs Gmail/Calendar and evaluates deterministic **Situations** (reply deadline, calendar conflict, personal occasion).
-- Agents call cheap MCP tools (`proactive_check`, `remember`, `recall`, ...) — via their platform's scheduler (Cursor Automations, Hermes Cron, heartbeats) or at session start — and deliver pending situations through **the channel you already use with that agent**.
+- Agents call cheap MCP tools (`proactive_check`, `remember`, `recall`, ...) — via OS scheduling for Grok/Codex, Hermes Native Cron, Claude Code Desktop local tasks, or at session start — and deliver pending situations through **the channel you already use with that agent**.
 - An attention policy (quiet hours, daily budget, cooldown, dedupe) keeps it silent unless speaking up is worth it.
 - Everything stays on your machine in SQLite. V1 is strictly read-only; write actions will come later behind an approval-first contract.
 
@@ -24,7 +24,9 @@ The SQLite database stays on your machine.
 
 On Linux and macOS the store directory is mode `0700` and the database, lock, and WAL sidecar files are mode `0600`. At the documented default Windows path, those same files get a protected DACL: inheritance is blocked, and only the current user is granted access. A custom `PROACTIVE_DATABASE` path must remain inside a directory owned by and private to the current user.
 
-Windows Owner smoke steps (PowerShell and Cursor) are in [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md).
+Windows Owner smoke steps (PowerShell, Grok CLI, and Codex CLI) are in [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md).
+Platform registration, daemon, session-start, and scheduler recipes are in
+[`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
 ## License
 

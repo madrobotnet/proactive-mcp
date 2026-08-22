@@ -1,6 +1,13 @@
 # Windows Owner smoke test
 
-Run this on Windows with PowerShell and Cursor. Paste the commands as written. Don't install from PyPI: this repo is private and `proactive-mcp` is not published. `uvx proactive-mcp` and `pip install proactive-mcp` are the wrong path.
+Run the current M5 smoke on Windows with PowerShell, Grok CLI, and Codex CLI.
+The M1.5 through M4 sections below preserve historical acceptance evidence from
+the client used at the time; Cursor was removed from the supported platform set
+by Owner decision [#20](https://github.com/madrobotnet/proactive-mcp/issues/20).
+For current support validation, start at [M5 연동 레시피 실증](#m5-연동-레시피-실증-issue-6).
+Don't install from PyPI: this repo is private and `proactive-mcp` is not
+published. `uvx proactive-mcp` and `pip install proactive-mcp` are the wrong
+path.
 
 macOS is CI-only (`macos-latest` green). There is no Owner Mac, so don't run these steps on macOS. Real-device Mac coverage waits for a closed-alpha tester who has one.
 
@@ -822,3 +829,661 @@ git -C "$env:USERPROFILE\src\proactive-mcp" rev-parse HEAD
 8. Redacted `icacls` on `%USERPROFILE%\.proactive-mcp` and `proactive.db` (`HOST\<you>:(F)`, no username)
 
 If every M4 scenario passed: scenarios 1 to 7 passed, `migration_version=7`, `fallback.sent=1` after scenario 7, one WinRT toast, no resend. Leave the DB and evidence off the comment.
+
+## M5 연동 레시피 실증 (Issue #6)
+
+M4 proved the engine can produce and deliver a situation. M5 proves an agent picks it up **first**, without you asking about it. Two things have to hold on your machine: the agent runs a local stdio server, and something triggers it (a fresh session, or a scheduler).
+
+What you're signing off here is the Issue #6 완료 기준: "먼저 말 걸기" demonstrated on two agent platforms. Per the Owner decision in [#20](https://github.com/madrobotnet/proactive-mcp/issues/20), those two platforms are **Grok CLI and Codex CLI**, and both are required. Recipes live in [`docs/INTEGRATIONS.md`](INTEGRATIONS.md), which ships in the same PR as this section.
+
+Both CLIs get the same treatment: a fresh interactive session has to claim its own fresh pending situation, and a Windows Task Scheduler trigger has to claim another one with nobody at the keyboard. Four scenarios cover that, and a fifth proves a claimed situation is never handed out twice.
+
+Not Owner smoke targets:
+
+- **Claude Code Desktop** is documentation only (PRODUCT_PLAN §5.3). It isn't installed on your machine and it is not part of this sign-off.
+- **Hermes** Native Cron is separate Owner-only verification, not part of this smoke.
+- **ChatGPT web/desktop** and **Claude cloud Routines** are out of scope until V2 HTTP transport. Don't try them.
+
+Everything below stays synthetic. No real names, birthdays, mail, or calendar data.
+
+**M5 runs against an isolated database, and this is the one exception to the `PROACTIVE_DATABASE` rule at the top of this document.** Every earlier section forbids setting that variable, because those sections are testing the default path. M5 is different: by now you may have real Google credentials and real mail or calendar data in `%USERPROFILE%\.proactive-mcp\proactive.db` from M2. Pointing agents and unattended scheduled tasks at that database would put real content in front of them, so M5 uses its own:
+
+```
+%USERPROFILE%\.proactive-mcp\m5-smoke\proactive.db
+```
+
+The application derives its whole state layout from the database location, so `config.toml` and the credentials directory land in `m5-smoke` too. That folder has never been through Google setup, which means Gmail and Calendar report `not_configured` and no detector can reach a real mailbox. Your production database, config, and credentials are never opened during M5 and are never modified.
+
+Set `PROACTIVE_DATABASE` for every direct `proactive-mcp` command, and register it into both CLIs so the servers they spawn use it too. Each PowerShell window you open needs it again, since the variable dies with the window.
+
+### M5 준비 절차
+
+#### M5-P1. Branch and sync
+
+Close any running daemon first.
+
+```powershell
+Set-Location "$env:USERPROFILE\src\proactive-mcp"
+git fetch origin
+git checkout feat/m5-integration-recipes
+git pull --ff-only
+uv sync --locked
+git rev-parse --abbrev-ref HEAD
+git rev-parse HEAD
+```
+
+Use `feat/m5-integration-recipes` while the M5 PR is open. After the PR merges, use `main` instead. If a review comment names a different branch or SHA, that comment wins.
+
+Checkpoint: `uv sync --locked` exits 0 and the branch line prints `feat/m5-integration-recipes`.
+
+#### M5-P2. Isolated smoke database and test-only cadence config
+
+Create the child directory, point the environment variable at the database inside it, and write the config beside that database. Nothing here touches the parent folder's own `proactive.db` or `config.toml`.
+
+```powershell
+$smokeDir = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke"
+New-Item -ItemType Directory -Force -Path $smokeDir | Out-Null
+$env:PROACTIVE_DATABASE = Join-Path $smokeDir "proactive.db"
+Write-Output "PROACTIVE_DATABASE=$env:PROACTIVE_DATABASE"
+```
+
+Copy that printed absolute path. Both CLI registrations and both scheduler wrappers need it verbatim, and it must be absolute: a scheduled task starts in a different working directory than your console.
+
+The config below is **for this smoke only**. It shortens timing and turns off the gates that would legitimately hold a situation back during a test run. It lives in `m5-smoke`, so it cannot change how your real installation behaves.
+
+| Key | Production default | M5 test-only value | Why the test changes it |
+|---|---|---|---|
+| `[daemon] poll_interval_minutes` | 5 | 1 | A scheduled trigger has to see a fresh evaluation within the test window |
+| `[attention] quiet_hours_start` / `quiet_hours_end` | `21:00` / `07:00` | `00:00` / `00:00` | Equal bounds disable the quiet hold so a `high` situation can deliver at any hour |
+| `[attention] daily_budget` | 4 | 20 | This section delivers more than 4 situations in one day; the real budget would hold the later ones as `pending` and look like a failure |
+| `[attention] cooldown_hours` | 24 | 1 | Lets you rerun a scenario the same day if you have to retry |
+| `[fallback] priorities` | `["critical"]` | `["critical"]` (unchanged) | Keep the default so no OS toast fires during M5. Toast behavior was already proved in M4 scenario 6 |
+| `[fallback] wait_minutes` | 30 | 30 (unchanged) | Same reason |
+
+```powershell
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText((Join-Path $smokeDir "config.toml"), @"
+[daemon]
+poll_interval_minutes = 1
+[attention]
+quiet_hours_start = "00:00"
+quiet_hours_end = "00:00"
+daily_budget = 20
+cooldown_hours = 1
+[fallback]
+priorities = ["critical"]
+wait_minutes = 30
+"@, $utf8)
+
+uv run proactive-mcp status
+Write-Output "exit=$LASTEXITCODE"
+```
+
+Checkpoint, and the isolation gate. All of these have to hold before you go on:
+
+- Exit 0
+- **`database.path` ends with `m5-smoke\proactive.db`.** If it ends with `.proactive-mcp\proactive.db`, the variable didn't take and you are one command away from pointing an agent at your real data. Stop and set it again.
+- **`google.gmail.status` is `not_configured` and `google.calendar.status` is `not_configured`.** Anything else means credentials are reachable from the smoke directory, so stop and check what you copied in there.
+- `database.status` is `healthy`, `database.journal_mode` is `wal`
+- **`database.migration_version` is `8`.** Version `7` means you're still on M4 code, so redo M5-P1.
+- `overall` is `degraded`, `daemon.status` is `not_running`, `budget.daily_budget` is `20`
+
+`degraded` is expected. M5 never runs Google setup, and the smoke directory has no credentials by design.
+
+The database file appears on that first `status` call, and the application applies its protected DACL when it creates it. You verify that in the 확인 포인트 section.
+
+#### M5-P3. Register the server with both CLIs
+
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md) is the recipe source. Follow its Grok CLI and Codex CLI sections. The commands below are the Windows short form.
+
+Both CLIs must expose `proactive_check`, `list_situations`, `get_situation`, `acknowledge_situation`, `snooze_situation`, `mute_situation`, and the memory tools. Register each one separately. Neither CLI is allowed to stand in for the other in this milestone.
+
+Each registration carries `PROACTIVE_DATABASE` into the server process. Without it, the CLI spawns a server on your real default database no matter what your console environment says, because the CLI launches that process itself.
+
+Grok CLI takes `-e KEY=value` before the `--` separator. `grok mcp add` is documented as "Add or update an MCP server", so running it again overwrites any existing `proactive` entry, which is what you want here:
+
+```powershell
+$uv = (Get-Command uv).Source
+$repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
+grok mcp add --scope user proactive -e "PROACTIVE_DATABASE=$env:PROACTIVE_DATABASE" -- $uv run --directory $repo proactive-mcp serve
+grok mcp list
+grok mcp doctor proactive
+```
+
+Codex CLI takes `--env KEY=VALUE` before the `--` separator. Remove the old
+entry first so the smoke-specific registration is explicit and cleanup can
+restore the normal registration unambiguously:
+
+```powershell
+$uv = (Get-Command uv).Source
+$repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
+codex mcp remove proactive 2>$null
+codex mcp add proactive --env "PROACTIVE_DATABASE=$env:PROACTIVE_DATABASE" -- $uv run --directory $repo proactive-mcp serve
+codex mcp list --json
+```
+
+Both flags were read from `grok mcp add --help` on `grok 0.2.112`
+(`-e, --env <KEY=value>`, repeatable) and `codex mcp add --help` on
+`codex-cli 0.149.0` (`--env <KEY=VALUE>`, "Only valid with stdio servers").
+Both CLIs move fast. Run `grok mcp add --help`, `grok mcp doctor --help`,
+`codex mcp add --help`, `codex mcp remove --help`, and `codex exec --help` on
+your machine first and use your installed spelling if it differs. Record the
+two version strings with your report:
+
+```powershell
+grok --version
+codex --version
+```
+
+Checkpoint: `grok mcp doctor proactive` reports the server as reachable with tools listed, and `codex mcp list --json` contains a `proactive` entry pointing at your `uv` path. Both entries must show `PROACTIVE_DATABASE` set to the `m5-smoke` path.
+
+Confirm the isolation reached the servers, not just your shell. Ask each CLI for the database path it actually sees:
+
+```powershell
+grok -p "Call get_status and report only database.path and google.gmail.status."
+codex exec --ephemeral --sandbox read-only "Call get_status and report only database.path and google.gmail.status."
+```
+
+Both must answer with a path ending in `m5-smoke\proactive.db` and `not_configured`. If either one reports the parent `.proactive-mcp\proactive.db`, its registration didn't carry the variable. Fix it before running a single scenario, because that CLI is looking at your real data.
+
+Failure: either CLI can't spawn the server. Confirm the `uv.exe` path is absolute in that CLI's config. `uv` on `PATH` for your shell doesn't mean a scheduled task can see it.
+
+For the fresh-session scenarios, use session-scoped instructions so the smoke
+does not edit the repository's operational `AGENTS.md`:
+
+```powershell
+$grokSessionRule = "At the start of this new session, call the MCP tool proactive_check exactly once before answering. Surface freshness warnings and never claim an all-clear while a source is stale."
+$codexSessionRule = 'developer_instructions="At the start of this new session, call the MCP tool proactive_check exactly once before answering. Surface freshness warnings and never claim an all-clear while a source is stale."'
+```
+
+Those variables are used only for scenarios 1 and 2. Scheduled scenarios name
+`proactive_check` directly in their job prompt, because a scheduled job must be
+self-contained.
+
+#### M5-P4. Fresh pending situation (no `proactive_check`)
+
+Every claim scenario needs its own unpicked situation. Reuse would prove nothing, because a `delivered` situation is not returned again by design.
+
+Run this before each scenario to get a unique synthetic entity and a date three days out:
+
+```powershell
+Set-Location "$env:USERPROFILE\src\proactive-mcp"
+$env:PROACTIVE_DATABASE = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke\proactive.db"
+$anchor = (Get-Date).Date.AddDays(3).ToString('--MM-dd')
+$tag = "M5-" + (Get-Date).ToString('HHmmss')
+Write-Output "PROACTIVE_DATABASE=$env:PROACTIVE_DATABASE"
+Write-Output "ANCHOR=$anchor"
+Write-Output "TAG=$tag"
+```
+
+The variable line is repeated here on purpose. M5-P4 runs many times across the section, often in a window you just opened, and a missing variable would silently write the synthetic memory into your real database.
+
+Save the memory with whichever CLI the scenario names. Substitute the printed
+`TAG` and `ANCHOR`. Each scenario repeats this payload in its own CLI form, so
+the plain version below is the reference wording:
+
+```
+Use the remember tool now with these exact arguments:
+kind=fact
+entity=스모크TAG
+entity_kind=person
+entity_path=테스트/스모크TAG
+attribute=birthday
+content=스모크 기념일
+date_anchor=ANCHOR
+recurrence=yearly
+lead_days=7
+Do not call proactive_check.
+```
+
+Then create the situation from PowerShell:
+
+```powershell
+uv run proactive-mcp daemon --once
+Write-Output "exit=$LASTEXITCODE"
+```
+
+The daemon pass detects and stores the situation but never delivers it. Delivery is `proactive_check` only, so the situation sits in `pending` until an agent claims it. That gap is exactly what M5 measures.
+
+Confirm the situation is waiting, using a CLI session and `list_situations` only. Listing does not deliver:
+
+```
+Call list_situations with state=pending. Do not call proactive_check.
+```
+
+Checkpoint: `daemon --once` exits 0 with `created` 1 and `notifications` 0. The pending list has one more `personal_occasion` than before, `priority=high`, `state=pending`. Report `items` length only, never the entries.
+
+Failure: `created` is 0 (the anchor or `lead_days` is wrong, or you reused a `TAG`), or the list shows the situation already `delivered` (something called `proactive_check` early, so start over with a new `TAG`).
+
+### M5 시나리오 목록
+
+Five scenarios, and all five have to pass. Scenarios 1 and 2 are the fresh-session half, one per CLI. Scenarios 3 and 4 are the scheduled half, again one per CLI. Scenario 5 is the dedupe check.
+
+Run M5-P4 immediately before each one, so every scenario claims a situation nobody has touched. Substitute `ANCHOR` and `TAG` with the values it printed.
+
+#### M5 Scenario 1: Grok CLI, fresh session
+
+Run M5-P4 first for a new `TAG`. Save the memory through Grok itself so the whole path is Grok's:
+
+```powershell
+$env:PROACTIVE_DATABASE = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke\proactive.db"
+grok -p "Use the proactive MCP remember tool with kind=fact entity=스모크TAG entity_kind=person entity_path=테스트/스모크TAG attribute=birthday content=스모크 기념일 date_anchor=ANCHOR recurrence=yearly lead_days=7. Do not call proactive_check."
+uv run proactive-mcp daemon --once
+Write-Output "exit=$LASTEXITCODE"
+```
+
+Now a brand-new session with the session-start convention installed per the Grok section of [`docs/INTEGRATIONS.md`](INTEGRATIONS.md):
+
+```powershell
+grok --rules $grokSessionRule -p "안녕. 오늘 뭐부터 할까?"
+```
+
+`-p` / `--single` is a single-turn prompt that prints and exits, so each invocation is a fresh session. Confirm the flag with `grok --help` on your machine.
+
+Pass:
+
+- Grok calls `proactive_check` before answering
+- Output mentions one upcoming personal occasion it wasn't asked about
+- A follow-up `grok -p "Call list_situations with state=delivered and report the items length only."` counts that situation as `delivered`
+
+Fail:
+
+- No tool call, or the situation stays `pending`
+- Server spawn error. Rerun `grok mcp doctor proactive`. Grok writes stderr logs under `~/.grok/logs/mcp/`, which on Windows is `%USERPROFILE%\.grok\logs\mcp\`. Read them yourself and paste only the sanitized error line
+
+#### M5 Scenario 2: Codex CLI, fresh session
+
+Run M5-P4 first for a new `TAG`. Save the memory through Codex itself so the whole path is Codex's:
+
+```powershell
+Set-Location "$env:USERPROFILE\src\proactive-mcp"
+$env:PROACTIVE_DATABASE = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke\proactive.db"
+codex exec --ephemeral --sandbox read-only "Use the proactive MCP remember tool with kind=fact entity=스모크TAG entity_kind=person entity_path=테스트/스모크TAG attribute=birthday content=스모크 기념일 date_anchor=ANCHOR recurrence=yearly lead_days=7. Do not call proactive_check."
+uv run proactive-mcp daemon --once
+Write-Output "exit=$LASTEXITCODE"
+```
+
+Fresh session, using the session-scoped developer instruction prepared in
+M5-P3:
+
+```powershell
+codex exec -c $codexSessionRule --ephemeral --sandbox read-only "안녕. 오늘 뭐부터 할까?"
+```
+
+Each `codex exec` is its own session. If Codex refuses to run outside a git repo, add `--skip-git-repo-check`. Check `codex exec --help` for the flags your build has.
+
+Pass:
+
+- The transcript shows a `proactive_check` MCP call
+- Codex raises the upcoming occasion unprompted
+- `codex exec --ephemeral --sandbox read-only "Call list_situations with state=delivered and report only the items length."` counts it as `delivered`
+
+Fail:
+
+- No tool call, sandbox blocks the server spawn, or the situation stays `pending`
+- `codex mcp list --json` shows no `proactive` entry
+
+#### M5 Scenario 3: Grok CLI, Windows Task Scheduler trigger
+
+Neither CLI has a scheduler of its own, so the OS provides one. This mirrors the Windows Task Scheduler recipe in [`docs/INTEGRATIONS.md`](INTEGRATIONS.md). Scenario 4 repeats it for Codex, and both are required.
+
+The isolated database is what makes an unattended run safe. The task talks to `m5-smoke`, which has no credentials, so no real mail or calendar text can enter the process even though nobody is watching the screen. Your real database is not opened.
+
+The wrapper below **never writes agent output to disk.** Grok prints situation text, and `proactive_check` returns full payloads, so all of it goes to `$null`. The only thing the task records is a marker line: a timestamp, the CLI name, and an exit code. Proof that the tool actually ran comes from the state transition, which you read afterwards in a separate local session.
+
+Scheduled tasks get a bare environment. They inherit nothing from your console, so the wrapper sets the database variable itself and every path is absolute:
+
+```powershell
+$repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
+$smokeDir = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke"
+$smokeDb = Join-Path $smokeDir "proactive.db"
+$logDir = Join-Path $smokeDir "m5-logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$grok = (Get-Command grok).Source
+Write-Output "grok=$grok"
+Write-Output "smokeDb=$smokeDb"
+Write-Output "markers=$logDir"
+```
+
+Write the wrapper so the task has exactly one thing to run. This wrapper only ever invokes Grok, so `-p` can't reach the wrong CLI:
+
+```powershell
+$grokScript = Join-Path $logDir "m5-grok-trigger.ps1"
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($grokScript, @"
+Set-Location "$repo"
+`$env:PROACTIVE_DATABASE = "$smokeDb"
+`$stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+`$marker = Join-Path "$logDir" "grok-`$stamp.marker"
+& "$grok" -p "Call the proactive_check MCP tool exactly once. Report returned situations and freshness warnings; do not run unrelated tools." *> `$null
+`$code = `$LASTEXITCODE
+Set-Content -Path `$marker -Value "stamp=`$stamp cli=grok exit=`$code" -Encoding utf8
+exit `$code
+"@, $utf8)
+```
+
+That `$env:PROACTIVE_DATABASE` line is belt and braces. The Grok registration already carries the variable into the server, and this sets it for the CLI process too, so the task stays isolated even if someone later re-registers the server without `-e`.
+
+`*> $null` covers every stream, so stdout, stderr, verbose, and warning all go nowhere. Don't redirect it to a file to "see what happened." If a run fails and you need the error text, rerun the same command by hand in your own console, read it on screen, and retype one sanitized line. Nothing gets saved. The wrapper captures `$LASTEXITCODE` before writing the marker and then exits with it, so the marker and `LastTaskResult` always agree.
+
+```powershell
+Register-ScheduledTask -TaskName "proactive-m5-grok" -Force -Action (
+  New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$grokScript`""
+) -Trigger (
+  New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
+    -RepetitionInterval (New-TimeSpan -Minutes 5)
+) -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)
+```
+
+Run M5-P4 for a new `TAG`. Before the trigger fires, take a baseline in a local Grok session:
+
+```powershell
+grok -p "Call list_situations with state=pending and report only the items length. Then call list_situations with state=delivered and report only the items length. Do not call proactive_check. Do not paste any item content."
+```
+
+Record the two numbers as `PENDING_BEFORE` and `DELIVERED_BEFORE`. Now wait for the trigger. Don't call `Start-ScheduledTask`. The point is that nobody touched it.
+
+```powershell
+Get-ScheduledTaskInfo -TaskName "proactive-m5-grok" |
+  Format-List TaskName, LastRunTime, LastTaskResult, NextRunTime
+Get-ChildItem $logDir -Filter "grok-*.marker" |
+  Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty Name
+Get-ChildItem $logDir -Filter "grok-*.marker" |
+  Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content
+```
+
+The marker tells you the task ran and how Grok exited. It says nothing about the tool call, by design. For that, open a **separate** session after the run and read the counts again:
+
+```powershell
+grok -p "Call list_situations with state=pending and report only the items length. Then call list_situations with state=delivered and report only the items length. Do not call proactive_check. Do not paste any item content."
+```
+
+The unattended run claimed the situation if and only if pending dropped by one and delivered rose by one. That transition is only possible through `proactive_check`, so it is the evidence, and it costs you nothing on disk.
+
+Pass:
+
+- `LastTaskResult` is `0` and `LastRunTime` is after you planted the situation
+- The newest `grok-*.marker` exists, holds one line, and its `exit=` value is `0`
+- Pending is `PENDING_BEFORE - 1` and delivered is `DELIVERED_BEFORE + 1`, with nobody at the keyboard
+
+Fail:
+
+- Non-zero `LastTaskResult`, non-zero `exit=` in the marker, no marker at all, or `uv`/`grok` not found (go back to absolute paths)
+- The counts didn't move, so the situation is still `pending`
+- Any file in `m5-logs` that isn't a wrapper or a one-line marker
+
+Marker files hold a timestamp, a CLI name, and an exit code. Nothing else belongs in `m5-logs`. If you find a `.log` file there, you edited the wrapper. Delete it and start the scenario over.
+
+#### M5 Scenario 4: Codex CLI, Windows Task Scheduler trigger
+
+Same shape as scenario 3, with its own wrapper, its own task, and its own marker prefix. It uses the same isolated database. Leave the scenario 3 task registered or unregister it first; either is fine, because the two tasks are independent.
+
+```powershell
+$repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
+$smokeDir = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke"
+$smokeDb = Join-Path $smokeDir "proactive.db"
+$logDir = Join-Path $smokeDir "m5-logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$codex = (Get-Command codex).Source
+Write-Output "codex=$codex"
+Write-Output "smokeDb=$smokeDb"
+Write-Output "markers=$logDir"
+```
+
+This wrapper only ever invokes Codex, so `-p` can't reach it by accident:
+
+```powershell
+$codexScript = Join-Path $logDir "m5-codex-trigger.ps1"
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($codexScript, @"
+Set-Location "$repo"
+`$env:PROACTIVE_DATABASE = "$smokeDb"
+`$stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+`$marker = Join-Path "$logDir" "codex-`$stamp.marker"
+& "$codex" exec --ephemeral --sandbox read-only "Call the proactive_check MCP tool exactly once. Report returned situations and freshness warnings; do not run unrelated tools." *> `$null
+`$code = `$LASTEXITCODE
+Set-Content -Path `$marker -Value "stamp=`$stamp cli=codex exit=`$code" -Encoding utf8
+exit `$code
+"@, $utf8)
+```
+
+Codex output is discarded the same way, for the same reason, and the exit code propagates the same way. The marker is the only thing that survives.
+
+```powershell
+Register-ScheduledTask -TaskName "proactive-m5-codex" -Force -Action (
+  New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$codexScript`""
+) -Trigger (
+  New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
+    -RepetitionInterval (New-TimeSpan -Minutes 5)
+) -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)
+```
+
+Run M5-P4 for a new `TAG`, so this scenario claims a situation scenario 3 never saw. Baseline first:
+
+```powershell
+codex exec --ephemeral --sandbox read-only "Call list_situations with state=pending and report only the items length. Then call list_situations with state=delivered and report only the items length. Do not call proactive_check. Do not paste any item content."
+```
+
+Record `PENDING_BEFORE` and `DELIVERED_BEFORE`, then wait. Don't call `Start-ScheduledTask`.
+
+```powershell
+Get-ScheduledTaskInfo -TaskName "proactive-m5-codex" |
+  Format-List TaskName, LastRunTime, LastTaskResult, NextRunTime
+Get-ChildItem $logDir -Filter "codex-*.marker" |
+  Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty Name
+Get-ChildItem $logDir -Filter "codex-*.marker" |
+  Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content
+```
+
+Read the counts again in a separate session:
+
+```powershell
+codex exec --ephemeral --sandbox read-only "Call list_situations with state=pending and report only the items length. Then call list_situations with state=delivered and report only the items length. Do not call proactive_check. Do not paste any item content."
+```
+
+Pass:
+
+- `LastTaskResult` is `0` and `LastRunTime` is after you planted the situation
+- The newest `codex-*.marker` exists, holds one line, and its `exit=` value is `0`
+- Pending is `PENDING_BEFORE - 1` and delivered is `DELIVERED_BEFORE + 1`, with nobody at the keyboard
+
+Fail:
+
+- Non-zero `LastTaskResult`, non-zero `exit=` in the marker, no marker at all, or `uv`/`codex` not found
+- The counts didn't move, so the situation is still `pending`
+- The sandbox blocked the server spawn under the task account, which is a different account context than your console
+
+#### M5 Scenario 5: delivered once, not twice
+
+This is the dedupe half of PRODUCT_PLAN §5.1, and it runs after scenarios 1 to 4. Pick either CLI and stay on it for all three commands. The Grok form is shown; for Codex, swap `grok -p` for `codex exec --ephemeral --sandbox read-only`.
+
+Run M5-P4 for a new `TAG`. Before claiming it:
+
+```powershell
+$env:PROACTIVE_DATABASE = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke\proactive.db"
+grok -p "Call list_situations with state=pending and report only the items length. Do not call proactive_check."
+```
+
+Record that number as `PENDING_BEFORE`. Then claim it, twice, in two separate invocations:
+
+```powershell
+grok -p "Call proactive_check. Report situation_type, priority, state, held_count, and all_clear. Do not paste title, why_now, or evidence."
+grok -p "Call proactive_check. Report situation_type, priority, state, held_count, and all_clear. Do not paste title, why_now, or evidence."
+```
+
+Each invocation is its own session, so the second one has no memory of the first. Only the database can stop it handing the situation out again.
+
+Pass:
+
+- First `proactive_check`: the new situation is present with `state=delivered`
+- Second `proactive_check`: that situation is **not** returned again
+- `list_situations state=pending` now counts `PENDING_BEFORE - 1`
+- `list_situations state=delivered` counts one more than before, not two
+- No duplicate `personal_occasion` for the same synthetic entity anywhere in the delivered list
+
+Fail:
+
+- The same situation comes back on the second check
+- The delivered count grows by two for one situation
+- It stays `pending` after a successful `proactive_check`
+
+### M5 확인 포인트
+
+Go through this before you write the sign-off comment. Counts and states only, no content.
+
+1. Branch is `feat/m5-integration-recipes` (or `main` after merge), `migration_version` is `8`
+2. **Every scenario ran against `m5-smoke\proactive.db`,** with `google.gmail.status` and `google.calendar.status` both `not_configured`, and your real database was never opened
+3. The test-only config is the one from M5-P2, it sits in `m5-smoke`, and you know it isn't production behavior
+4. Every claim used a fresh `TAG` and its own `daemon --once` pass
+5. **Grok CLI passed a fresh session** (scenario 1)
+6. **Codex CLI passed a fresh session** (scenario 2)
+7. **Grok CLI passed a scheduled trigger** (scenario 3), with no human in the loop
+8. **Codex CLI passed a scheduled trigger** (scenario 4), with no human in the loop
+9. Scenario 5 passed: `pending` became `delivered`, once, with no repeat
+10. `grok --version` and `codex --version` recorded, along with any flag that differed from this document
+11. Artifacts sit where they're supposed to, and the DACL still holds (below)
+
+#### M5 artifact location and DACL recheck
+
+Everything M5 creates lives in `%USERPROFILE%\.proactive-mcp\m5-smoke`: its own `proactive.db`, the test-only `config.toml`, the `m5-logs` folder, both wrappers, and the marker files. Nothing new belongs in the parent folder. Two things to confirm here: the artifacts are where they should be, and the protected DACL covers them.
+
+Explorer:
+
+1. Win+R, paste `%USERPROFILE%\.proactive-mcp`, Enter.
+2. Confirm the parent still holds your real `proactive.db` and `config.toml`, and that the only new item is the `m5-smoke` folder. A stray `m5-logs` here means an older wrapper wrote outside the smoke directory.
+3. Open `m5-smoke`. It should hold `proactive.db`, `config.toml`, and `m5-logs`, and no credentials folder.
+4. Open `m5-logs`. It should hold `m5-grok-trigger.ps1`, `m5-codex-trigger.ps1`, `grok-*.marker`, and `codex-*.marker`, and no `.log` files.
+5. Right-click `m5-smoke` > Properties / 속성 > Security / 보안. The name list should be your Windows account only. `Everyone`, `Users`, and `Authenticated Users` should not be there.
+6. Advanced / 고급: entries should be explicit or inherited from the protected `.proactive-mcp` parent, and no ACE should trace back above that folder.
+7. Repeat steps 5 and 6 on `m5-smoke\proactive.db`, on `m5-smoke\config.toml`, and on one marker file.
+
+PowerShell:
+
+```powershell
+$dir = Join-Path $env:USERPROFILE ".proactive-mcp"
+$smokeDir = Join-Path $dir "m5-smoke"
+$smokeDb = Join-Path $smokeDir "proactive.db"
+$cfg = Join-Path $smokeDir "config.toml"
+$logDir = Join-Path $smokeDir "m5-logs"
+$marker = Get-ChildItem $logDir -Filter "*.marker" |
+  Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty FullName
+
+Write-Output "=== paths ==="
+Get-Item $smokeDir, $smokeDb, $cfg, $logDir, $marker |
+  Format-List FullName, Length, LastWriteTime
+
+Write-Output "=== nothing new in the parent ==="
+Get-ChildItem $dir | Select-Object Name, LastWriteTime
+
+Write-Output "=== icacls ==="
+icacls $smokeDir
+icacls $smokeDb
+icacls $cfg
+icacls $marker
+
+Write-Output "=== Get-Acl ==="
+foreach ($p in @($smokeDir, $smokeDb, $cfg, $logDir, $marker)) {
+  $acl = Get-Acl $p
+  Write-Output "Path=$($acl.Path)"
+  Write-Output "Owner=$($acl.Owner)"
+  Write-Output "AreAccessRulesProtected=$($acl.AreAccessRulesProtected)"
+  $acl.Access |
+    Format-Table IdentityReference, FileSystemRights, AccessControlType, IsInherited -AutoSize
+}
+```
+
+Success: every `FullName` is under `C:\Users\<you>\.proactive-mcp\m5-smoke`, `Owner` is your account on all of them, and no `IdentityReference` is `Everyone`, `BUILTIN\Users`, or `NT AUTHORITY\Authenticated Users`. The parent listing shows `m5-smoke` and your pre-existing files, nothing else new. Marker `Length` should be small, a hundred bytes or so. A large marker means output leaked into it.
+
+Then rerun the storage checks in the [Explorer](#explorer) and [PowerShell ACL](#powershell-acl) sections above against the real `%USERPROFILE%\.proactive-mcp\proactive.db`, unchanged. M5 writes inside a child of that folder, so the production database DACL has to still pass afterwards, and its `LastWriteTime` should predate the smoke.
+
+Failure: an artifact outside `m5-smoke`, a broad identity in any ACL, `AreAccessRulesProtected` false on `.proactive-mcp`, a marker file larger than a line of text, or a changed `LastWriteTime` on the real database.
+
+**Acceptance decision.** Per [#20](https://github.com/madrobotnet/proactive-mcp/issues/20), Issue #6 is satisfied when lines 5 through 8 are all true. Both CLIs must prove a fresh session, and both must prove a scheduled trigger. One CLI doing all four is not acceptance, and two fresh sessions with no scheduled evidence is not acceptance either. State the decision in one line, for example: `M5 acceptance: Grok CLI + Codex CLI, fresh and scheduled. PASS.` Anything short of all four is a FAIL, and name which scenario fell over.
+
+Claude Code Desktop and Hermes stay out of this decision. Their absence is not a failure.
+
+### M5 cleanup
+
+Do this even when everything passed. Three things have to be undone: the repeating tasks, the pinned database in both MCP registrations, and the smoke directory.
+
+First the tasks:
+
+```powershell
+Unregister-ScheduledTask -TaskName "proactive-m5-grok" -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "proactive-m5-codex" -Confirm:$false -ErrorAction SilentlyContinue
+Get-ScheduledTask -TaskName "proactive-m5-*" -ErrorAction SilentlyContinue
+```
+
+That last line should print nothing.
+
+Now put both MCP registrations back on the normal default database by re-registering them with no `PROACTIVE_DATABASE`. Leaving the smoke path pinned would quietly point your everyday agents at a database you are about to delete:
+
+```powershell
+$uv = (Get-Command uv).Source
+$repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
+
+grok mcp add --scope user proactive -- $uv run --directory $repo proactive-mcp serve
+codex mcp remove proactive 2>$null
+codex mcp add proactive -- $uv run --directory $repo proactive-mcp serve
+
+grok mcp list
+codex mcp list --json
+```
+
+Neither entry may still mention `PROACTIVE_DATABASE`. Confirm with a fresh session on each side, in a **new** PowerShell window so the variable is gone from your environment:
+
+```powershell
+grok -p "Call get_status and report only database.path."
+codex exec --ephemeral --sandbox read-only "Call get_status and report only database.path."
+```
+
+Both must now report a path ending in `.proactive-mcp\proactive.db`, with no `m5-smoke` in it.
+
+Only then delete the smoke directory. This removes the smoke database, the test-only config, both wrappers, and every marker in one go:
+
+```powershell
+$smokeDir = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke"
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $smokeDir
+Test-Path $smokeDir
+Get-ChildItem (Join-Path $env:USERPROFILE ".proactive-mcp") | Select-Object Name
+```
+
+`Test-Path` must print `False`, and the listing must still show your real `proactive.db` and `config.toml`.
+
+**Delete nothing above `m5-smoke`.** Your real `proactive.db`, its `-wal` and `-shm` sidecars, your `config.toml`, and your Google credentials all live in the parent folder and must survive untouched. If a command you are about to run names the parent directory rather than `m5-smoke`, don't run it.
+
+Stop any daemon with Ctrl+C. Close the PowerShell windows where you set `PROACTIVE_DATABASE`, or clear it with `Remove-Item Env:\PROACTIVE_DATABASE`, so nothing later in your session inherits the smoke path. Because the test-only config lived in `m5-smoke`, your production settings were never overridden and there is nothing to restore.
+
+### M5 문제 발생 시
+
+Comment on Issue #6 with the M5 label. One comment per failed scenario, so each one can be fixed on its own.
+
+Include all of this:
+
+1. **Which scenario.** The number and name, for example `M5 Scenario 2: Codex CLI, fresh session`.
+2. **The exact commands you ran,** copied from this document, with your own substitutions for `ANCHOR` and `TAG` shown as placeholders rather than real values.
+3. **Exit codes.** The `exit=$LASTEXITCODE` line for every PowerShell step, and `LastTaskResult` plus the marker's `exit=` value for scenarios 3 and 4.
+4. **Isolation proof.** That `database.path` ended with `m5-smoke\proactive.db` and that Gmail and Calendar were both `not_configured`. Write the path as `...\m5-smoke\proactive.db`, with your username cut off.
+5. **Versions.** `grok --version`, `codex --version`, `uv --version`, and `uv run python --version`. The application revision is the Git SHA from item 7; `proactive-mcp` has no `--version` flag.
+6. **OS and shell.** Windows edition and build, and `$PSVersionTable.PSVersion`.
+7. **Branch and SHA.** The output of `git rev-parse --abbrev-ref HEAD` and `git rev-parse HEAD`.
+8. **Redacted status fields only,** from `uv run proactive-mcp status`: `overall`, `database.status`, `database.journal_mode`, `database.migration_version`, `daemon.status`, `budget.daily_budget`, and the budget counts. Retype them. Don't paste the whole document.
+9. **Tool evidence as names and numbers.** Which tools were called, how many times each, and the `items` length returned. For `proactive_check`, report `situation_type`, `priority`, `state`, `held_count`, and `all_clear`, and nothing else.
+10. **Scheduler result** for scenario 3 or 4: the task name, whether the trigger fired unattended, `LastRunTime`, `NextRunTime`, `LastTaskResult`, and the marker filename.
+11. **Registration shape, not contents.** Whether the failing CLI's entry carried `PROACTIVE_DATABASE`, as a yes or no. Never paste the registration block or the CLI config file.
+12. **A sanitized error line** if a CLI failed. Rerun the command by hand, read the message on screen, and retype one line with paths shortened to `%USERPROFILE%\...` and any identifier or token replaced with `<redacted>`. For Grok, its stderr logs under `%USERPROFILE%\.grok\logs\mcp\` are for your eyes only. Read, retype the one line, attach nothing.
+
+Never attach or paste any of the following, on any issue, in any form:
+
+- Any `proactive.db`, smoke or real, and any `-wal`, `-shm`, or `.init.lock` sidecar
+- `config.toml` from either directory, `AGENTS.md`, or any other config file, including the CLI MCP configs
+- The absolute smoke path with your username in it; cut it to `...\m5-smoke\proactive.db`
+- Google credentials, tokens, OAuth files, client secrets, or anything from a credentials directory
+- Raw agent logs, including the Grok MCP logs and any Codex session file
+- Raw stdout or stderr from Grok, Codex, or the daemon
+- Situation content: `title`, `why_now`, `evidence`, `suggested_actions`, memory `content`, entity names, or dates
+- Screenshots of any kind, including terminal windows and Task Scheduler windows
+
+If you think a failure can't be explained without one of those, say so in the comment and stop. Someone will work out a safe way to get the detail. Guessing on your own is how private data ends up in a public thread.
