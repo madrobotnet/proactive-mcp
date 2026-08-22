@@ -216,6 +216,10 @@ class SituationStore:
             _utc_iso(end),
         )
 
+    def count_deliveries(self) -> int:
+        """Return the immutable delivery-event row count."""
+        return self._reader.count_deliveries()
+
     def _transition(self, situation_id: int, sql: str, action: str) -> Situation:
         timestamp = self._now_iso()
         with ImmediateTransaction(self._connection):

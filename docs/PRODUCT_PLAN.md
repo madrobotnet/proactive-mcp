@@ -90,7 +90,7 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 | `proactive-mcp serve` | 에이전트가 stdio로 spawn (다중 인스턴스 허용) | MCP 도구 표면 제공. DB 읽기/쓰기 |
 | `proactive-mcp daemon` | 상시 실행 (systemd / Windows 작업 스케줄러 / 수동) | 주기적 Google sync, Situation 평가, 폴백 알림 발송 |
 | `proactive-mcp setup` | 1회성 CLI | Google OAuth 연동, 초기 설정 |
-| `proactive-mcp status` | 1회성 CLI | 연결·신선도·데몬 상태 진단 |
+| `proactive-mcp status` | 1회성 CLI | 연결·신선도·데몬 상태·누적 전달 수 진단 |
 
 **데몬 없는 degraded 모드:** 데몬이 꺼져 있어도 `proactive_check` 호출 시 마지막 sync가 오래되었으면 인라인으로 lazy sync 후 평가한다. 이 경우 폴백 알림은 동작하지 않으며 `get_status`가 이를 명시한다. 데몬은 권장 사항이지 필수가 아니다.
 
@@ -118,7 +118,7 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 | `remember` | 메모리 저장 | `kind, content, entity?, date_anchor?, recurrence?` |
 | `recall` | 메모리 검색 | `query, kind?` → 메모리 배열 |
 | `forget` | 메모리 삭제(아카이브) | `id` |
-| `get_status` | 연결 상태, 소스 신선도, 데몬 상태, 예산 사용량 | 입력 없음 → 상태 객체 |
+| `get_status` | 연결 상태, 소스 신선도, 데몬 상태, 예산 사용량, 누적 전달 수 | 입력 없음 → 상태 객체 |
 
 메모리 도구의 시그니처는 M2.5부터 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md)가 정본이다 — `remember`/`recall` 확장과 `update`/`list_entities` 추가 (2026-08-21 개정, §8 참조).
 
