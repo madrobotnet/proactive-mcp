@@ -277,7 +277,17 @@ def test_packaged_scripts_are_argv_templates() -> None:
     assert b" -e " not in macos
     assert b"ToastNotificationManager" in windows
     assert b"CreateTextNode" in windows
-    assert b"CreateToastNotifier()" in windows
+    assert b"$ErrorActionPreference = 'Stop'" in windows
+    assert b"try {" in windows
+    assert b"catch {" in windows
+    assert (
+        b"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}"
+        b"\\WindowsPowerShell\\v1.0\\powershell.exe"
+    ) in windows
+    assert b"CreateToastNotifier($aumid)" in windows
+    assert b"CreateToastNotifier()" not in windows
+    assert b"exit 0" in windows
+    assert b"exit 1" in windows
     assert b"-Command" not in windows
     assert b"Invoke-Expression" not in windows
     assert b"Out-File" not in windows
