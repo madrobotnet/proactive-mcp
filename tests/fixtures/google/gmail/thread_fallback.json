@@ -1,0 +1,22 @@
+{
+  "id": "thread-fallback",
+  "historyId": "2002",
+  "messages": [
+    {
+      "id": "message-fallback",
+      "threadId": "thread-fallback",
+      "internalDate": "1787302800000",
+      "snippet": "Fallback preview",
+      "payload": {
+        "mimeType": "application/octet-stream",
+        "headers": [
+          {"name": "From", "value": "Fixture Sender <sender@example.test>"},
+          {"name": "To", "value": "USER@EXAMPLE.COM"}
+        ],
+        "body": {
+          "data": "PHA-RmFsbGJhY2sgcHJldmlldzwvcD4"
+        }
+      }
+    }
+  ]
+}

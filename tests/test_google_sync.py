@@ -7,13 +7,14 @@ from typing import TYPE_CHECKING
 import pytest
 
 from proactive_mcp import sources
+from proactive_mcp.situations.inputs import InboxThreadSnapshot
 from proactive_mcp.sources.calendar import CalendarEvent, CalendarReadResult
 from proactive_mcp.sources.credentials import (
     GOOGLE_READONLY_SCOPES,
     CredentialStorageError,
     GoogleCredential,
 )
-from proactive_mcp.sources.gmail import GmailError, GmailProfile
+from proactive_mcp.sources.gmail import GmailError, GmailInboxReadResult
 from proactive_mcp.sources.google_sync import (
     GoogleReadDependencies,
     GoogleReadSmokeDisabledError,
@@ -32,19 +33,19 @@ NOW = datetime(2026, 8, 21, 9, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True, slots=True)
-class FakeGmailReader:
-    profile: GmailProfile
-
-    def read_profile(self) -> GmailProfile:
-        return self.profile
-
-
-@dataclass(frozen=True, slots=True)
 class FailingGmailReader:
     error: GmailError | GoogleTransportError | InvalidGrantError
 
-    def read_profile(self) -> GmailProfile:
+    def read_inbox_threads(self) -> GmailInboxReadResult:
         raise self.error
+
+
+@dataclass(frozen=True, slots=True)
+class FakeInboxReader:
+    result: GmailInboxReadResult
+
+    def read_inbox_threads(self) -> GmailInboxReadResult:
+        return self.result
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,15 +83,6 @@ class FakeCredentials:
             raise self.delete_error
 
 
-def _gmail_profile() -> GmailProfile:
-    return GmailProfile(
-        email_address="user@example.test",
-        messages_total=12,
-        threads_total=4,
-        history_id="history-1",
-    )
-
-
 def _calendar_result() -> CalendarReadResult:
     return CalendarReadResult(
         events=(
@@ -110,6 +102,88 @@ def _calendar_result() -> CalendarReadResult:
         page_count=1,
         skipped_count=0,
     )
+
+
+def _gmail_inbox_result() -> GmailInboxReadResult:
+    thread = InboxThreadSnapshot(
+        thread_id="thread-1",
+        latest_message_id="message-1",
+        latest_from_user=False,
+        user_is_recipient=True,
+        latest_message_at=NOW,
+    )
+    return GmailInboxReadResult(
+        threads=(thread,),
+        fetched_at=NOW.isoformat(),
+        provider_history_cursor="history-2",
+        page_count=1,
+        is_complete=True,
+        degradation_reasons=(),
+    )
+
+
+def test_sync_records_successful_gmail_projection_and_cursor(
+    tmp_path: Path,
+) -> None:
+    # Given: a complete Gmail projection for the legacy sync/read-smoke surface.
+    credentials = FakeCredentials()
+    with Store(tmp_path / "proactive.db") as store:
+        service = GoogleSyncService(
+            GoogleReadDependencies(
+                store=store,
+                gmail=FakeInboxReader(_gmail_inbox_result()),
+                calendar=FakeCalendarReader(_calendar_result()),
+                credentials=credentials,
+            )
+        )
+
+        # When: the legacy synchronization surface completes.
+        summary = service.sync()
+        gmail_state = store.get_source_sync("gmail")
+
+    # Then: snapshot identity and freshness preserve the public sync contract.
+    assert summary.gmail_count == 1
+    assert summary.gmail_ids == ("thread-1",)
+    assert gmail_state.last_success_at is not None
+    assert gmail_state.sync_cursor == "history-2"
+
+
+def test_prepare_evaluation_reserves_ordered_detector_snapshots(
+    tmp_path: Path,
+) -> None:
+    # Given: complete Gmail and Calendar read projections.
+    credentials = FakeCredentials()
+    with Store(tmp_path / "proactive.db") as store:
+        service = GoogleSyncService(
+            GoogleReadDependencies(
+                store=store,
+                gmail=FakeInboxReader(_gmail_inbox_result()),
+                calendar=FakeCalendarReader(_calendar_result()),
+                credentials=credentials,
+            )
+        )
+
+        # When: source work is prepared for one atomic engine pass.
+        prepared = service.prepare_evaluation()
+        gmail_state = store.source_generation_state("gmail")
+        calendar_state = store.source_generation_state("calendar")
+
+    # Then: generation tickets and completeness travel with detector inputs.
+    assert prepared.gmail_threads is not None
+    assert prepared.gmail_threads.generation.source == "gmail"
+    assert prepared.gmail_threads.generation.number == 1
+    assert prepared.gmail_threads.items[0].thread_id == "thread-1"
+    assert prepared.gmail_threads.sync_cursor == "history-2"
+    assert prepared.gmail_threads.complete is True
+    assert prepared.calendar_events is not None
+    assert prepared.calendar_events.generation.source == "calendar"
+    assert prepared.calendar_events.generation.number == 1
+    assert prepared.calendar_events.items[0].id == "event-1"
+    assert prepared.calendar_events.complete is True
+    assert gmail_state.issued == 1
+    assert gmail_state.applied == 0
+    assert calendar_state.issued == 1
+    assert calendar_state.applied == 0
 
 
 def test_setup_runtime_marks_both_sources_configured_after_authorization(
@@ -282,7 +356,7 @@ def test_real_account_read_is_explicitly_opt_in(tmp_path: Path) -> None:
         service = GoogleSyncService(
             GoogleReadDependencies(
                 store=store,
-                gmail=FakeGmailReader(_gmail_profile()),
+                gmail=FakeInboxReader(_gmail_inbox_result()),
                 calendar=FakeCalendarReader(_calendar_result()),
                 credentials=credentials,
             )

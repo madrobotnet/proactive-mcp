@@ -57,9 +57,16 @@ def current_version(reader: ScalarIntReader) -> int:
 
 
 def _sql_statements(sql: str) -> tuple[str, ...]:
+    """Split SQL using SQLite parsing so trigger bodies stay intact."""
     statements: list[str] = []
-    for part in sql.split(";"):
-        statement = part.strip()
-        if statement:
-            statements.append(statement)
+    pending: list[str] = []
+    for line in sql.splitlines():
+        pending.append(line)
+        candidate = "\n".join(pending).strip()
+        if sqlite3.complete_statement(candidate):
+            statements.append(candidate)
+            pending.clear()
+    trailing = "\n".join(pending).strip()
+    if trailing:
+        statements.append(trailing)
     return tuple(statements)

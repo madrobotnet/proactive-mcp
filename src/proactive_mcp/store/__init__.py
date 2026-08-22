@@ -1,5 +1,26 @@
 """Persistence package."""
 
+from ._situation_models import (
+    ACTIVE_SITUATION_STATES,
+    DeliveryClaim,
+    Detection,
+    DetectionApplySummary,
+    DetectionUpsertSummary,
+    InvalidSituationTransitionError,
+    Situation,
+    SituationEvidence,
+    SituationNotFoundError,
+    SituationPriority,
+    SituationState,
+    SituationType,
+    SituationValidationError,
+)
+from ._source_generation import (
+    DelayedSourceGenerationError,
+    SourceGeneration,
+    SourceGenerationState,
+    SourceGenerationStatus,
+)
 from .database import (
     DEFAULT_BUSY_TIMEOUT_MS,
     DatabaseStatus,
@@ -26,6 +47,7 @@ from .memory import (
     NewMemory,
 )
 from .private_path import UnsafeDatabasePathError
+from .situations import SituationStore
 from .sync import (
     SourceAuthState,
     SourceErrorCode,
@@ -36,13 +58,20 @@ from .sync import (
 )
 
 __all__ = [
+    "ACTIVE_SITUATION_STATES",
     "DEFAULT_BUSY_TIMEOUT_MS",
     "DEFAULT_STALE_AFTER",
     "DatabaseStatus",
+    "DelayedSourceGenerationError",
+    "DeliveryClaim",
+    "Detection",
+    "DetectionApplySummary",
+    "DetectionUpsertSummary",
     "Entity",
     "EntityAliasConflictError",
     "EntityKind",
     "EntityStatus",
+    "InvalidSituationTransitionError",
     "MemoryAttribute",
     "MemoryItem",
     "MemoryKind",
@@ -51,10 +80,21 @@ __all__ = [
     "MemorySource",
     "MemoryValidationError",
     "NewMemory",
+    "Situation",
+    "SituationEvidence",
+    "SituationNotFoundError",
+    "SituationPriority",
+    "SituationState",
+    "SituationStore",
+    "SituationType",
+    "SituationValidationError",
     "SourceAuthState",
     "SourceErrorCode",
     "SourceFreshness",
     "SourceFreshnessStatus",
+    "SourceGeneration",
+    "SourceGenerationState",
+    "SourceGenerationStatus",
     "SourceName",
     "SourceSyncFailureCode",
     "SourceSyncState",

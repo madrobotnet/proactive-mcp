@@ -11,6 +11,13 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import TypeAdapter
 
+from ._source_generation import (
+    SourceGeneration,
+    SourceGenerationState,
+    SourceGenerationStatus,
+    SourceGenerationStore,
+)
+
 if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
 
@@ -25,7 +32,14 @@ SourceErrorCode = Literal[
     "timeout",
     "unknown",
 ]
-SourceSyncFailureCode = Literal["http_4xx", "http_5xx", "network", "timeout", "unknown"]
+SourceSyncFailureCode = Literal[
+    "scope_mismatch",
+    "http_4xx",
+    "http_5xx",
+    "network",
+    "timeout",
+    "unknown",
+]
 _GOOGLE_SOURCES: Final[tuple[SourceName, SourceName]] = ("gmail", "calendar")
 
 
@@ -53,17 +67,35 @@ class SyncStore:
     _connection: sqlite3.Connection
     _clock: Clock
     _states: list[SourceSyncState]
+    _generations: SourceGenerationStore
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
         """Bind source synchronization operations to a connection and clock."""
         self._connection = connection
         self._clock = clock
         self._states = []
+        self._generations = SourceGenerationStore(connection)
         connection.create_function(
             "_proactive_capture_source_sync_state",
             1,
             self._capture_state,
         )
+
+    def reserve_source_generation(self, source: SourceName) -> SourceGeneration:
+        """Atomically issue the next generation for one source."""
+        return self._generations.reserve(source)
+
+    def source_generation_state(self, source: SourceName) -> SourceGenerationState:
+        """Return generation progress for one source."""
+        return self._generations.state(source)
+
+    def accept_source_generation(
+        self,
+        generation: SourceGeneration,
+        status: SourceGenerationStatus,
+    ) -> None:
+        """Accept a generation inside the caller's transaction."""
+        self._generations.accept(generation, status)
 
     def get_source_sync(self, source: SourceName) -> SourceSyncState:
         """Return persisted state, or the explicit never-configured source state."""
@@ -145,47 +177,58 @@ class SyncStore:
         """Atomically require reauthorization for the shared Google grant."""
         self._update_google_auth_state("needs_reauth", "invalid_grant")
 
+    def record_google_invalid_grant_in_transaction(self) -> None:
+        """Require reauthorization inside an existing SQLite transaction."""
+        self._write_google_auth_state("needs_reauth", "invalid_grant")
+
     def _update_google_auth_state(
         self,
         auth_state: SourceAuthState,
         error_code: SourceErrorCode | None,
     ) -> None:
-        timestamp = self._clock.now().isoformat()
         _ = self._connection.execute("BEGIN IMMEDIATE")
         try:
-            for source in _GOOGLE_SOURCES:
-                _ = self._connection.execute(
-                    """
-                    INSERT INTO source_sync_state (
-                        source, auth_state, last_attempt_at, last_error_code, updated_at
-                    ) VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(source) DO UPDATE SET
-                        auth_state = excluded.auth_state,
-                        last_attempt_at = CASE
-                            WHEN excluded.last_error_code IS NULL
-                            THEN source_sync_state.last_attempt_at
-                            ELSE excluded.last_attempt_at
-                        END,
-                        last_error_code = CASE
-                            WHEN excluded.last_error_code IS NULL
-                            THEN source_sync_state.last_error_code
-                            ELSE excluded.last_error_code
-                        END,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        source,
-                        auth_state,
-                        timestamp if error_code is not None else None,
-                        error_code,
-                        timestamp,
-                    ),
-                )
+            self._write_google_auth_state(auth_state, error_code)
             _ = self._connection.execute("COMMIT")
         except sqlite3.Error:
             if self._connection.in_transaction:
                 _ = self._connection.execute("ROLLBACK")
             raise
+
+    def _write_google_auth_state(
+        self,
+        auth_state: SourceAuthState,
+        error_code: SourceErrorCode | None,
+    ) -> None:
+        timestamp = self._clock.now().isoformat()
+        for source in _GOOGLE_SOURCES:
+            _ = self._connection.execute(
+                """
+                INSERT INTO source_sync_state (
+                    source, auth_state, last_attempt_at, last_error_code, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source) DO UPDATE SET
+                    auth_state = excluded.auth_state,
+                    last_attempt_at = CASE
+                        WHEN excluded.last_error_code IS NULL
+                        THEN source_sync_state.last_attempt_at
+                        ELSE excluded.last_attempt_at
+                    END,
+                    last_error_code = CASE
+                        WHEN excluded.last_error_code IS NULL
+                        THEN source_sync_state.last_error_code
+                        ELSE excluded.last_error_code
+                    END,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    source,
+                    auth_state,
+                    timestamp if error_code is not None else None,
+                    error_code,
+                    timestamp,
+                ),
+            )
 
     def _persisted_states(self) -> tuple[SourceSyncState, ...]:
         self._states.clear()

@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias
 
 from typing_extensions import override
 
+from proactive_mcp.situations.inputs import EngineInputs, SourceSnapshot
 from proactive_mcp.sources.calendar import CalendarError
 from proactive_mcp.sources.credentials import CredentialStorageError
 from proactive_mcp.sources.gmail import GmailError
 
 if TYPE_CHECKING:
     from proactive_mcp.sources.calendar import CalendarReadResult
-    from proactive_mcp.sources.gmail import GmailProfile
-    from proactive_mcp.store import SourceErrorCode, SourceSyncFailureCode, Store
+    from proactive_mcp.sources.gmail import GmailInboxReadResult
+    from proactive_mcp.store import (
+        SourceErrorCode,
+        SourceGeneration,
+        SourceSyncFailureCode,
+        Store,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,10 +68,10 @@ class GoogleCredentialStore(Protocol):
 
 
 class GmailProfileReader(Protocol):
-    """Read the authenticated Gmail profile without exposing it downstream."""
+    """Read detector-ready Gmail inbox threads without persisting success."""
 
-    def read_profile(self) -> GmailProfile:
-        """Return the authenticated Gmail profile."""
+    def read_inbox_threads(self) -> GmailInboxReadResult:
+        """Return the authenticated inbox projection."""
         ...
 
 
@@ -132,13 +139,97 @@ class GoogleSyncService:
             raise GoogleReadSmokeDisabledError
         return self.sync()
 
+    def prepare_evaluation(self) -> EngineInputs:
+        """Read ordered source snapshots without accepting their truth yet."""
+        store = self._dependencies.store
+        gmail_generation = store.reserve_source_generation("gmail")
+        calendar_generation = store.reserve_source_generation("calendar")
+        try:
+            gmail_result = self._dependencies.gmail.read_inbox_threads()
+        except InvalidGrantError:
+            return self._invalid_grant_inputs(gmail_generation, calendar_generation)
+        except (GmailError, GoogleTransportError) as error:
+            gmail_snapshot = SourceSnapshot(
+                generation=gmail_generation,
+                items=(),
+                complete=False,
+                warning_codes=(f"gmail_{error.error_code}",),
+                error_code=error.error_code,
+            )
+        else:
+            gmail_snapshot = SourceSnapshot(
+                generation=gmail_generation,
+                items=gmail_result.threads,
+                complete=gmail_result.is_complete,
+                sync_cursor=gmail_result.provider_history_cursor,
+                warning_codes=tuple(gmail_result.degradation_reasons),
+            )
+        try:
+            calendar_result = self._dependencies.calendar.list_events()
+        except InvalidGrantError:
+            return self._invalid_grant_inputs(gmail_generation, calendar_generation)
+        except (CalendarError, GoogleTransportError) as error:
+            calendar_snapshot = SourceSnapshot(
+                generation=calendar_generation,
+                items=(),
+                complete=False,
+                warning_codes=(f"calendar_{error.error_code}",),
+                error_code=error.error_code,
+            )
+        else:
+            calendar_snapshot = SourceSnapshot(
+                generation=calendar_generation,
+                items=calendar_result.events,
+                complete=calendar_result.skipped_count == 0,
+                warning_codes=(
+                    ()
+                    if calendar_result.skipped_count == 0
+                    else ("calendar_skipped_items",)
+                ),
+            )
+        return EngineInputs(
+            gmail_threads=gmail_snapshot,
+            calendar_events=calendar_snapshot,
+        )
+
+    def _invalid_grant_inputs(
+        self,
+        gmail_generation: SourceGeneration,
+        calendar_generation: SourceGeneration,
+    ) -> EngineInputs:
+        with suppress(CredentialStorageError):
+            self._dependencies.credentials.delete()
+        return EngineInputs(
+            gmail_threads=SourceSnapshot(
+                generation=gmail_generation,
+                items=(),
+                complete=False,
+                warning_codes=("gmail_invalid_grant",),
+                error_code="invalid_grant",
+            ),
+            calendar_events=SourceSnapshot(
+                generation=calendar_generation,
+                items=(),
+                complete=False,
+                warning_codes=("calendar_invalid_grant",),
+                error_code="invalid_grant",
+            ),
+        )
+
     def _sync_gmail(self) -> _SourceReadOutcome:
         try:
-            profile = self._dependencies.gmail.read_profile()
+            result = self._dependencies.gmail.read_inbox_threads()
         except (GmailError, GoogleTransportError) as error:
             return self._record_failure("gmail", error.error_code)
-        self._dependencies.store.record_sync_success("gmail")
-        return _SourceReadOutcome(count=profile.threads_total, ids=(), error_code=None)
+        self._dependencies.store.record_sync_success(
+            "gmail",
+            sync_cursor=result.provider_history_cursor,
+        )
+        return _SourceReadOutcome(
+            count=len(result.threads),
+            ids=tuple(thread.thread_id for thread in result.threads),
+            error_code=None,
+        )
 
     def _sync_calendar(self) -> _SourceReadOutcome:
         try:

@@ -1,0 +1,44 @@
+{
+  "id": "thread-deadline",
+  "historyId": "2001",
+  "messages": [
+    {
+      "id": "message-z",
+      "threadId": "thread-deadline",
+      "internalDate": "1787302800000",
+      "snippet": "Please review the attached details.",
+      "payload": {
+        "mimeType": "multipart/alternative",
+        "headers": [
+          {"name": "from", "value": "Fixture Sender <sender@example.test>"},
+          {"name": "TO", "value": "User <USER@EXAMPLE.COM>"},
+          {"name": "subject", "value": "Project update"}
+        ],
+        "parts": [
+          {
+            "mimeType": "text/plain",
+            "body": {
+              "data": "UGxlYXNlIHJlcGx5IGJ5IDIwMjYtMDgtMjIu"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "message-a",
+      "threadId": "thread-deadline",
+      "internalDate": "1787302800000",
+      "snippet": "Older message",
+      "payload": {
+        "mimeType": "text/plain",
+        "headers": [
+          {"name": "From", "value": "User <USER@EXAMPLE.COM>"},
+          {"name": "To", "value": "Fixture Sender <sender@example.test>"}
+        ],
+        "body": {
+          "data": "T2xkZXIgbWVzc2FnZQ"
+        }
+      }
+    }
+  ]
+}

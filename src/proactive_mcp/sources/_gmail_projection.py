@@ -1,0 +1,265 @@
+"""Bounded Gmail wire projection for deterministic reply detection."""
+
+from __future__ import annotations
+
+import base64
+import binascii
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import getaddresses, parseaddr
+from html.parser import HTMLParser
+from typing import ClassVar, Final, TypeAlias
+
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from typing_extensions import override
+
+from proactive_mcp.situations.inputs import (
+    InboxThreadDegradationReason,
+    InboxThreadSnapshot,
+)
+
+ProjectionDegradationReason: TypeAlias = InboxThreadDegradationReason
+_MILLISECONDS_PER_SECOND: Final[int] = 1000
+_MAX_BODY_CHARS: Final[int] = 4_000
+_MAX_MIME_DEPTH: Final[int] = 8
+_MAX_MIME_PARTS: Final[int] = 64
+_HTML_BREAK_TAGS: Final[frozenset[str]] = frozenset(
+    {
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "br",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "ul",
+    }
+)
+
+
+class _Wire(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="ignore")
+
+
+class _WireHeader(_Wire):
+    name: str
+    value: str
+
+
+class _WireBody(_Wire):
+    data: str | None = None
+
+
+class _WirePart(_Wire):
+    mime_type: str | None = Field(default=None, alias="mimeType")
+    headers: tuple[_WireHeader, ...] = ()
+    body: _WireBody | None = None
+    parts: tuple[_WirePart, ...] = ()
+
+
+class _WireMessage(_Wire):
+    id: str | None = None
+    internal_date: int | None = Field(default=None, alias="internalDate")
+    snippet: str | None = None
+    payload: _WirePart | None = None
+
+
+class WireThreadDetail(_Wire):
+    messages: tuple[_WireMessage, ...] = ()
+
+
+THREAD_DETAIL_ADAPTER: Final[TypeAdapter[WireThreadDetail]] = TypeAdapter(
+    WireThreadDetail
+)
+
+
+def project_thread(
+    thread_id: str,
+    wire: WireThreadDetail,
+    *,
+    profile_email: str,
+    profile_history_cursor: str,
+) -> InboxThreadSnapshot | None:
+    """Project one full Gmail thread into the bounded detector input."""
+    candidates: list[tuple[datetime, str, _WireMessage]] = []
+    for message in wire.messages:
+        if message.id is None or message.internal_date is None:
+            continue
+        try:
+            sent_at = datetime.fromtimestamp(
+                message.internal_date / _MILLISECONDS_PER_SECOND,
+                tz=UTC,
+            )
+        except (OSError, OverflowError, ValueError):
+            continue
+        candidates.append((sent_at, message.id, message))
+    if not candidates:
+        return None
+    sent_at, message_id, latest = max(candidates, key=lambda item: (item[0], item[1]))
+    headers = _headers(latest.payload)
+    sender_name, sender_address = parseaddr(headers.get("from", ""))
+    recipients = getaddresses([headers.get("to", "")])
+    user_address = profile_email.casefold()
+    body = _project_body(latest.payload)
+    body_text = body.text
+    degradation_reasons: tuple[ProjectionDegradationReason, ...] = ()
+    if body_text is None:
+        body_text = latest.snippet
+        degradation_reasons = ("body_snippet_fallback",)
+    elif body.truncated:
+        degradation_reasons = ("body_truncated",)
+    elif body.structure_truncated:
+        degradation_reasons = ("mime_structure_truncated",)
+    return InboxThreadSnapshot(
+        thread_id=thread_id,
+        latest_message_id=message_id,
+        latest_from_user=sender_address.casefold() == user_address,
+        user_is_recipient=any(
+            address.casefold() == user_address for _, address in recipients
+        ),
+        latest_message_at=sent_at,
+        subject=headers.get("subject") or None,
+        sender_display=sender_name or sender_address or None,
+        snippet=latest.snippet,
+        body_text=body_text,
+        is_complete=not degradation_reasons,
+        degradation_reasons=degradation_reasons,
+        provider_history_cursor=profile_history_cursor,
+    )
+
+
+def _headers(payload: _WirePart | None) -> dict[str, str]:
+    if payload is None:
+        return {}
+    return {header.name.casefold(): header.value for header in payload.headers}
+
+
+@dataclass(frozen=True, slots=True)
+class _BodyProjection:
+    text: str | None
+    truncated: bool
+    structure_truncated: bool
+
+
+class _HtmlTextExtractor(HTMLParser):
+    pieces: list[str]
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.pieces = []
+
+    @override
+    def handle_data(self, data: str) -> None:
+        self.pieces.append(data)
+
+    @override
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        del attrs
+        if tag in _HTML_BREAK_TAGS:
+            self._append_break()
+
+    @override
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _HTML_BREAK_TAGS:
+            self._append_break()
+
+    def _append_break(self) -> None:
+        if self.pieces and not self.pieces[-1].endswith((" ", "\t", "\n", "\r")):
+            self.pieces.append(" ")
+
+
+def _project_body(part: _WirePart | None) -> _BodyProjection:
+    if part is None:
+        return _BodyProjection(
+            text=None,
+            truncated=False,
+            structure_truncated=False,
+        )
+    stack: list[tuple[_WirePart, int]] = [(part, 0)]
+    seen = 0
+    html_text: str | None = None
+    body_truncated = False
+    structure_truncated = False
+    while stack:
+        current, depth = stack.pop()
+        seen += 1
+        if seen > _MAX_MIME_PARTS or depth > _MAX_MIME_DEPTH:
+            structure_truncated = True
+            continue
+        mime_type = (current.mime_type or "").casefold()
+        decoded, truncated = _decode_body(current)
+        body_truncated = body_truncated or truncated
+        if decoded is not None and mime_type == "text/plain":
+            return _BodyProjection(
+                decoded,
+                body_truncated,
+                structure_truncated,
+            )
+        if decoded is not None and mime_type == "text/html" and html_text is None:
+            extractor = _HtmlTextExtractor()
+            extractor.feed(decoded)
+            extracted = "".join(extractor.pieces).strip()
+            if len(extracted) > _MAX_BODY_CHARS:
+                body_truncated = True
+            html_text = extracted[:_MAX_BODY_CHARS]
+        stack.extend((child, depth + 1) for child in reversed(current.parts))
+    return _BodyProjection(html_text, body_truncated, structure_truncated)
+
+
+def _decode_body(part: _WirePart) -> tuple[str | None, bool]:
+    if part.body is None or part.body.data is None:
+        return None, False
+    encoded = part.body.data
+    maximum_encoded = ((_MAX_BODY_CHARS * 4) // 3 + 8) // 4 * 4
+    bounded = encoded[:maximum_encoded]
+    padded = bounded + "=" * (-len(bounded) % 4)
+    try:
+        decoded = base64.b64decode(
+            padded,
+            altchars=b"-_",
+            validate=True,
+        ).decode(errors="ignore")
+    except binascii.Error:
+        return None, False
+    truncated = len(encoded) > len(bounded) or len(decoded) > _MAX_BODY_CHARS
+    return decoded[:_MAX_BODY_CHARS], truncated
+
+
+__all__ = [
+    "THREAD_DETAIL_ADAPTER",
+    "ProjectionDegradationReason",
+    "WireThreadDetail",
+    "project_thread",
+]

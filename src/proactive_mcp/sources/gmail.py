@@ -4,22 +4,41 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Final, Literal, Protocol, TypeAlias, TypeVar
+from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
+from ._gmail_projection import (
+    THREAD_DETAIL_ADAPTER,
+    ProjectionDegradationReason,
+    project_thread,
+)
+
 if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
+    from proactive_mcp.situations.inputs import InboxThreadSnapshot
 
 GMAIL_PROFILE_URL: Final[str] = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_THREADS_URL: Final[str] = "https://gmail.googleapis.com/gmail/v1/users/me/threads"
 DEFAULT_MAX_PAGES: Final[int] = 20
 DEFAULT_MAX_RESULTS: Final[int] = 100
+DEFAULT_MAX_PROJECTED_THREADS: Final[int] = 200
 THREAD_FIELDS: Final[str] = "nextPageToken,threads(id,historyId)"
 _HTTP_OK: Final[int] = 200
 _HTTP_SERVER_ERROR_MIN: Final[int] = 500
 _HTTP_SERVER_ERROR_MAX: Final[int] = 600
+_MAX_THREAD_RESPONSE_BYTES: Final[int] = 1_000_000
 
 GmailErrorCode: TypeAlias = Literal["http_4xx", "http_5xx", "unknown"]
+GmailDegradationReason: TypeAlias = (
+    Literal[
+        "thread_projection_limit",
+        "thread_response_too_large",
+        "thread_list_entry_skipped",
+        "thread_without_projectable_message",
+    ]
+    | ProjectionDegradationReason
+)
 _T = TypeVar("_T")
 
 
@@ -90,6 +109,18 @@ class GmailReadResult:
     skipped_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class GmailInboxReadResult:
+    """Detector-ready inbox projection with provider completeness metadata."""
+
+    threads: tuple[InboxThreadSnapshot, ...]
+    fetched_at: str
+    provider_history_cursor: str
+    page_count: int
+    is_complete: bool
+    degradation_reasons: tuple[GmailDegradationReason, ...]
+
+
 class _Wire(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="ignore")
 
@@ -120,11 +151,19 @@ class GmailAdapter:
 
     _transport: _GmailTransport
     _clock: Clock
+    _max_projected_threads: int
 
-    def __init__(self, transport: _GmailTransport, clock: Clock) -> None:
+    def __init__(
+        self,
+        transport: _GmailTransport,
+        clock: Clock,
+        *,
+        max_projected_threads: int = DEFAULT_MAX_PROJECTED_THREADS,
+    ) -> None:
         """Bind a GET-only transport and a UTC clock."""
         self._transport = transport
         self._clock = clock
+        self._max_projected_threads = max_projected_threads
 
     def read_profile(self) -> GmailProfile:
         """Return the authenticated user's typed Gmail profile."""
@@ -171,6 +210,51 @@ class GmailAdapter:
                     skipped_count=skipped_count,
                 )
         raise GmailParseError(error_code="unknown")
+
+    def read_inbox_threads(self) -> GmailInboxReadResult:
+        """Return detector-ready snapshots from profile, list, and thread reads."""
+        profile = self.read_profile()
+        listed = self.list_threads()
+        snapshots: list[InboxThreadSnapshot] = []
+        reasons: list[GmailDegradationReason] = []
+        if listed.skipped_count:
+            reasons.append("thread_list_entry_skipped")
+        projected_threads = listed.threads[: self._max_projected_threads]
+        if len(projected_threads) < len(listed.threads):
+            reasons.append("thread_projection_limit")
+        for thread in projected_threads:
+            response_body = _get(
+                self._transport,
+                f"{GMAIL_THREADS_URL}/{quote(thread.id, safe='')}",
+                {"format": "full"},
+            )
+            if len(response_body) > _MAX_THREAD_RESPONSE_BYTES:
+                reasons.append("thread_response_too_large")
+                continue
+            detail = _parse_json(
+                THREAD_DETAIL_ADAPTER,
+                response_body,
+            )
+            snapshot = project_thread(
+                thread.id,
+                detail,
+                profile_email=profile.email_address,
+                profile_history_cursor=profile.history_id,
+            )
+            if snapshot is None:
+                reasons.append("thread_without_projectable_message")
+            else:
+                snapshots.append(snapshot)
+                reasons.extend(snapshot.degradation_reasons)
+        unique_reasons = tuple(dict.fromkeys(reasons))
+        return GmailInboxReadResult(
+            threads=tuple(snapshots),
+            fetched_at=listed.fetched_at,
+            provider_history_cursor=profile.history_id,
+            page_count=listed.page_count,
+            is_complete=not unique_reasons,
+            degradation_reasons=unique_reasons,
+        )
 
 
 def _get(

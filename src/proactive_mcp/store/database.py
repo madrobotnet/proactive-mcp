@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING, Final, Self
 
 from proactive_mcp.clock import Clock, UtcClock
 
+from ._database_initialize import initialize_connection
 from ._database_support import (
     DatabaseStatus,
     InvalidBusyTimeoutError,
     ScalarReader,
     StoreClosedError,
 )
-from ._memory_normalize import normalize_alias, normalize_label
 from .memory import (
     Entity,
     EntityKind,
@@ -23,7 +23,7 @@ from .memory import (
     MemoryStore,
     NewMemory,
 )
-from .migrate import apply_migrations, current_version
+from .migrate import current_version
 from .private_path import (
     UnsafeDatabasePathError,
     enforce_private_sidecars,
@@ -32,6 +32,7 @@ from .private_path import (
     private_initialization_lock,
     sqlite_connection_target,
 )
+from .situations import SituationStore
 from .sync import (
     SourceAuthState,
     SourceName,
@@ -43,6 +44,8 @@ from .sync import (
 if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
+
+    from ._source_generation import SourceGeneration, SourceGenerationState
 
 DEFAULT_BUSY_TIMEOUT_MS: Final[int] = 5000
 __all__ = ["DEFAULT_BUSY_TIMEOUT_MS", "DatabaseStatus", "Store"]
@@ -58,6 +61,7 @@ class Store:
     _reader: ScalarReader | None
     _memory_store: MemoryStore | None
     _sync_store: SyncStore | None
+    _situation_store: SituationStore | None
     _directory_fd: int | None
 
     def __init__(
@@ -77,6 +81,7 @@ class Store:
         self._reader = None
         self._memory_store = None
         self._sync_store = None
+        self._situation_store = None
         self._directory_fd = None
         try:
             self._open()
@@ -105,6 +110,7 @@ class Store:
         self._reader = None
         self._memory_store = None
         self._sync_store = None
+        self._situation_store = None
         self._directory_fd = None
         if connection is not None:
             connection.close()
@@ -172,6 +178,26 @@ class Store:
         """Soft-archive an existing memory item."""
         return self._require_memory_store().forget(memory_id)
 
+    def list_dated_memories(self) -> tuple[MemoryItem, ...]:
+        """Return every active memory item that carries a date anchor."""
+        return self._require_memory_store().list_dated_memories()
+
+    @property
+    def situations(self) -> SituationStore:
+        """Return the situation persistence and state machine operations."""
+        situation_store = self._situation_store
+        if situation_store is None:
+            raise StoreClosedError
+        return situation_store
+
+    def reserve_source_generation(self, source: SourceName) -> SourceGeneration:
+        """Atomically issue the next detector generation for one source."""
+        return self._require_sync_store().reserve_source_generation(source)
+
+    def source_generation_state(self, source: SourceName) -> SourceGenerationState:
+        """Return issued and accepted detector generation progress."""
+        return self._require_sync_store().source_generation_state(source)
+
     def get_source_sync(self, source: SourceName) -> SourceSyncState:
         """Return persisted synchronization state for one Google source."""
         return self._require_sync_store().get_source_sync(source)
@@ -220,30 +246,18 @@ class Store:
                 timeout=self._busy_timeout_ms / 1000,
             )
             self._connection = connection
-            connection.isolation_level = None
-            connection.execute("PRAGMA foreign_keys = ON").close()
             connection.execute(
                 f"PRAGMA busy_timeout = {self._busy_timeout_ms:d}"
             ).close()
-            connection.execute("PRAGMA journal_mode = WAL").close()
             reader = ScalarReader(connection)
-            connection.create_function(
-                "_proactive_alias_norm",
-                1,
-                normalize_alias,
-                deterministic=True,
-            )
-            connection.create_function(
-                "_proactive_normalize_label",
-                1,
-                normalize_label,
-                deterministic=True,
-            )
-            apply_migrations(connection, reader)
+            initialize_connection(connection, reader)
             enforce_private_sidecars(directory_fd, self._path)
         self._reader = reader
         self._memory_store = MemoryStore(connection, self._clock)
         self._sync_store = SyncStore(connection, self._clock)
+        self._situation_store = SituationStore(
+            connection, self._clock, self._sync_store
+        )
 
     def _require_reader(self) -> ScalarReader:
         reader = self._reader
