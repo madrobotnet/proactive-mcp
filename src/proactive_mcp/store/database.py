@@ -2,50 +2,46 @@
 
 from __future__ import annotations
 
-import os
-import sqlite3
 from typing import TYPE_CHECKING, Final, Self
 
 from proactive_mcp.clock import Clock, UtcClock
 
-from ._database_initialize import initialize_connection
+from ._database_collaborators import (
+    StoreCollaborators,
+    close_connection,
+    open_collaborators,
+)
 from ._database_support import (
     DatabaseStatus,
     InvalidBusyTimeoutError,
-    ScalarReader,
     StoreClosedError,
 )
-from .memory import (
-    Entity,
-    EntityKind,
-    MemoryItem,
-    MemoryKind,
-    MemoryStore,
-    NewMemory,
-)
 from .migrate import current_version
-from .private_path import (
-    UnsafeDatabasePathError,
-    enforce_private_sidecars,
-    open_private_parent,
-    prepare_private_database_file,
-    private_initialization_lock,
-    sqlite_connection_target,
-)
-from .situations import SituationStore
-from .sync import (
-    SourceAuthState,
-    SourceName,
-    SourceSyncFailureCode,
-    SourceSyncState,
-    SyncStore,
-)
 
 if TYPE_CHECKING:
+    import sqlite3
+    from datetime import timedelta
     from pathlib import Path
     from types import TracebackType
 
+    from ._lazy_sync_lease import LazySyncLease
     from ._source_generation import SourceGeneration, SourceGenerationState
+    from .daemon_status import DaemonStatusStore
+    from .fallbacks import FallbackStore
+    from .memory import (
+        Entity,
+        EntityKind,
+        MemoryItem,
+        MemoryKind,
+        NewMemory,
+    )
+    from .situations import SituationStore
+    from .sync import (
+        SourceAuthState,
+        SourceName,
+        SourceSyncFailureCode,
+        SourceSyncState,
+    )
 
 DEFAULT_BUSY_TIMEOUT_MS: Final[int] = 5000
 __all__ = ["DEFAULT_BUSY_TIMEOUT_MS", "DatabaseStatus", "Store"]
@@ -55,14 +51,8 @@ class Store:
     """Owns a SQLite connection. Mutation is required to open and close it."""
 
     _path: Path
-    _busy_timeout_ms: int
     _clock: Clock
-    _connection: sqlite3.Connection | None
-    _reader: ScalarReader | None
-    _memory_store: MemoryStore | None
-    _sync_store: SyncStore | None
-    _situation_store: SituationStore | None
-    _directory_fd: int | None
+    _collaborators: StoreCollaborators | None
 
     def __init__(
         self,
@@ -75,19 +65,13 @@ class Store:
         if busy_timeout_ms < 0:
             raise InvalidBusyTimeoutError(busy_timeout_ms)
         self._path = path.expanduser().absolute()
-        self._busy_timeout_ms = busy_timeout_ms
         self._clock = clock if clock is not None else UtcClock()
-        self._connection = None
-        self._reader = None
-        self._memory_store = None
-        self._sync_store = None
-        self._situation_store = None
-        self._directory_fd = None
-        try:
-            self._open()
-        except (OSError, sqlite3.Error, UnsafeDatabasePathError):
-            self.close()
-            raise
+        self._collaborators = None
+        self._collaborators = open_collaborators(
+            self._path,
+            busy_timeout_ms,
+            self._clock,
+        )
 
     def __enter__(self) -> Self:
         """Return this open store."""
@@ -104,22 +88,14 @@ class Store:
 
     def close(self) -> None:
         """Close the underlying SQLite connection if it is open."""
-        connection = self._connection
-        directory_fd = self._directory_fd
-        self._connection = None
-        self._reader = None
-        self._memory_store = None
-        self._sync_store = None
-        self._situation_store = None
-        self._directory_fd = None
-        if connection is not None:
-            connection.close()
-        if directory_fd is not None:
-            os.close(directory_fd)
+        collaborators = self._collaborators
+        self._collaborators = None
+        if collaborators is not None:
+            close_connection(collaborators.connection, collaborators.directory_fd)
 
     def status(self) -> DatabaseStatus:
         """Return path, journal mode, busy timeout, and migration version."""
-        reader = self._require_reader()
+        reader = self._require().reader
         return DatabaseStatus(
             path=self._path,
             journal_mode=reader.query_str(
@@ -131,14 +107,11 @@ class Store:
 
     def connection(self) -> sqlite3.Connection:
         """Return the live SQLite connection for storage-layer integrations."""
-        connection = self._connection
-        if connection is None:
-            raise StoreClosedError
-        return connection
+        return self._require().connection
 
     def remember(self, memory: NewMemory) -> MemoryItem:
         """Store a memory item without replacing contradictory items."""
-        return self._require_memory_store().remember(memory)
+        return self._require().memory.remember(memory)
 
     def recall(
         self,
@@ -150,7 +123,7 @@ class Store:
         limit: int = 20,
     ) -> tuple[MemoryItem, ...]:
         """Return active literal matches, newest first, across memory kinds."""
-        return self._require_memory_store().recall(
+        return self._require().memory.recall(
             query,
             kind=kind,
             entity_kind=entity_kind,
@@ -160,7 +133,7 @@ class Store:
 
     def update(self, memory_id: int, memory: NewMemory) -> MemoryItem:
         """Replace a memory item's mutable values while retaining its identity."""
-        return self._require_memory_store().update(memory_id, memory)
+        return self._require().memory.update(memory_id, memory)
 
     def list_entities(
         self,
@@ -169,50 +142,71 @@ class Store:
         path_prefix: str | None = None,
     ) -> tuple[Entity, ...]:
         """List active entities with optional kind and path-prefix filters."""
-        return self._require_memory_store().list_entities(
+        return self._require().memory.list_entities(
             kind=kind,
             path_prefix=path_prefix,
         )
 
     def forget(self, memory_id: int) -> MemoryItem:
         """Soft-archive an existing memory item."""
-        return self._require_memory_store().forget(memory_id)
+        return self._require().memory.forget(memory_id)
 
     def list_dated_memories(self) -> tuple[MemoryItem, ...]:
         """Return every active memory item that carries a date anchor."""
-        return self._require_memory_store().list_dated_memories()
+        return self._require().memory.list_dated_memories()
 
     @property
     def situations(self) -> SituationStore:
         """Return the situation persistence and state machine operations."""
-        situation_store = self._situation_store
-        if situation_store is None:
-            raise StoreClosedError
-        return situation_store
+        return self._require().situations
+
+    @property
+    def daemon(self) -> DaemonStatusStore:
+        """Return the daemon heartbeat and liveness operations."""
+        return self._require().daemon
+
+    @property
+    def fallbacks(self) -> FallbackStore:
+        """Return the one-shot OS notification fallback operations."""
+        return self._require().fallbacks
+
+    def acquire_lazy_sync_lease(
+        self,
+        *,
+        lease_duration: timedelta,
+    ) -> LazySyncLease | None:
+        """Atomically reserve one degraded remote read until release or expiry."""
+        return self._require().sync.acquire_lazy_sync_lease(
+            lease_duration=lease_duration
+        )
+
+    def release_lazy_sync_lease(self, lease: LazySyncLease) -> bool:
+        """Release a degraded-read reservation if this lease still owns it."""
+        return self._require().sync.release_lazy_sync_lease(lease)
 
     def reserve_source_generation(self, source: SourceName) -> SourceGeneration:
         """Atomically issue the next detector generation for one source."""
-        return self._require_sync_store().reserve_source_generation(source)
+        return self._require().sync.reserve_source_generation(source)
 
     def source_generation_state(self, source: SourceName) -> SourceGenerationState:
         """Return issued and accepted detector generation progress."""
-        return self._require_sync_store().source_generation_state(source)
+        return self._require().sync.source_generation_state(source)
 
     def get_source_sync(self, source: SourceName) -> SourceSyncState:
         """Return persisted synchronization state for one Google source."""
-        return self._require_sync_store().get_source_sync(source)
+        return self._require().sync.get_source_sync(source)
 
     def list_source_sync(self) -> tuple[SourceSyncState, SourceSyncState]:
         """Return Gmail and Calendar synchronization states in a stable order."""
-        return self._require_sync_store().list_source_sync()
+        return self._require().sync.list_source_sync()
 
     def set_source_auth(self, source: SourceName, auth_state: SourceAuthState) -> None:
         """Persist the authorization state for one Google source."""
-        self._require_sync_store().set_source_auth(source, auth_state)
+        self._require().sync.set_source_auth(source, auth_state)
 
     def set_google_auth_state(self, auth_state: SourceAuthState) -> None:
         """Persist the shared Google authorization state for both sources."""
-        self._require_sync_store().set_google_auth_state(auth_state)
+        self._require().sync.set_google_auth_state(auth_state)
 
     def record_sync_success(
         self,
@@ -221,7 +215,7 @@ class Store:
         sync_cursor: str | None = None,
     ) -> None:
         """Record a successful source synchronization attempt."""
-        self._require_sync_store().record_sync_success(source, sync_cursor=sync_cursor)
+        self._require().sync.record_sync_success(source, sync_cursor=sync_cursor)
 
     def record_sync_failure(
         self,
@@ -230,49 +224,14 @@ class Store:
         error_code: SourceSyncFailureCode,
     ) -> None:
         """Record a normalized source synchronization failure."""
-        self._require_sync_store().record_sync_failure(source, error_code=error_code)
+        self._require().sync.record_sync_failure(source, error_code=error_code)
 
     def record_google_invalid_grant(self) -> None:
         """Atomically mark both Google sources as requiring reauthorization."""
-        self._require_sync_store().record_google_invalid_grant()
+        self._require().sync.record_google_invalid_grant()
 
-    def _open(self) -> None:
-        directory_fd = open_private_parent(self._path)
-        self._directory_fd = directory_fd
-        prepare_private_database_file(directory_fd, self._path)
-        with private_initialization_lock(directory_fd, self._path):
-            connection = sqlite3.connect(
-                sqlite_connection_target(directory_fd, self._path),
-                timeout=self._busy_timeout_ms / 1000,
-            )
-            self._connection = connection
-            connection.execute(
-                f"PRAGMA busy_timeout = {self._busy_timeout_ms:d}"
-            ).close()
-            reader = ScalarReader(connection)
-            initialize_connection(connection, reader)
-            enforce_private_sidecars(directory_fd, self._path)
-        self._reader = reader
-        self._memory_store = MemoryStore(connection, self._clock)
-        self._sync_store = SyncStore(connection, self._clock)
-        self._situation_store = SituationStore(
-            connection, self._clock, self._sync_store
-        )
-
-    def _require_reader(self) -> ScalarReader:
-        reader = self._reader
-        if reader is None:
+    def _require(self) -> StoreCollaborators:
+        collaborators = self._collaborators
+        if collaborators is None:
             raise StoreClosedError
-        return reader
-
-    def _require_memory_store(self) -> MemoryStore:
-        memory_store = self._memory_store
-        if memory_store is None:
-            raise StoreClosedError
-        return memory_store
-
-    def _require_sync_store(self) -> SyncStore:
-        sync_store = self._sync_store
-        if sync_store is None:
-            raise StoreClosedError
-        return sync_store
+        return collaborators

@@ -61,6 +61,18 @@ class SituationReader:
     def active_by_type(self, situation_type: SituationType) -> tuple[Situation, ...]:
         return self._capture(SELECT_ACTIVE_BY_TYPE, (situation_type,))
 
+    def capture_situations(
+        self,
+        sql: str,
+        params: tuple[int | str | None, ...],
+    ) -> tuple[Situation, ...]:
+        """Decode a caller-owned situation projection through this reader.
+
+        One reader per connection owns the capture callbacks, so every
+        situation projection must be decoded here rather than re-registered.
+        """
+        return self._capture(sql, params)
+
     def muted_types(self) -> tuple[SituationType, ...]:
         self._strings.clear()
         _ = self._connection.execute(SELECT_MUTED_TYPES)

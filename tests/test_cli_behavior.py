@@ -28,6 +28,7 @@ def test_help_is_useful() -> None:
     assert "status" in result.stdout
     assert "setup" in result.stdout
     assert "google-smoke" in result.stdout
+    assert "daemon" in result.stdout
 
 
 def test_status_prints_server_status_contract(tmp_path: Path) -> None:

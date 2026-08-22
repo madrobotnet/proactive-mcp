@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 from proactive_mcp.config import AttentionSettings
+from proactive_mcp.store._situation_models import DeliveryClaim
 
 from ._dates import local_day_end, local_day_start
 
@@ -14,11 +16,25 @@ if TYPE_CHECKING:
 
     from proactive_mcp.store import Situation, SituationStore
 
-from proactive_mcp.store._situation_models import DeliveryClaim
-
-__all__ = ["AttentionPolicy", "is_quiet_time"]
+__all__ = ["AttentionPolicy", "BudgetUsage", "QuietState", "is_quiet_time"]
 
 _PRIORITY_RANK: Final[dict[str, int]] = {"critical": 0, "high": 1, "routine": 2}
+
+
+@dataclass(frozen=True, slots=True)
+class BudgetUsage:
+    """Non-critical deliveries already claimed on the local calendar day."""
+
+    used: int
+    remaining: int
+    daily_budget: int
+
+
+@dataclass(frozen=True, slots=True)
+class QuietState:
+    """Whether quiet hours are active at one instant in the policy timezone."""
+
+    active: bool
 
 
 def is_quiet_time(local_time: time, start: time, end: time) -> bool:
@@ -74,43 +90,50 @@ class AttentionPolicy:
         candidates.sort(key=_delivery_order)
         critical = [c for c in candidates if c.priority == "critical"]
         others = [c for c in candidates if c.priority != "critical"]
-        local_now = now.astimezone(self._tz)
-        if is_quiet_time(
-            local_now.time(),
-            self._settings.quiet_hours_start,
-            self._settings.quiet_hours_end,
-        ):
+        if self.quiet_state(now).active:
             return tuple(critical)
-        remaining = self._remaining_budget(now)
+        remaining = self.budget_usage(now).remaining
         return tuple(critical + others[:remaining])
 
     def claim_for_delivery(self, now: datetime) -> tuple[Situation, ...]:
         """Atomically claim deliverable rows under all attention limits."""
-        local_now = now.astimezone(self._tz)
-        local_today = local_now.date()
-        allow_noncritical = not is_quiet_time(
-            local_now.time(),
-            self._settings.quiet_hours_start,
-            self._settings.quiet_hours_end,
-        )
+        utc_now = now.astimezone(UTC)
+        local_today = now.astimezone(self._tz).date()
         return self._situations.claim_for_delivery(
             DeliveryClaim(
-                delivered_at=now.isoformat(),
-                cooldown_after=(now - self._settings.cooldown).isoformat(),
-                local_day_start=local_day_start(local_today, self._tz).isoformat(),
-                local_day_end=local_day_end(local_today, self._tz).isoformat(),
+                delivered_at=_utc_iso(utc_now),
+                cooldown_after=_utc_iso(utc_now - self._settings.cooldown),
+                local_day_start=_utc_iso(local_day_start(local_today, self._tz)),
+                local_day_end=_utc_iso(local_day_end(local_today, self._tz)),
                 daily_budget=self._settings.daily_budget,
-                allow_noncritical=allow_noncritical,
+                allow_noncritical=not self.quiet_state(now).active,
             )
         )
 
-    def _remaining_budget(self, now: datetime) -> int:
+    def budget_usage(self, now: datetime) -> BudgetUsage:
+        """Return today's non-critical usage and remaining daily budget."""
         local_today = now.astimezone(self._tz).date()
         used = self._situations.count_delivered_between(
             local_day_start(local_today, self._tz),
             local_day_end(local_today, self._tz),
         )
-        return max(0, self._settings.daily_budget - used)
+        daily_budget = self._settings.daily_budget
+        return BudgetUsage(
+            used=used,
+            remaining=max(0, daily_budget - used),
+            daily_budget=daily_budget,
+        )
+
+    def quiet_state(self, now: datetime) -> QuietState:
+        """Return whether quiet hours hold at ``now`` in the policy timezone."""
+        local_now = now.astimezone(self._tz)
+        return QuietState(
+            active=is_quiet_time(
+                local_now.time(),
+                self._settings.quiet_hours_start,
+                self._settings.quiet_hours_end,
+            )
+        )
 
     def _cooling_down(self, situation: Situation, now: datetime) -> bool:
         if situation.delivered_at is None:
@@ -121,6 +144,11 @@ class AttentionPolicy:
             return False
         delivered_at = datetime.fromisoformat(situation.delivered_at)
         return delivered_at > now - self._settings.cooldown
+
+
+def _utc_iso(value: datetime) -> str:
+    """Serialize one instant as a lexicographic UTC ISO-8601 string."""
+    return value.astimezone(UTC).isoformat()
 
 
 def _delivery_order(situation: Situation) -> tuple[int, str, int]:

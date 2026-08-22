@@ -41,6 +41,7 @@ def claim_for_delivery(
                 SET state = 'delivered', delivered_at = ?, updated_at = ?,
                     snoozed_until = NULL, snooze_cooldown_exempt = 0
                 WHERE id = ? AND state = 'pending'
+                  AND (expires_at IS NULL OR expires_at > ?)
                   AND NOT EXISTS (
                       SELECT 1 FROM situation_type_mutes
                       WHERE situation_type = situations.situation_type
@@ -62,6 +63,7 @@ def claim_for_delivery(
                     claim.delivered_at,
                     claim.delivered_at,
                     candidate.id,
+                    claim.delivered_at,
                     claim.cooldown_after,
                     claim.local_day_start,
                     claim.local_day_end,

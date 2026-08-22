@@ -6,10 +6,12 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal, NoReturn, TypeAlias
+from typing import TYPE_CHECKING, ClassVar, Final, Literal, NoReturn, TypeAlias
 
 from pydantic import BaseModel, ConfigDict
 
+from proactive_mcp.cli.daemon import run_daemon
+from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server import build_status, server
 from proactive_mcp.sources import (
     CredentialScopeError,
@@ -24,17 +26,22 @@ from proactive_mcp.sources import (
     configure_google_sources,
     run_google_read_smoke,
 )
-from proactive_mcp.store import (
-    SourceErrorCode,  # noqa: TC001 - Pydantic resolves this annotation at runtime.
-)
+from proactive_mcp.store import SourceErrorCode  # noqa: TC001
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
-Command: TypeAlias = Literal["serve", "status", "setup", "google-smoke"]
-
-_DEFAULT_DATABASE_PATH = Path("~/.proactive-mcp/proactive.db")
-_CLIENT_SECRETS_ENV = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
+Command: TypeAlias = Literal["serve", "status", "setup", "google-smoke", "daemon"]
+_CLIENT_SECRETS_ENV: Final = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
+_GOOGLE_ERRORS: Final = (
+    CredentialScopeError,
+    CredentialStorageError,
+    GoogleOAuthAuthorizationTimeoutError,
+    GoogleReadSmokeDisabledError,
+    MissingGoogleCredentialsError,
+    MissingRefreshTokenError,
+    OAuthClientConfigError,
+)
 
 
 class _CliArguments(BaseModel):
@@ -47,6 +54,8 @@ class _CliArguments(BaseModel):
     headless: bool = False
     reauth: bool = False
     confirm_real_account_read: bool = False
+    once: bool = False
+    poll_interval_minutes: float | None = None
 
 
 class _GoogleSmokeSourceResponse(BaseModel):
@@ -124,8 +133,7 @@ def _smoke_response(summary: GoogleReadSummary) -> _GoogleSmokeResponse:
 
 def _database_path() -> Path:
     """Return the expanded local state database path used by all CLI commands."""
-    configured_path = os.environ.get("PROACTIVE_DATABASE", _DEFAULT_DATABASE_PATH)
-    return Path(configured_path).expanduser()
+    return resolve_paths(os.environ).database
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -165,6 +173,16 @@ def _parser() -> argparse.ArgumentParser:
             "account"
         ),
     )
+    daemon = subparsers.add_parser("daemon", help="run the watcher daemon")
+    _ = daemon.add_argument(
+        "--once", action="store_true", help="run one evaluation pass and exit"
+    )
+    _ = daemon.add_argument(
+        "--poll-interval-minutes",
+        type=float,
+        metavar="MINUTES",
+        help="override the configured watcher poll interval",
+    )
     return parser
 
 
@@ -178,22 +196,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the requested CLI command."""
     arguments = _parse_arguments(argv)
     try:
-        handlers: dict[Command, Callable[[], None]] = {
-            "serve": run_server,
-            "status": _status,
-            "setup": lambda: run_setup(arguments),
-            "google-smoke": lambda: run_google_smoke(arguments),
-        }
-        handlers[arguments.command]()
-    except (
-        CredentialScopeError,
-        CredentialStorageError,
-        GoogleOAuthAuthorizationTimeoutError,
-        GoogleReadSmokeDisabledError,
-        MissingGoogleCredentialsError,
-        MissingRefreshTokenError,
-        OAuthClientConfigError,
-    ) as error:
+        match arguments.command:
+            case "daemon":
+                return run_daemon(
+                    once=arguments.once,
+                    poll_interval_minutes=arguments.poll_interval_minutes,
+                )
+            case "serve":
+                run_server()
+            case "status":
+                _status()
+            case "setup":
+                run_setup(arguments)
+            case "google-smoke":
+                run_google_smoke(arguments)
+    except _GOOGLE_ERRORS as error:
         _ = sys.stderr.write(f"error: {error}\n")
         return 2
     return 0

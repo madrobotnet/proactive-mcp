@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import os
 from inspect import Parameter, Signature
-from pathlib import Path
-from typing import Annotated, Unpack
+from typing import TYPE_CHECKING, Annotated, Unpack
 
 from pydantic import Field
 
+from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server.memory_requests import (
     MemoryOptions,
     RememberRequest,
@@ -33,9 +33,12 @@ from proactive_mcp.store import (
     Store,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 def _database_path() -> Path:
-    return Path(os.environ.get("PROACTIVE_DATABASE", "~/.proactive-mcp/proactive.db"))
+    return resolve_paths(os.environ).database
 
 
 async def remember(

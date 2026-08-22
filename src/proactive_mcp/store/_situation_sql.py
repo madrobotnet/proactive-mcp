@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-_SITUATION_JSON: Final = """
+SITUATION_JSON: Final = """
             json_object(
                 'id', id, 'situation_type', situation_type,
                 'dedupe_key', dedupe_key, 'state', state, 'priority', priority,
@@ -73,7 +73,7 @@ WAKE_SNOOZED: Final = """
 EXPIRE_LAPSED: Final = """
             UPDATE situations
             SET state = 'expired', expired_at = ?, updated_at = ?
-            WHERE state = 'delivered'
+            WHERE state IN ('pending', 'delivered')
               AND expires_at IS NOT NULL AND expires_at <= ?
             """
 INSERT_TYPE_MUTE: Final = """
@@ -86,18 +86,18 @@ COUNT_DELIVERED_BETWEEN: Final = """
             WHERE delivered_at >= ? AND delivered_at < ?
               AND priority != 'critical'
             """
-# The f-strings below only interpolate the private column projection above;
-# every user-provided value still binds through ? placeholders.
+# The f-strings below only interpolate the column projection above; every
+# user-provided value still binds through ? placeholders.
 SELECT_SITUATION_BY_ID: Final = f"""
-            SELECT SUM(_proactive_capture_situation({_SITUATION_JSON}))
+            SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))
             FROM situations WHERE id = ?
             """  # noqa: S608
 SELECT_SITUATION_BY_DEDUPE_KEY: Final = f"""
-            SELECT SUM(_proactive_capture_situation({_SITUATION_JSON}))
+            SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))
             FROM situations WHERE dedupe_key = ?
             """  # noqa: S608
 SELECT_SITUATIONS: Final = f"""
-            SELECT SUM(_proactive_capture_situation({_SITUATION_JSON}))
+            SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))
             FROM (
                 SELECT * FROM situations
                 WHERE (? IS NULL OR state = ?)
@@ -105,7 +105,7 @@ SELECT_SITUATIONS: Final = f"""
             )
             """  # noqa: S608
 SELECT_ACTIVE_BY_TYPE: Final = f"""
-            SELECT SUM(_proactive_capture_situation({_SITUATION_JSON}))
+            SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))
             FROM (
                 SELECT * FROM situations
                 WHERE situation_type = ?
