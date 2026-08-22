@@ -1,0 +1,14 @@
+Call these tools in order. Don't skip. Don't invent argument names.
+
+1. remember kind=fact entity=스모크A entity_kind=person entity_path=테스트/스모크A attribute=birthday content=스모크 기념 A date_anchor=--08-25 recurrence=yearly lead_days=7
+2. proactive_check
+3. list_situations with no state
+4. list_situations state=delivered
+5. get_situation id=<id from step 2>
+6. acknowledge_situation id=<that id>
+7. remember kind=fact entity=스모크B entity_kind=person entity_path=테스트/스모크B attribute=birthday content=스모크 기념 B date_anchor=--08-25 recurrence=yearly lead_days=7
+8. proactive_check
+9. snooze_situation id=<new id from step 8> until=2026-08-22T11:00:00+00:00
+10. remember kind=fact entity=스모크C entity_kind=person entity_path=테스트/스모크C attribute=birthday content=스모크 기념 C date_anchor=--08-25 recurrence=yearly lead_days=7
+11. proactive_check
+12. mute_situation id=<new id from step 11> scope=instance
