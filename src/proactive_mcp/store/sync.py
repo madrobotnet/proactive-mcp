@@ -32,7 +32,9 @@ SourceErrorCode = Literal[
     "http_4xx",
     "http_5xx",
     "network",
+    "resource_limit",
     "timeout",
+    "degraded",
     "unknown",
 ]
 SourceSyncFailureCode = Literal[
@@ -40,7 +42,9 @@ SourceSyncFailureCode = Literal[
     "http_4xx",
     "http_5xx",
     "network",
+    "resource_limit",
     "timeout",
+    "degraded",
     "unknown",
 ]
 _GOOGLE_SOURCES: Final[tuple[SourceName, SourceName]] = ("gmail", "calendar")

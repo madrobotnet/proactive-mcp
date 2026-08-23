@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Final
@@ -19,7 +20,8 @@ if TYPE_CHECKING:
 __all__ = ["DEFAULT_LEAD_DAYS", "detect_personal_occasions"]
 
 DEFAULT_LEAD_DAYS: Final = 7
-_TITLE_CONTENT_LIMIT: Final = 40
+_LOGGER = logging.getLogger(__name__)
+_INVALID_MEMORY_WARNING = "skipped invalid dated memory during occasion evaluation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +51,11 @@ def detect_personal_occasions(
     today = now.astimezone(tz).date()
     groups: dict[tuple[str, int, str], list[_Occurrence]] = {}
     for item in items:
-        occurrence = _next_occurrence(item, today)
+        try:
+            occurrence = _next_occurrence(item, today)
+        except (OverflowError, ValueError):
+            _LOGGER.warning(_INVALID_MEMORY_WARNING)
+            continue
         if occurrence is None:
             continue
         groups.setdefault(_group_key(item), []).append(
@@ -57,12 +63,16 @@ def detect_personal_occasions(
         )
     detections: list[Detection] = []
     for rows in groups.values():
-        detection = _group_detection(
-            rows,
-            today=today,
-            tz=tz,
-            default_lead_days=default_lead_days,
-        )
+        try:
+            detection = _group_detection(
+                rows,
+                today=today,
+                tz=tz,
+                default_lead_days=default_lead_days,
+            )
+        except (OverflowError, ValueError):
+            _LOGGER.warning(_INVALID_MEMORY_WARNING)
+            continue
         if detection is not None:
             detections.append(detection)
     return tuple(detections)
@@ -115,14 +125,15 @@ def _group_detection(
     contradictory = len(anchors) > 1
     item = trigger.item
     occurrence_iso = trigger.occurrence.isoformat()
-    why_now = f"D-{days_until}: {item.content} on {occurrence_iso}"
+    label = "saved date" if item.attribute == "free" else item.attribute
+    why_now = f"D-{days_until}: upcoming {label} on {occurrence_iso}"
     if contradictory:
         why_now += f" - contradictory dates on record: {', '.join(anchors)}"
     return Detection(
         situation_type="personal_occasion",
         dedupe_key=_dedupe_key(item, trigger.occurrence.year),
         priority="high",
-        title=_title(item),
+        title=f"Upcoming {label}",
         why_now=why_now,
         evidence=SituationEvidence(
             facts={
@@ -133,8 +144,9 @@ def _group_detection(
                 "occurrence": occurrence_iso,
                 "days_until": str(days_until),
                 "lead_days": str(lead_days),
-                "content": item.content,
+                "memory_source": item.source,
             },
+            quoted_memory=_memory_quotes(item),
             contradictory_dates=tuple(anchors) if contradictory else (),
         ),
         expires_at=local_day_end(trigger.occurrence, tz),
@@ -150,11 +162,10 @@ def _dedupe_key(item: MemoryItem, occurrence_year: int) -> str:
     return f"personal_occasion:item:{item.id}:{occurrence_year}"
 
 
-def _title(item: MemoryItem) -> str:
-    label = "date" if item.attribute == "free" else item.attribute
+def _memory_quotes(item: MemoryItem) -> dict[str, str]:
+    values = {"content": item.content}
     if item.entity is not None:
-        return f"Upcoming {label}: {item.entity}"
-    content = item.content
-    if len(content) > _TITLE_CONTENT_LIMIT:
-        content = content[: _TITLE_CONTENT_LIMIT - 1] + "…"
-    return f"Upcoming {label}: {content}"
+        values["entity"] = item.entity
+    if item.entity_path is not None:
+        values["entity_path"] = item.entity_path
+    return values

@@ -44,7 +44,7 @@ Don't try these; the blocker is the platform, not our code.
 - **Claude cloud Routines.** They run in Anthropic's cloud, so they have no path to a local process or the local SQLite file. A Routine can fire on schedule and still never reach this server. This is *not* the same thing as a Claude Code Desktop local scheduled task, which does work. See the contrast table in the [Claude section](#claude-code-desktop-documentation-only).
 - **Cursor.** Removed from the supported set by Owner decision on 2026-08-22 ([#20](https://github.com/madrobotnet/proactive-mcp/issues/20)). Its Automations run as cloud agents, and a cloud agent can't spawn the local stdio process or read the local SQLite database, so there is no scheduled path to this server. Use Grok CLI or Codex CLI with the OS scheduler instead.
 - **HTTP transport.** V1 speaks stdio only. Any recipe that points an agent at a URL is wrong for this version.
-- **External write actions.** V1 holds `gmail.readonly` and `calendar.readonly`, nothing else, so it can't change anything in your Google account or anywhere else outside this machine. No recipe here should ask an agent to send mail or create events. External write actions arrive in V2 behind an approval-first contract. Read-only stops at the network boundary: the server still writes to its own local SQLite database, since `remember` stores a memory and `proactive_check` and `snooze_situation` change situation state.
+- **External write actions.** V1 holds `gmail.readonly` and `calendar.readonly`, nothing else, so it can't change anything in your Google account or anywhere else outside this machine. No recipe here should ask an agent to send mail or create events. External write actions arrive in V2 behind an approval-first contract. Read-only stops at the network boundary: the server still writes to its own local SQLite database, since `remember` stores a memory, `proactive_check` creates a short lease, and `confirm_delivery` and `snooze_situation` change situation state.
 
 ## What every platform needs
 
@@ -168,7 +168,7 @@ command -v uv grok codex hermes
 The CLI surface is small. Confirm it yourself with `uv run proactive-mcp --help`:
 
 ```text
-proactive-mcp {serve,status,setup,google-smoke,daemon}
+proactive-mcp {serve,serve-scheduled,status,setup,google-smoke,daemon}
 proactive-mcp daemon [--once] [--poll-interval-minutes MINUTES]
 ```
 
@@ -183,6 +183,9 @@ At the start of every new session, call the MCP tool proactive_check exactly onc
 before you answer the user. Call it once per session and no more, unless the user
 explicitly asks for a fresh proactive check.
 
+After proactive_check returns to the host, if it includes a receipt_token, pass
+that token to confirm_delivery exactly once before presenting the situations.
+
 If it returns situations, lead your reply with a short, natural summary of them.
 If it returns freshness warnings, say the result may be incomplete. Never report
 "nothing to report" while a source is stale or failed.
@@ -190,7 +193,7 @@ If it returns nothing and freshness is healthy, say nothing about it and answer
 the user's actual request.
 ```
 
-Why once: `proactive_check` takes no arguments, and a successful call atomically claims the returned situations as `delivered` (§5.1). The server dedupes, so repeat calls won't spam the user, but they do cost a round trip on every turn for no benefit.
+Why once: `proactive_check` takes no arguments and atomically leases the returned situations (§5.1). `confirm_delivery` records them as delivered only after the result reached the host. An unconfirmed lease expires back to pending, while a confirmed row is deduped, so repeat checks add round trips without benefit.
 
 ## The neutral agent directory
 
@@ -259,7 +262,7 @@ Grok has no scheduler. Use `-p/--single` for a one-shot headless prompt, and run
 ```bash
 mkdir -p ~/.proactive-mcp/agent-cwd
 chmod 700 ~/.proactive-mcp/agent-cwd
-grok --cwd ~/.proactive-mcp/agent-cwd --no-alt-screen --single 'Call the proactive_check MCP tool exactly once. Report any returned situations and freshness warnings; otherwise state that there are no actionable situations.'
+grok --cwd ~/.proactive-mcp/agent-cwd --no-alt-screen --single 'Call the proactive_check MCP tool exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Then report any returned situations and freshness warnings; otherwise state that there are no actionable situations.'
 ```
 
 For machine-readable output add `--output-format json` (values: `plain`, `json`, `streaming-json`). Full scheduler wiring is in [OS scheduler handoff](#os-scheduler-handoff).
@@ -295,6 +298,9 @@ Verified against codex-cli 0.149.0.
 ```bash
 codex mcp add proactive -- \
   uv run --directory /home/you/src/proactive-mcp proactive-mcp serve
+
+codex mcp add proactive_scheduled -- \
+  uv run --directory /home/you/src/proactive-mcp proactive-mcp serve-scheduled
 ```
 
 The syntax is `codex mcp add [OPTIONS] <NAME> (--url <URL> | -- <COMMAND>...)`. Use the `--` form; `--url` is HTTP transport, which V1 doesn't support.
@@ -311,6 +317,17 @@ args = [
   "proactive-mcp",
   "serve",
 ]
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.proactive_scheduled]
+command = "uv"
+args = [
+  "run",
+  "--directory",
+  "/home/you/src/proactive-mcp",
+  "proactive-mcp",
+  "serve-scheduled",
+]
 default_tools_approval_mode = "approve"
 ```
 
@@ -326,14 +343,25 @@ args = [
   "proactive-mcp",
   "serve",
 ]
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.proactive_scheduled]
+command = "C:\\Users\\you\\.local\\bin\\uv.exe"
+args = [
+  "run",
+  "--directory",
+  "C:\\Users\\you\\src\\proactive-mcp",
+  "proactive-mcp",
+  "serve-scheduled",
+]
 default_tools_approval_mode = "approve"
 ```
 
-`default_tools_approval_mode` accepts `auto`, `prompt`, `writes`, or `approve` on codex-cli 0.149.0; anything else fails config load with `unknown variant`. Pick `approve` for this server, and understand exactly what you're granting.
+`default_tools_approval_mode` accepts `auto`, `prompt`, `writes`, or `approve` on codex-cli 0.149.0; anything else fails config load with `unknown variant`. Keep the full interactive server on `prompt`. Only the separately named `proactive_scheduled` server may use `approve`.
 
-V1 exposes **no Google or other external write actions**, so an approved tool call can't send mail, create an event, or touch anything off this machine. It is *not* read-only, though. `remember` writes a memory row, and `proactive_check` and `snooze_situation` change situation state, all in the local SQLite database at `~/.proactive-mcp/proactive.db`. Setting `approve` authorizes those local mutations to happen unattended, which is the point: a scheduled run has nobody to answer a prompt, and `proactive_check` can't claim a situation without one. Grant it because you trust this specific local server, not because the tools are harmless. The scope is one server, not the whole CLI: shell commands and every other MCP server keep their usual approval behavior, so don't copy this setting onto a server you haven't audited.
+V1 exposes **no Google or other external write actions**, but the full server still has consequential local tools: `remember`, `update`, `forget`, `snooze_situation`, `mute_situation`, and `acknowledge_situation`. The restricted `serve-scheduled` process exposes exactly `get_status`, `proactive_check`, and `confirm_delivery`; it cannot make those broader mutations even if a scheduled prompt or inherited instruction asks it to. `proactive_check` only leases returned situations, and `confirm_delivery` records delivery after the result reaches the host, so approving this narrow profile remains a deliberate authorization.
 
-Confirm what actually landed on disk with `codex mcp get proactive`, and treat that output as authoritative over the snippet above. The `default_tools_approval_mode:` line should read `approve`.
+Confirm what actually landed on disk with `codex mcp get proactive` and `codex mcp get proactive_scheduled`. The full profile must read `prompt`; only the scheduled profile should read `approve` and use `serve-scheduled`.
 
 ### 2. Watcher daemon, or degraded mode
 
@@ -356,12 +384,12 @@ codex exec \
   --ephemeral \
   --sandbox read-only \
   --skip-git-repo-check \
-  -c mcp_servers.proactive.default_tools_approval_mode=approve \
+  -c mcp_servers.proactive_scheduled.default_tools_approval_mode=approve \
   -C "$HOME/.proactive-mcp/agent-cwd" \
-  'Call the proactive_check MCP tool exactly once. Report its situations, freshness, and warnings concisely. Do not modify files and do not run unrelated commands.'
+  'Call proactive_scheduled.proactive_check exactly once. If it returns a receipt_token, call proactive_scheduled.confirm_delivery with that token exactly once. Then report its situations, freshness, and warnings concisely. Do not modify files and do not run unrelated commands.'
 ```
 
-The `-c` override repeats what the config file already says. Carry it in every non-interactive example anyway, so the command works on a machine where nobody has edited `config.toml` yet, and so a scheduled run can't be silently broken by someone tidying that file. Interactive `codex` sessions don't need it; a human is there to approve. The value is bare on purpose: `-c` parses the right-hand side as TOML and falls back to the raw string, so `=approve` survives cron, `crontab`, and PowerShell 5.1 argument handling without quote gymnastics.
+The `-c` override repeats the narrow scheduled profile's setting. Carry it in every non-interactive example so a scheduled run cannot be silently broken by a config edit. Never point this override at the full `proactive` profile. Interactive `codex` sessions keep `prompt`, because a human is there to approve consequential tools.
 
 Flags, all from `codex exec --help`: `--ephemeral` skips persisting session files, `-s/--sandbox read-only` blocks filesystem writes by model-generated shell commands, `-C/--cd` sets the working root, `--skip-git-repo-check` allows non-repo directories, `-c/--config` overrides one config key, `--json` emits JSONL events, `-o/--output-last-message FILE` writes the final message to a file.
 
@@ -374,6 +402,7 @@ Scheduler wiring is in [OS scheduler handoff](#os-scheduler-handoff).
 ```bash
 codex mcp list
 codex mcp get proactive
+codex mcp get proactive_scheduled
 codex doctor
 ```
 
@@ -386,7 +415,7 @@ Then start an interactive `codex` session and confirm exactly one `proactive_che
 | Server missing from `codex mcp list` | You edited the wrong file. Check whether `CODEX_HOME` is set; that overrides `~/.codex`. |
 | `config.toml` rejected | Run with `--strict-config` to surface unrecognized fields, and check TOML backslash escaping on Windows. |
 | Server starts, tools never used | Name `proactive_check` explicitly in the prompt. Rule files are advisory. |
-| Non-interactive run stalls or ends with no tool call | Approval. Confirm `codex mcp get proactive` shows `default_tools_approval_mode: approve`, and pass `-c mcp_servers.proactive.default_tools_approval_mode=approve` on the command line. |
+| Non-interactive run stalls or ends with no tool call | Confirm `codex mcp get proactive_scheduled` shows `serve-scheduled` and `default_tools_approval_mode: approve`, then pass the scheduled-profile override shown above. Do not approve the full profile. |
 | `unknown variant` on startup | The approval mode is misspelled. Only `auto`, `prompt`, `writes`, and `approve` are accepted. |
 | `codex exec` fails outside a git repo | Add `--skip-git-repo-check`. |
 | Agent tries to run a shell command or edit a file | Keep `--sandbox read-only`. This job needs no shell at all, so an attempt means the prompt drifted. Local database writes by the MCP server itself are normal and aren't affected by the sandbox. |
@@ -412,7 +441,7 @@ mcp_servers:
     args: ["run", "--directory", "/home/you/src/proactive-mcp", "proactive-mcp", "serve"]
 ```
 
-Narrow the tool surface with `hermes mcp configure proactive` if you'd rather expose only `proactive_check` and the memory tools.
+Narrow the tool surface with `hermes mcp configure proactive` if you'd rather expose only `proactive_check`, `confirm_delivery`, and the memory tools.
 
 ### 2. Watcher daemon, or degraded mode
 
@@ -430,7 +459,7 @@ Add [the rule](#the-session-start-rule) to your Hermes system prompt. Hermes inj
 
 ```bash
 hermes cron create "every 15m" \
-  "Call the MCP tool proactive_check exactly once. If it returns situations, report each one clearly in this channel, including freshness and warnings. If freshness is stale or warnings indicate a source problem, say so instead of reporting that nothing is pending. If nothing is returned and freshness is healthy, report that there are no pending situations. Do not call any write action." \
+  "Call the MCP tool proactive_check exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Then report each returned situation clearly in this channel, including freshness and warnings. If freshness is stale or warnings indicate a source problem, say so instead of reporting that nothing is pending. If nothing is returned and freshness is healthy, report that there are no pending situations. Do not call any other write action." \
   --name "proactive check" \
   --workdir /home/you/.proactive-mcp/agent-cwd
 ```
@@ -457,7 +486,7 @@ hermes cron runs <JOB_ID> --limit 5
 | Job listed but never runs | `hermes cron status` tells you whether the scheduler is running. Also check the job isn't paused: `hermes cron resume <JOB_ID>`. |
 | Job runs, no message arrives | Delivery target. Re-create with an explicit `--deliver`, or read `hermes cron runs` for the attempt outcome. |
 | Tool never called | The prompt must be self-contained and name `proactive_check`. A cron job carries no conversation history. |
-| Duplicate notifications | Shouldn't happen, since `proactive_check` marks situations `delivered`. If it does, you probably have two jobs, or another agent is also collecting. Check `hermes cron list`. |
+| Duplicate notifications | Confirm the job calls `confirm_delivery` with the returned receipt. If it already does, you probably have two jobs or another agent is collecting. Check `hermes cron list`. |
 
 ## Claude Code Desktop (documentation only)
 
@@ -505,7 +534,7 @@ Put [the rule](#the-session-start-rule) in the project instructions or custom in
 
 Create a **local** scheduled task in Claude Code Desktop:
 
-- Prompt: call `proactive_check` exactly once; present returned situations and freshness warnings, and do not claim an all-clear while a source is stale.
+- Prompt: call `proactive_check` exactly once, call `confirm_delivery` once with any returned `receipt_token`, present returned situations and freshness warnings, and do not claim an all-clear while a source is stale.
 - Recurrence: your choice, minimum one minute. One minute is the floor documented in §5.3; something like 15 minutes is saner in practice.
 - Execution: local, on this machine, with the `proactive` MCP server enabled.
 
@@ -548,9 +577,10 @@ A Routine will happily run on schedule and accomplish nothing here, because its 
 ## OS scheduler handoff
 
 Grok CLI and Codex CLI have no scheduler, so the OS supplies one. A scheduled
-run must do more than claim a situation: it must make the result visible.
-Otherwise `proactive_check` marks the situation `delivered`, the discarded
-response becomes its only delivery, and the user never sees it.
+run must do more than lease a situation: it must confirm the receipt and make
+the result visible. If the host loses the response, it must not call
+`confirm_delivery`; the short lease then expires and the situation becomes
+eligible for a later agent or the fallback path.
 
 ### How the wrappers decide
 
@@ -571,10 +601,10 @@ Each run measures server state instead:
 
 That comparison is the entire contract. `deliveries.total` counts rows in the
 immutable delivery-event table, so it only ever moves up, and it moves exactly
-when `proactive_check` claims a situation. Higher after than before means
+when `confirm_delivery` commits a host-received result. Higher after than before means
 something was delivered into a session nobody is watching, which is precisely
 when the user needs a notification. An unchanged value means nothing was
-claimed.
+confirmed.
 
 #### Why `deliveries.total` and not `budget.used`
 
@@ -589,7 +619,7 @@ claimed.
   run.
 
 `deliveries.total` has neither problem. It's cumulative, never reset, and it
-includes critical claims. `fallback.claimed` is wrong for a third reason: it
+includes critical deliveries. `fallback.claimed` is wrong for a third reason: it
 counts what the watcher daemon picked up for OS-notification fallback, not what
 an agent collected.
 
@@ -638,8 +668,8 @@ nothing and quotes no warning text.
 
 After any notification, open the named agent and inspect recent delivered
 situations with `list_situations(state=delivered)` and source freshness with
-`get_status`. `proactive_check` won't return an already claimed situation, so
-calling it again isn't a retry, it's a new claim.
+`get_status`. A confirmed situation is not offered again; an unconfirmed lease
+expires safely, so do not add an immediate retry loop.
 
 ### Linux and macOS: cron
 
@@ -655,7 +685,7 @@ AGENT_CWD="$HOME/.proactive-mcp/agent-cwd"
 LOGDIR="$HOME/.proactive-mcp/logs"
 LOG="$LOGDIR/grok-cron.log"
 LOCK="$HOME/.proactive-mcp/scheduler.lock"
-PROMPT='Call the MCP tool proactive_check exactly once and call no other tool, then stop.'
+PROMPT='Call the MCP tool proactive_check exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Call no other tool, then stop.'
 
 mkdir -p "$LOGDIR" "$AGENT_CWD"
 chmod 700 "$LOGDIR" "$AGENT_CWD"
@@ -697,7 +727,7 @@ notify_fixed() {
   fi
 }
 
-# Only one measurement may be in flight: a concurrent proactive_check would
+# Only one measurement may be in flight: a concurrent confirmed check would
 # move deliveries.total and be misread as this run's delivery.
 if ! mkdir "$LOCK" 2>/dev/null; then
   mark "result=failure reason=concurrent_run notify=none exit=5"
@@ -799,7 +829,7 @@ AGENT_CWD="$HOME/.proactive-mcp/agent-cwd"
 LOGDIR="$HOME/.proactive-mcp/logs"
 LOG="$LOGDIR/codex-cron.log"
 LOCK="$HOME/.proactive-mcp/scheduler.lock"
-PROMPT='Call the MCP tool proactive_check exactly once and call no other tool, then stop.'
+PROMPT='Call proactive_scheduled.proactive_check exactly once. If it returns a receipt_token, call proactive_scheduled.confirm_delivery with that token exactly once. Call no other tool, then stop.'
 
 mkdir -p "$LOGDIR" "$AGENT_CWD"
 chmod 700 "$LOGDIR" "$AGENT_CWD"
@@ -887,7 +917,7 @@ codex exec \
   --ephemeral \
   --sandbox read-only \
   --skip-git-repo-check \
-  -c mcp_servers.proactive.default_tools_approval_mode=approve \
+  -c mcp_servers.proactive_scheduled.default_tools_approval_mode=approve \
   -C "$AGENT_CWD" \
   "$PROMPT" >/dev/null 2>&1
 CODE=$?
@@ -1001,8 +1031,8 @@ notification. On a machine with a stale source or no daemon you'll get
 right answer: nothing was delivered, and nothing can promise there was nothing
 to deliver. If a run reports `counter_regressed` or `status_unreadable`, fix the
 database or the CLI first. Don't re-run as a retry, and don't call
-`proactive_check` by hand to "check"; either one claims situations into a
-session you'll then have to go find.
+`proactive_check` by hand to "check"; a confirmed manual result changes the
+counter that the wrapper is measuring.
 
 ### Windows: Task Scheduler
 
@@ -1026,7 +1056,7 @@ $Lock     = Join-Path $env:USERPROFILE ".proactive-mcp\scheduler.lock"
 $Uv       = (Get-Command uv).Source
 $ToastScript = (& $Uv run --directory $Repo python -c `
     "from proactive_mcp.delivery.notify import WINDOWS_TOAST_SCRIPT; print(WINDOWS_TOAST_SCRIPT)").Trim()
-$Prompt = "Call the MCP tool proactive_check exactly once and call no other tool, then stop."
+$Prompt = "Call the MCP tool proactive_check exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Call no other tool, then stop."
 New-Item -ItemType Directory -Force -Path $LogDir, $AgentCwd | Out-Null
 
 function Write-Marker {
@@ -1073,7 +1103,7 @@ if (-not (Test-Path -LiteralPath $ToastScript -PathType Leaf)) {
     exit 3
 }
 
-# Only one measurement at a time: a concurrent proactive_check would move
+# Only one measurement at a time: a concurrent confirmed check would move
 # deliveries.total and be misread as this run's delivery.
 $lockDir = New-Item -ItemType Directory -Path $Lock -ErrorAction SilentlyContinue
 if ($null -eq $lockDir) {
@@ -1088,7 +1118,7 @@ try {
     # All agent output is discarded. Nothing it says is read, parsed, or stored.
     if ($Cli -eq "codex") {
         & codex exec --ephemeral --sandbox read-only --skip-git-repo-check `
-            -c mcp_servers.proactive.default_tools_approval_mode=approve `
+            -c mcp_servers.proactive_scheduled.default_tools_approval_mode=approve `
             -C $AgentCwd $Prompt *> $null
     }
     else {
@@ -1143,10 +1173,9 @@ mangle it; Codex parses the value as TOML and falls back to the literal string
 The agent's output is redirected to `$null` at the call site, so nothing it
 says is ever compared, stored, or turned into toast text. Both notification
 strings are constants in this file. The notifier path is checked before the
-agent can claim anything, since a claim you can't announce is a lost
-notification. A notification failure exits non-zero and must not trigger an
-automatic retry: `proactive_check` has already delivered, and a retry would
-claim the next batch instead of recovering this one.
+agent can reserve anything. A notification failure exits non-zero and must not
+trigger an automatic retry: `confirm_delivery` has already committed the batch,
+and a retry could collect a different one instead of recovering the toast.
 
 Register the Codex task as the interactive user:
 
@@ -1252,15 +1281,15 @@ Per platform, in order:
 | | Grok CLI | Codex CLI | Hermes | Claude Desktop |
 |---|---|---|---|---|
 | Registered | `grok mcp list` | `codex mcp list` | `hermes mcp list` | server in tool list |
-| Server healthy | `grok mcp doctor proactive` | `codex mcp get proactive`, and it shows `default_tools_approval_mode: approve` | `hermes mcp test proactive` | `get_status` from a chat |
+| Server healthy | `grok mcp doctor proactive` | full `proactive` is `prompt`; `proactive_scheduled` uses `serve-scheduled` and is `approve` | `hermes mcp test proactive` | `get_status` from a chat |
 | Daemon or degraded | `status` shows daemon state, or the missing-fallback warning is understood and accepted | same | same | same |
 | Session-start rule | `AGENTS.md` at project root | `AGENTS.md` at workspace root | system prompt, self-contained job prompt | project instructions |
 | Neutral working directory | `--cwd ~/.proactive-mcp/agent-cwd` in the one-shot and the wrapper | `-C ~/.proactive-mcp/agent-cwd`, plus `--skip-git-repo-check` | `--workdir` points at the neutral directory | n/a, tasks run in their own folder |
-| Scheduled trigger | `deliveries.total` rises by one, state moves to `delivered`, fixed OS notification appears | same, and every `codex exec` carries `-c mcp_servers.proactive.default_tools_approval_mode=approve` | `hermes cron list` and delivered channel message | local scheduled task, ≥1 min |
+| Scheduled trigger | `deliveries.total` rises by one, state moves to `delivered`, fixed OS notification appears | same, and every `codex exec` approves only `proactive_scheduled` | `hermes cron list` and delivered channel message | local scheduled task, ≥1 min |
 | Quiet run | second run with nothing pending logs `result=no_delivery`, or `result=status_warning` with its own fixed text when a source is stale | same | n/a, the job reports in-channel | n/a |
 | Dedupe | situation delivered once, never twice; one scheduled collector only | same | same | same |
 | Logs clean | no payloads on disk, no agent output captured, only fixed marker fields | no payloads on disk, no agent output captured, only fixed marker fields | no payloads on disk | no payloads on disk |
 
-Auditing a wrapper you inherited? Four things disqualify it: it reads or matches agent output instead of the delivery counter, it diffs `budget.used`, it starts the agent inside a repository, or it runs `codex exec` without the per-server approval override. Extract each POSIX wrapper and check it with `sh -n` before you install it.
+Auditing a wrapper you inherited? Five things disqualify it: it reads or matches agent output instead of the delivery counter, it diffs `budget.used`, it starts the agent inside a repository, it approves the full `proactive` profile, or it runs `codex exec` without the narrow scheduled-profile override. Extract each POSIX wrapper and check it with `sh -n` before you install it.
 
 Commands that were **not** executable in the verification environment, and are therefore sourced rather than tested: everything Claude Code Desktop-specific (not installed; sourced from Anthropic's local MCP guide and §5.3), and all Windows PowerShell snippets (verified on Linux; cmdlet shapes come from Microsoft's `Register-ScheduledTask` reference). Grok, Codex, Hermes, and `proactive-mcp` commands and flags were read from the installed binaries' own `--help` output at the versions listed at the top of this file.

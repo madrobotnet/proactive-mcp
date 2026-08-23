@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp.cli.daemon import run_daemon
 from proactive_mcp.paths import resolve_paths
-from proactive_mcp.server import build_status, server
+from proactive_mcp.server import build_status, create_server, server
 from proactive_mcp.sources import (
     CredentialScopeError,
     CredentialStorageError,
@@ -31,7 +31,9 @@ from proactive_mcp.store import SourceErrorCode  # noqa: TC001
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-Command: TypeAlias = Literal["serve", "status", "setup", "google-smoke", "daemon"]
+Command: TypeAlias = Literal[
+    "serve", "serve-scheduled", "status", "setup", "google-smoke", "daemon"
+]
 _CLIENT_SECRETS_ENV: Final = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
 _GOOGLE_ERRORS: Final = (
     CredentialScopeError,
@@ -80,6 +82,11 @@ class _GoogleSmokeResponse(BaseModel):
 def run_server() -> None:
     """Run the MCP server over stdio."""
     server.run("stdio")
+
+
+def run_scheduled_server() -> None:
+    """Run the restricted scheduled MCP profile over stdio."""
+    create_server(profile="scheduled").run("stdio")
 
 
 def _status() -> None:
@@ -143,6 +150,10 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     _ = subparsers.add_parser("serve", help="run the MCP server over stdio")
     _ = subparsers.add_parser(
+        "serve-scheduled",
+        help="run the restricted scheduled MCP profile over stdio",
+    )
+    _ = subparsers.add_parser(
         "status", help="print connection and database status as JSON"
     )
     setup = subparsers.add_parser("setup", help="connect read-only Google sources")
@@ -204,6 +215,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             case "serve":
                 run_server()
+            case "serve-scheduled":
+                run_scheduled_server()
             case "status":
                 _status()
             case "setup":
@@ -221,4 +234,4 @@ def entrypoint() -> NoReturn:
     raise SystemExit(main())
 
 
-__all__ = ["entrypoint", "main", "run_server"]
+__all__ = ["entrypoint", "main", "run_scheduled_server", "run_server"]

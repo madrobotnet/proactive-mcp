@@ -157,9 +157,13 @@ def pending_detection(key: str, priority: SituationPriority = "routine") -> Dete
 def deliver_one(harness: ToolHarness, key: str) -> SituationResponse:
     """Detect one situation and let the harness claim it for delivery."""
     _ = harness.store.situations.upsert_detections((pending_detection(key),))
-    claimed = harness.service.proactive_check().situations
+    response = harness.service.proactive_check()
+    claimed = response.situations
     assert len(claimed) == 1
-    return claimed[0]
+    assert response.receipt_token is not None
+    confirmation = harness.service.confirm_delivery(response.receipt_token)
+    assert confirmation.delivered_count == 1
+    return harness.service.get_situation(claimed[0].id)
 
 
 def tool_schema(tool: Tool) -> ToolSchema:
@@ -185,4 +189,7 @@ def check_in_worker(
         racing = SituationToolService(
             replace(harness.dependencies, clock=BarrierClock(harness.clock, barrier))
         )
-        return racing.proactive_check()
+        response = racing.proactive_check()
+        if response.receipt_token is not None:
+            _ = racing.confirm_delivery(response.receipt_token)
+        return response

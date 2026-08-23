@@ -100,8 +100,22 @@ SELECT_SITUATIONS: Final = f"""
             SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))
             FROM (
                 SELECT * FROM situations
-                WHERE (? IS NULL OR state = ?)
-                ORDER BY detected_at ASC, id ASC
+                WHERE (? IS NULL OR state = ?) AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+            )
+            """  # noqa: S608
+SELECT_PENDING_FOR_DELIVERY: Final = f"""
+            SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))
+            FROM (
+                SELECT * FROM situations
+                WHERE state = 'pending'
+                ORDER BY CASE priority
+                    WHEN 'critical' THEN 0 ELSE 1 END,
+                    CASE WHEN situation_type = 'reply_deadline' THEN 1 ELSE 0 END,
+                    CASE priority WHEN 'high' THEN 0 ELSE 1 END,
+                    detected_at ASC, id ASC
+                LIMIT ?
             )
             """  # noqa: S608
 SELECT_ACTIVE_BY_TYPE: Final = f"""

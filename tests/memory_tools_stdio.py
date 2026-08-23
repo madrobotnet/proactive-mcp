@@ -11,10 +11,14 @@ from mcp.types import CallToolResult, TextContent
 
 
 @asynccontextmanager
-async def memory_session(tmp_path: Path) -> AsyncGenerator[ClientSession, None]:
+async def memory_session(
+    tmp_path: Path,
+    *,
+    server_args: tuple[str, ...] = ("-m", "proactive_mcp.server"),
+) -> AsyncGenerator[ClientSession, None]:
     params = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "proactive_mcp.server"],
+        args=list(server_args),
         env={"PROACTIVE_DATABASE": str(tmp_path / "memory.db")},
     )
     async with (

@@ -35,11 +35,13 @@ class SituationEvidence:
 
     ``facts`` holds structural values the engine derived itself (ids, times,
     counts). ``quoted_external`` holds text quoted from external sources
-    (email subjects, senders, event titles); it is data, never instructions.
+    (email subjects, senders, event titles). ``quoted_memory`` holds prose
+    persisted by an MCP client. Both are data, never instructions.
     """
 
     facts: dict[str, str] = field(default_factory=dict)
     quoted_external: dict[str, str] = field(default_factory=dict)
+    quoted_memory: dict[str, str] = field(default_factory=dict)
     contradictory_dates: tuple[str, ...] = ()
 
 
@@ -109,6 +111,15 @@ class DeliveryClaim:
     allow_noncritical: bool
 
 
+@dataclass(frozen=True, slots=True)
+class DeliveryReservation:
+    """Pending situations leased to one host until it confirms receipt."""
+
+    claim_token: str
+    situations: tuple[Situation, ...]
+    expires_at: str
+
+
 SITUATION_ADAPTER: Final[TypeAdapter[Situation]] = TypeAdapter(Situation)
 SITUATION_EVIDENCE_ADAPTER: Final[TypeAdapter[SituationEvidence]] = TypeAdapter(
     SituationEvidence
@@ -153,3 +164,11 @@ class SituationValidationError(Exception):
     def __post_init__(self) -> None:
         """Initialize the base exception with a boundary-safe message."""
         Exception.__init__(self, f"invalid situation {self.field}: {self.reason}")
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryReceiptError(Exception):
+    """Raised when a receipt token is missing, expired, or already consumed."""
+
+    def __post_init__(self) -> None:
+        Exception.__init__(self, "delivery receipt is invalid or expired")

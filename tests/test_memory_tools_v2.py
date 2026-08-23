@@ -68,6 +68,7 @@ async def test_remember_resolves_aliases_normalizes_paths_and_recall_filters(
         )
 
     item = MemoryItemResponse.model_validate_json(json_text(stored))
+    assert item.trust == "untrusted_memory_data"
     assert item.entity == "엄마"
     assert item.entity_kind == "person"
     assert item.entity_path == "가족/어머니"
@@ -200,6 +201,7 @@ async def test_update_and_list_entities_use_v2_fields(tmp_path: Path) -> None:
     assert changed.date_anchor == "2026-08-22"
 
     listed = ListEntitiesResponse.model_validate_json(json_text(entities))
+    assert listed.items[0].trust == "untrusted_memory_data"
     assert [(entity.kind, entity.path, entity.label) for entity in listed.items] == [
         ("activity", "개발/proactive-mcp", "proactive"),
     ]

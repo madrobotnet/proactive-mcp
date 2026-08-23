@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from textwrap import dedent
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from proactive_mcp import situations
 from proactive_mcp.store import NewMemory, Store
@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
     from proactive_mcp.sources.calendar import CalendarEvent
 
+_NO_THREAD_IDS: Final[frozenset[str]] = frozenset()
+
 
 def _open_engine(
     tmp_path: Path,
@@ -30,12 +32,14 @@ def _open_engine(
     return store, situations.SituationEngine(store, clock, UTC), clock
 
 
-def _gmail_snapshot(
+def _gmail_snapshot(  # noqa: PLR0913
     store: Store,
     threads: tuple[situations.InboxThreadSnapshot, ...],
     *,
     complete: bool = True,
     warning_codes: tuple[str, ...] = (),
+    resolve_absent: bool = False,
+    resolution_excluded_ids: frozenset[str] = _NO_THREAD_IDS,
 ) -> situations.SourceSnapshot[situations.InboxThreadSnapshot]:
     require_m3("SourceSnapshot")
     return situations.SourceSnapshot(
@@ -43,6 +47,8 @@ def _gmail_snapshot(
         items=threads,
         complete=complete,
         warning_codes=warning_codes,
+        resolve_absent=resolve_absent,
+        resolution_excluded_ids=resolution_excluded_ids,
     )
 
 
@@ -219,12 +225,57 @@ def test_degraded_source_rejects_present_empty_snapshot_as_all_clear(
         # Then: degraded absence cannot resolve the situation or report all-clear.
         assert result.resolved == 0
         assert "gmail: gmail_body_incomplete" in result.warnings
+        assert result.gmail_freshness.status == "error"
+        assert result.gmail_freshness.error_code == "degraded"
         assert store.source_generation_state("gmail").status == "degraded"
         persisted = store.situations.get_situation(situation.id)
         assert persisted is not None
         assert persisted.state == "pending"
     finally:
         store.close()
+
+
+def test_degraded_gmail_reconciles_unrelated_safe_absence(tmp_path: Path) -> None:
+    store, engine, clock = _open_engine(tmp_path)
+    try:
+        threads = tuple(
+            situations.InboxThreadSnapshot(
+                thread_id=f"thread-{suffix}",
+                latest_message_id=f"message-{suffix}",
+                latest_from_user=False,
+                user_is_recipient=True,
+                latest_message_at=clock.now() - timedelta(hours=49),
+            )
+            for suffix in ("safe", "degraded")
+        )
+        initial = engine.evaluate(
+            situations.EngineInputs(gmail_threads=_gmail_snapshot(store, threads))
+        )
+        assert initial.created == 2
+
+        degraded = engine.evaluate(
+            situations.EngineInputs(
+                gmail_threads=_gmail_snapshot(
+                    store,
+                    (),
+                    complete=False,
+                    warning_codes=("gmail_body_incomplete",),
+                    resolve_absent=True,
+                    resolution_excluded_ids=frozenset({"thread-degraded"}),
+                )
+            )
+        )
+
+        states = {
+            item.evidence.facts["thread_id"]: item.state
+            for item in store.situations.list_situations()
+        }
+    finally:
+        store.close()
+
+    assert degraded.resolved == 1
+    assert degraded.gmail_freshness.status == "error"
+    assert states == {"thread-safe": "resolved", "thread-degraded": "pending"}
 
 
 def test_calendar_overflow_is_degraded_and_preserves_existing_truth(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -51,8 +51,9 @@ def validate_memory_date(memory: RememberRequest) -> None:
         return
     normalized = f"2000-{value.removeprefix('--')}" if value.startswith("--") else value
     try:
-        _ = date.fromisoformat(normalized)
-    except ValueError:
+        parsed = date.fromisoformat(normalized)
+        _ = parsed + timedelta(days=1)
+    except (OverflowError, ValueError):
         raise InvalidDateAnchorError(value) from None
     if value.startswith("--") and memory.recurrence != "yearly":
         raise YearlessDateRequiresYearlyError

@@ -91,7 +91,11 @@ class Store:
         collaborators = self._collaborators
         self._collaborators = None
         if collaborators is not None:
-            close_connection(collaborators.connection, collaborators.directory_fd)
+            close_connection(
+                collaborators.connection,
+                collaborators.directory_fd,
+                collaborators.database_guard,
+            )
 
     def status(self) -> DatabaseStatus:
         """Return path, journal mode, busy timeout, and migration version."""
@@ -108,6 +112,12 @@ class Store:
     def connection(self) -> sqlite3.Connection:
         """Return the live SQLite connection for storage-layer integrations."""
         return self._require().connection
+
+    def try_start_evaluation(self, *, minimum_interval: timedelta) -> bool:
+        """Reserve one expensive evaluation inside a cross-process interval."""
+        return self._require().evaluation_gate.try_start(
+            minimum_interval=minimum_interval
+        )
 
     def remember(self, memory: NewMemory) -> MemoryItem:
         """Store a memory item without replacing contradictory items."""
@@ -140,11 +150,13 @@ class Store:
         *,
         kind: EntityKind | None = None,
         path_prefix: str | None = None,
+        limit: int = 20,
     ) -> tuple[Entity, ...]:
         """List active entities with optional kind and path-prefix filters."""
         return self._require().memory.list_entities(
             kind=kind,
             path_prefix=path_prefix,
+            limit=limit,
         )
 
     def forget(self, memory_id: int) -> MemoryItem:

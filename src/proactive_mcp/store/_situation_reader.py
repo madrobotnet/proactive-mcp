@@ -14,6 +14,7 @@ from ._situation_sql import (
     COUNT_DELIVERED_BETWEEN,
     SELECT_ACTIVE_BY_TYPE,
     SELECT_MUTED_TYPES,
+    SELECT_PENDING_FOR_DELIVERY,
     SELECT_SITUATION_BY_DEDUPE_KEY,
     SELECT_SITUATION_BY_ID,
     SELECT_SITUATIONS,
@@ -86,8 +87,57 @@ class SituationReader:
     def list_situations(
         self,
         state: SituationState | None = None,
+        *,
+        after_id: int = 0,
+        limit: int = 20,
     ) -> tuple[Situation, ...]:
-        return self._capture(SELECT_SITUATIONS, (state, state))
+        return self._capture(SELECT_SITUATIONS, (state, state, after_id, limit))
+
+    def pending_for_delivery(self, *, limit: int) -> tuple[Situation, ...]:
+        """Return a bounded SQL-ordered delivery candidate page."""
+        return self._capture(SELECT_PENDING_FOR_DELIVERY, (limit,))
+
+    def count_situations(self, state: SituationState | None = None) -> int:
+        """Count rows without hydrating titles or evidence."""
+        self._ints.clear()
+        _ = self._connection.execute(
+            """
+            SELECT _proactive_capture_situation_int(COUNT(*))
+            FROM situations WHERE (? IS NULL OR state = ?)
+            """,
+            (state, state),
+        )
+        return self._ints[0] if self._ints else 0
+
+    def delivery_claim_ids(self, claim_token: str) -> tuple[int, ...]:
+        """Return the bounded situation ids owned by one receipt token."""
+        self._ints.clear()
+        _ = self._connection.execute(
+            """
+            SELECT _proactive_capture_situation_int(situation_id)
+            FROM situation_delivery_claims
+            WHERE claim_token = ? ORDER BY situation_id ASC
+            LIMIT 100
+            """,
+            (claim_token,),
+        )
+        return tuple(self._ints)
+
+    def count_pending_unclaimed(self, now: str) -> int:
+        """Count pending rows not hidden behind an unexpired host lease."""
+        self._ints.clear()
+        _ = self._connection.execute(
+            """
+            SELECT _proactive_capture_situation_int(COUNT(*))
+            FROM situations
+            WHERE state = 'pending' AND NOT EXISTS (
+                SELECT 1 FROM situation_delivery_claims
+                WHERE situation_id = situations.id AND expires_at > ?
+            )
+            """,
+            (now,),
+        )
+        return self._ints[0] if self._ints else 0
 
     def get_situation(self, situation_id: int) -> Situation | None:
         situations = self._capture(SELECT_SITUATION_BY_ID, (situation_id,))
@@ -114,6 +164,21 @@ class SituationReader:
         _ = self._connection.execute(
             f"SELECT _proactive_capture_situation_int(({COUNT_DELIVERED_BETWEEN}))",
             (start, end),
+        )
+        return self._ints[0] if self._ints else 0
+
+    def count_reserved_between(self, start: str, end: str, now: str) -> int:
+        """Count active non-critical host leases inside a budget window."""
+        self._ints.clear()
+        _ = self._connection.execute(
+            """
+            SELECT _proactive_capture_situation_int(COUNT(*))
+            FROM situation_delivery_claims claims
+            JOIN situations ON situations.id = claims.situation_id
+            WHERE claims.claimed_at >= ? AND claims.claimed_at < ?
+              AND claims.expires_at > ? AND situations.priority != 'critical'
+            """,
+            (start, end, now),
         )
         return self._ints[0] if self._ints else 0
 

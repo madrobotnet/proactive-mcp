@@ -163,6 +163,9 @@ class GoogleSyncService:
                 complete=gmail_result.is_complete,
                 sync_cursor=gmail_result.provider_history_cursor,
                 warning_codes=tuple(gmail_result.degradation_reasons),
+                resolve_absent=gmail_result.allows_absent_resolution,
+                resolution_scope_ids=gmail_result.resolution_safe_thread_ids,
+                resolution_excluded_ids=(gmail_result.resolution_excluded_thread_ids),
             )
         try:
             calendar_result = self._dependencies.calendar.list_events()
@@ -221,14 +224,22 @@ class GoogleSyncService:
             result = self._dependencies.gmail.read_inbox_threads()
         except (GmailError, GoogleTransportError) as error:
             return self._record_failure("gmail", error.error_code)
-        self._dependencies.store.record_sync_success(
-            "gmail",
-            sync_cursor=result.provider_history_cursor,
-        )
+        if result.is_complete:
+            self._dependencies.store.record_sync_success(
+                "gmail",
+                sync_cursor=result.provider_history_cursor,
+            )
+            error_code = None
+        else:
+            self._dependencies.store.record_sync_failure(
+                "gmail",
+                error_code="degraded",
+            )
+            error_code = "degraded"
         return _SourceReadOutcome(
             count=len(result.threads),
             ids=tuple(thread.thread_id for thread in result.threads),
-            error_code=None,
+            error_code=error_code,
         )
 
     def _sync_calendar(self) -> _SourceReadOutcome:
@@ -236,11 +247,19 @@ class GoogleSyncService:
             result = self._dependencies.calendar.list_events()
         except (CalendarError, GoogleTransportError) as error:
             return self._record_failure("calendar", error.error_code)
-        self._dependencies.store.record_sync_success("calendar")
+        if result.skipped_count == 0:
+            self._dependencies.store.record_sync_success("calendar")
+            error_code = None
+        else:
+            self._dependencies.store.record_sync_failure(
+                "calendar",
+                error_code="degraded",
+            )
+            error_code = "degraded"
         return _SourceReadOutcome(
             count=len(result.events),
             ids=tuple(event.id for event in result.events),
-            error_code=None,
+            error_code=error_code,
         )
 
     def _record_failure(

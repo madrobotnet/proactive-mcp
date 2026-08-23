@@ -6,7 +6,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from email.utils import getaddresses, parseaddr
+from email.utils import parseaddr
 from html.parser import HTMLParser
 from typing import ClassVar, Final, TypeAlias
 
@@ -89,6 +89,7 @@ class _WireMessage(_Wire):
     id: str | None = None
     internal_date: int | None = Field(default=None, alias="internalDate")
     snippet: str | None = None
+    label_ids: tuple[str, ...] | None = Field(default=None, alias="labelIds")
     payload: _WirePart | None = None
 
 
@@ -124,27 +125,28 @@ def project_thread(
     if not candidates:
         return None
     sent_at, message_id, latest = max(candidates, key=lambda item: (item[0], item[1]))
-    headers = _headers(latest.payload)
+    headers, identity_headers_ambiguous = _headers(latest.payload)
     sender_name, sender_address = parseaddr(headers.get("from", ""))
-    recipients = getaddresses([headers.get("to", "")])
-    user_address = profile_email.casefold()
+    del profile_email
+    sent, inbox, direction_reasons = _trusted_direction(latest.label_ids)
     body = _project_body(latest.payload)
     body_text = body.text
-    degradation_reasons: tuple[ProjectionDegradationReason, ...] = ()
+    reasons = list(direction_reasons)
+    if identity_headers_ambiguous:
+        reasons.append("identity_headers_ambiguous")
     if body_text is None:
         body_text = latest.snippet
-        degradation_reasons = ("body_snippet_fallback",)
+        reasons.append("body_snippet_fallback")
     elif body.truncated:
-        degradation_reasons = ("body_truncated",)
+        reasons.append("body_truncated")
     elif body.structure_truncated:
-        degradation_reasons = ("mime_structure_truncated",)
+        reasons.append("mime_structure_truncated")
+    degradation_reasons = tuple(dict.fromkeys(reasons))
     return InboxThreadSnapshot(
         thread_id=thread_id,
         latest_message_id=message_id,
-        latest_from_user=sender_address.casefold() == user_address,
-        user_is_recipient=any(
-            address.casefold() == user_address for _, address in recipients
-        ),
+        latest_from_user=sent,
+        user_is_recipient=inbox,
         latest_message_at=sent_at,
         subject=headers.get("subject") or None,
         sender_display=sender_name or sender_address or None,
@@ -156,10 +158,35 @@ def project_thread(
     )
 
 
-def _headers(payload: _WirePart | None) -> dict[str, str]:
+def _trusted_direction(
+    label_ids: tuple[str, ...] | None,
+) -> tuple[bool, bool, tuple[ProjectionDegradationReason, ...]]:
+    labels = frozenset(label_ids or ())
+    sent = "SENT" in labels
+    inbox = "INBOX" in labels
+    if not labels:
+        reasons: tuple[ProjectionDegradationReason, ...] = (
+            "direction_metadata_missing",
+        )
+    elif sent and inbox:
+        reasons = ("direction_metadata_ambiguous",)
+    else:
+        reasons = ()
+    return sent, inbox, reasons
+
+
+def _headers(payload: _WirePart | None) -> tuple[dict[str, str], bool]:
     if payload is None:
-        return {}
-    return {header.name.casefold(): header.value for header in payload.headers}
+        return {}, False
+    values: dict[str, str] = {}
+    ambiguous = False
+    identity_names = {"from", "to", "cc", "bcc"}
+    for header in payload.headers:
+        name = header.name.casefold()
+        if name in identity_names and name in values:
+            ambiguous = True
+        values[name] = header.value
+    return values, ambiguous
 
 
 @dataclass(frozen=True, slots=True)

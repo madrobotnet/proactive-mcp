@@ -4,6 +4,7 @@
   "messages": [
     {
       "id": "message-html",
+      "labelIds": ["INBOX"],
       "threadId": "thread-html-deadline",
       "internalDate": "1787302800000",
       "snippet": "Please review",

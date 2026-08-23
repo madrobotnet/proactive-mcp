@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
+import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeAlias
+from pathlib import Path, PureWindowsPath
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeAlias, cast
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -25,6 +28,7 @@ __all__ = [
     "SubprocessNotificationRunner",
     "parse_notification_platform",
     "send_os_notification",
+    "trusted_notifier_path",
 ]
 
 NotificationErrorCode: TypeAlias = Literal[
@@ -34,6 +38,18 @@ NotificationErrorCode: TypeAlias = Literal[
     "unsupported_platform",
 ]
 NotificationPlatform: TypeAlias = Literal["linux", "darwin", "win32"]
+
+
+class _GetSystemDirectory(Protocol):
+    """Typed view of the dynamically loaded Win32 directory function."""
+
+    argtypes: list[object]
+    restype: object
+
+    def __call__(self, buffer: object, size: int, /) -> int:
+        """Write the system directory and return its character count."""
+        ...
+
 
 DEFAULT_NOTIFICATION_TIMEOUT: Final = timedelta(seconds=5)
 MACOS_NOTIFICATION_SCRIPT: Final = (
@@ -49,6 +65,8 @@ _PLATFORMS: Final[dict[str, NotificationPlatform]] = {
     "darwin": "darwin",
     "win32": "win32",
 }
+_LINUX_NOTIFY_SEND: Final = "/usr/bin/notify-send"
+_MACOS_OSASCRIPT: Final = "/usr/bin/osascript"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +109,8 @@ class SubprocessNotificationRunner:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=timeout.total_seconds(),
+                cwd=str(Path(argv[0]).parent),
+                env=_sanitized_environment(),
             )
         except FileNotFoundError:
             raise NotificationError(_UNAVAILABLE) from None
@@ -124,15 +144,15 @@ def _notification_argv(
     title = payload.title
     body = payload.situation_type
     commands: dict[NotificationPlatform, tuple[str, ...]] = {
-        "linux": ("notify-send", "--", title, body),
+        "linux": (trusted_notifier_path("linux"), "--", title, body),
         "darwin": (
-            "osascript",
+            trusted_notifier_path("darwin"),
             str(MACOS_NOTIFICATION_SCRIPT),
             title,
             body,
         ),
         "win32": (
-            "powershell.exe",
+            trusted_notifier_path("win32"),
             "-NoProfile",
             "-NonInteractive",
             "-File",
@@ -142,3 +162,56 @@ def _notification_argv(
         ),
     }
     return commands[platform]
+
+
+def trusted_notifier_path(platform: NotificationPlatform) -> str:
+    """Resolve each notifier from an OS-owned absolute location, never PATH."""
+    if platform == "linux":
+        return _LINUX_NOTIFY_SEND
+    if platform == "darwin":
+        return _MACOS_OSASCRIPT
+    powershell = (
+        PureWindowsPath(_windows_system_directory())
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    return str(powershell)
+
+
+def _windows_system_directory() -> str:
+    if sys.platform != "win32":
+        return r"C:\Windows\System32"
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_system_directory = cast(
+        "_GetSystemDirectory",
+        cast("object", kernel32.GetSystemDirectoryW),
+    )
+    get_system_directory.argtypes = [ctypes.c_wchar_p, ctypes.c_uint]
+    get_system_directory.restype = ctypes.c_uint
+    buffer = ctypes.create_unicode_buffer(32_768)
+    length = get_system_directory(buffer, len(buffer))
+    if length == 0 or length >= len(buffer):
+        raise NotificationError(_UNAVAILABLE)
+    return cast("str", buffer.value)
+
+
+def _sanitized_environment() -> dict[str, str]:
+    """Retain session variables while removing executable injection controls."""
+    blocked = {
+        "DYLD_INSERT_LIBRARIES",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "PSModulePath",
+        "PYTHONHOME",
+        "PYTHONPATH",
+    }
+    environment = {
+        key: value for key, value in os.environ.items() if key not in blocked
+    }
+    environment["PATH"] = (
+        str(Path(_windows_system_directory()))
+        if sys.platform == "win32"
+        else "/usr/bin:/bin"
+    )
+    return environment

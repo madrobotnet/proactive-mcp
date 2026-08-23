@@ -34,6 +34,7 @@ GENERIC_WRITE: Final[int] = 0x40000000
 INVALID_HANDLE_VALUE: Final[int] = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
 LOCKFILE_EXCLUSIVE_LOCK: Final[int] = 0x00000002
 NO_INHERITANCE: Final[int] = 0
+OWNER_SECURITY_INFORMATION: Final[int] = 0x00000001
 PROTECTED_DACL_SECURITY_INFORMATION: Final[int] = 0x80000000
 READ_CONTROL: Final[int] = 0x00020000
 SE_FILE_OBJECT: Final[int] = 1
@@ -205,6 +206,19 @@ _rawadvapi32.GetTokenInformation.argtypes = [
     ctypes.POINTER(wintypes.DWORD),
 ]
 _rawadvapi32.GetTokenInformation.restype = wintypes.BOOL
+_rawadvapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+_rawadvapi32.EqualSid.restype = wintypes.BOOL
+_rawadvapi32.GetSecurityInfo.argtypes = [
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    ctypes.POINTER(ctypes.c_void_p),
+    ctypes.POINTER(ctypes.c_void_p),
+    ctypes.POINTER(ctypes.c_void_p),
+    ctypes.POINTER(ctypes.c_void_p),
+    ctypes.POINTER(ctypes.c_void_p),
+]
+_rawadvapi32.GetSecurityInfo.restype = wintypes.DWORD
 _rawadvapi32.OpenProcessToken.argtypes = [
     wintypes.HANDLE,
     wintypes.DWORD,
@@ -254,12 +268,16 @@ class _Kernel32:
 
 
 class _Advapi32:
+    equal_sid: Callable[..., int]
+    get_security_info: Callable[..., int]
     get_token_information: Callable[..., int]
     open_process_token: Callable[..., int]
     set_entries_in_acl: Callable[..., int]
     set_security_info: Callable[..., int]
 
     def __init__(self) -> None:
+        self.equal_sid = _unavailable
+        self.get_security_info = _unavailable
         self.get_token_information = _unavailable
         self.open_process_token = _unavailable
         self.set_entries_in_acl = _unavailable
@@ -284,6 +302,8 @@ _install_binding(kernel32, "local_free", _rawkernel32.LocalFree)
 _install_binding(kernel32, "lock_file", _rawkernel32.LockFileEx)
 _install_binding(kernel32, "unlock_file", _rawkernel32.UnlockFileEx)
 _install_binding(advapi32, "get_token_information", _rawadvapi32.GetTokenInformation)
+_install_binding(advapi32, "equal_sid", _rawadvapi32.EqualSid)
+_install_binding(advapi32, "get_security_info", _rawadvapi32.GetSecurityInfo)
 _install_binding(advapi32, "open_process_token", _rawadvapi32.OpenProcessToken)
 _install_binding(advapi32, "set_entries_in_acl", _rawadvapi32.SetEntriesInAclW)
 _install_binding(advapi32, "set_security_info", _rawadvapi32.SetSecurityInfo)

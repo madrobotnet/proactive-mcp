@@ -1,22 +1,29 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final
 
 import pytest
 
+import proactive_mcp.store._situation_consistency as consistency_module
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server.situation_requests import SituationRequestError
 from proactive_mcp.server.situation_responses import (
     ListSituationsResponse,
     ProactiveCheckResponse,
 )
-from proactive_mcp.server.situation_tools import open_situation_service
+from proactive_mcp.server.situation_tools import (
+    SituationToolService,
+    open_situation_service,
+)
 from proactive_mcp.sources.lazy_sync import LazySyncPolicy, SourceAccess
 from proactive_mcp.store import (
     DaemonStatus,
     DaemonStatusStore,
+    DeliveryReceiptError,
     InvalidSituationTransitionError,
+    SituationEvidence,
     SituationNotFoundError,
     Store,
 )
@@ -44,6 +51,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from proactive_mcp.clock import Clock
+    from proactive_mcp.delivery import EvaluationRunner
+    from proactive_mcp.delivery.evaluation import EvaluationPass
 
 _NOON = utc_datetime(2026, 8, 21, 12)
 _QUIET_NIGHT = utc_datetime(2026, 8, 21, 22)
@@ -52,6 +61,7 @@ _PRIVATE_MARKER: Final = "PRIVATE-SNOOZE-MARKER"
 _TOOL_NAMES: Final = frozenset(
     {
         "proactive_check",
+        "confirm_delivery",
         "list_situations",
         "get_situation",
         "acknowledge_situation",
@@ -59,6 +69,30 @@ _TOOL_NAMES: Final = frozenset(
         "mute_situation",
     }
 )
+
+
+@dataclass(slots=True)
+class _CountingEvaluation:
+    delegate: EvaluationRunner
+    calls: int = 0
+
+    def run_once(self) -> EvaluationPass:
+        self.calls += 1
+        return self.delegate.run_once()
+
+
+@pytest.mark.anyio
+async def test_scheduled_server_exposes_only_unattended_read_tools(
+    tmp_path: Path,
+) -> None:
+    async with memory_session(
+        tmp_path,
+        server_args=("-m", "proactive_mcp", "serve-scheduled"),
+    ) as session:
+        tools = await session.list_tools()
+        names = {tool.name for tool in tools.tools}
+
+    assert names == {"confirm_delivery", "get_status", "proactive_check"}
 
 
 def test_proactive_check_delivers_the_detected_occasion_exactly_once(
@@ -70,6 +104,8 @@ def test_proactive_check_delivers_the_detected_occasion_exactly_once(
 
         # When: the same session checks twice.
         first = harness.service.proactive_check()
+        assert first.receipt_token is not None
+        _ = harness.service.confirm_delivery(first.receipt_token)
         second = harness.service.proactive_check()
         stored = harness.store.situations.list_situations()
 
@@ -77,10 +113,68 @@ def test_proactive_check_delivers_the_detected_occasion_exactly_once(
     assert tuple(item.situation_type for item in first.situations) == (
         "personal_occasion",
     )
-    assert first.situations[0].state == "delivered"
+    assert first.situations[0].state == "pending"
     assert first.situations[0].priority == "high"
     assert second.situations == ()
     assert tuple(item.state for item in stored) == ("delivered",)
+
+
+def test_rapid_proactive_checks_coalesce_expensive_evaluation(tmp_path: Path) -> None:
+    with open_harness(tmp_path, _NOON) as harness:
+        evaluation = _CountingEvaluation(harness.dependencies.evaluation)
+        service = SituationToolService(
+            replace(harness.dependencies, evaluation=evaluation)
+        )
+
+        _ = service.proactive_check()
+        _ = service.proactive_check()
+
+    assert evaluation.calls == 1
+
+
+def test_unconfirmed_delivery_lease_expires_back_to_pending(tmp_path: Path) -> None:
+    with open_harness(tmp_path, _NOON) as harness:
+        _ = harness.store.situations.upsert_detections((pending_detection("receipt"),))
+
+        first = harness.service.proactive_check()
+        assert first.receipt_token is not None
+        assert harness.store.situations.count_deliveries() == 0
+        assert harness.service.get_situation(first.situations[0].id).state == "pending"
+
+        harness.clock.advance(timedelta(minutes=3))
+        second = harness.service.proactive_check()
+        assert second.receipt_token is not None
+        with pytest.raises(DeliveryReceiptError):
+            _ = harness.service.confirm_delivery(first.receipt_token)
+        confirmation = harness.service.confirm_delivery(second.receipt_token)
+
+    assert tuple(item.id for item in second.situations) == (first.situations[0].id,)
+    assert confirmation.delivered_count == 1
+
+
+def test_reply_flood_cannot_starve_non_reply_budget_capacity(tmp_path: Path) -> None:
+    write_config(tmp_path, daily_budget=4)
+    with open_harness(tmp_path, _NOON) as harness:
+        reply_detections = tuple(
+            replace(
+                pending_detection(f"reply-{index}", "high"),
+                situation_type="reply_deadline",
+            )
+            for index in range(150)
+        )
+        calendar = pending_detection("trusted-calendar")
+        _ = harness.store.situations.upsert_detections((*reply_detections, calendar))
+
+        response = harness.service.proactive_check()
+
+    assert len(response.situations) == 4
+    assert (
+        sum(item.situation_type == "reply_deadline" for item in response.situations)
+        == 3
+    )
+    assert any(
+        item.situation_type == "calendar_conflict" for item in response.situations
+    )
 
 
 def test_proactive_check_never_reports_all_clear_while_a_source_is_not_ok(
@@ -178,6 +272,62 @@ def test_list_and_get_isolate_quoted_external_evidence_as_untrusted(
     assert detail.evidence.facts == {"event_a_id": "evidence"}
     assert detail.evidence.quoted_external.trust == "untrusted_external_data"
     assert detail.evidence.quoted_external.values == {"subject": UNTRUSTED_SUBJECT}
+    assert detail.evidence.quoted_memory.trust == "untrusted_memory_data"
+    assert detail.evidence.quoted_memory.values == {}
+
+
+def test_list_situations_is_cursor_paginated_and_stable(tmp_path: Path) -> None:
+    with open_harness(tmp_path, _NOON) as harness:
+        _ = harness.store.situations.upsert_detections(
+            tuple(pending_detection(f"page-{index}") for index in range(25))
+        )
+
+        first = harness.service.list_situations(limit=10)
+        assert first.next_after_id is not None
+        second = harness.service.list_situations(
+            after_id=first.next_after_id,
+            limit=10,
+        )
+
+    first_ids = tuple(item.id for item in first.items)
+    second_ids = tuple(item.id for item in second.items)
+    assert len(first_ids) == len(second_ids) == 10
+    assert set(first_ids).isdisjoint(second_ids)
+    assert max(first_ids) < min(second_ids)
+
+
+def test_situation_row_quota_skips_new_remote_id_growth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(consistency_module, "_MAX_SITUATION_ROWS", 1)
+    with open_harness(tmp_path, _NOON) as harness:
+        summary = harness.store.situations.upsert_detections(
+            (pending_detection("first"), pending_detection("second"))
+        )
+
+        count = harness.store.situations.count_situations()
+
+    assert summary.created == 1
+    assert summary.skipped == 1
+    assert count == 1
+
+
+def test_situation_record_quota_skips_oversized_external_evidence(
+    tmp_path: Path,
+) -> None:
+    oversized = replace(
+        pending_detection("oversized"),
+        evidence=SituationEvidence(quoted_external={"subject": "x" * 20_000}),
+    )
+    with open_harness(tmp_path, _NOON) as harness:
+        summary = harness.store.situations.upsert_detections((oversized,))
+
+        count = harness.store.situations.count_situations()
+
+    assert summary.created == 0
+    assert summary.skipped == 1
+    assert count == 0
 
 
 def test_get_situation_rejects_an_unknown_id(tmp_path: Path) -> None:
@@ -200,7 +350,10 @@ def test_acknowledge_requires_delivery_first(tmp_path: Path) -> None:
         # When: acknowledgement is attempted before and after delivery.
         with pytest.raises(InvalidSituationTransitionError):
             _ = harness.service.acknowledge_situation(pending.id)
-        delivered = harness.service.proactive_check().situations[0]
+        response = harness.service.proactive_check()
+        assert response.receipt_token is not None
+        _ = harness.service.confirm_delivery(response.receipt_token)
+        delivered = response.situations[0]
         acknowledged = harness.service.acknowledge_situation(delivered.id)
 
     # Then: only the delivered row may be acknowledged (§5.1).
@@ -302,7 +455,12 @@ async def test_situation_tools_expose_and_answer_the_m4_surface(tmp_path: Path) 
     tools = {tool.name: tool for tool in listed.tools}
     assert set(tools) >= _TOOL_NAMES
     assert tool_schema(tools["proactive_check"]).required == ()
-    assert set(tool_schema(tools["list_situations"]).properties) >= {"state"}
+    assert set(tool_schema(tools["confirm_delivery"]).required) >= {"receipt_token"}
+    assert set(tool_schema(tools["list_situations"]).properties) >= {
+        "after_id",
+        "limit",
+        "state",
+    }
     assert set(tool_schema(tools["get_situation"]).required) >= {"id"}
     assert set(tool_schema(tools["acknowledge_situation"]).required) >= {"id"}
     assert set(tool_schema(tools["snooze_situation"]).required) >= {"id", "until"}

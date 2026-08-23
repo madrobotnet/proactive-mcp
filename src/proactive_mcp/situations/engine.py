@@ -109,6 +109,9 @@ class SituationEngine:
                         status="complete" if gmail.complete else "degraded",
                         sync_cursor=gmail.sync_cursor,
                         error_code=gmail.error_code,
+                        resolve_absent=gmail.resolve_absent,
+                        resolution_scope_ids=gmail.resolution_scope_ids,
+                        resolution_excluded_ids=gmail.resolution_excluded_ids,
                     )
                 )
             except DelayedSourceGenerationError:

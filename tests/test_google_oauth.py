@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,6 +27,7 @@ _TEST_REFRESH = "refresh" + "-token"
 _TEST_TOKEN_URI = "https://oauth2.googleapis.test" + "/token"
 _TEST_CLIENT_ID = "test-client" + ".apps.googleusercontent.com"
 _TEST_CLIENT_SECRET = "test-client" + "-secret"
+_TEST_BOOTSTRAP_CLIENT_SECRET = "sanitized-test-client" + "-secret"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,10 +82,12 @@ class FakeInstalledAppFlow:
 
 class FakeFlowFactory:
     flow: FakeInstalledAppFlow
+    client_config: GoogleClientConfig | None
     scopes: tuple[str, str] | None
 
     def __init__(self, flow: FakeInstalledAppFlow) -> None:
         self.flow = flow
+        self.client_config = None
         self.scopes = None
 
     def from_client_config(
@@ -91,7 +95,7 @@ class FakeFlowFactory:
         client_config: GoogleClientConfig,
         scopes: tuple[str, str],
     ) -> FakeInstalledAppFlow:
-        del client_config
+        self.client_config = client_config
         self.scopes = scopes
         return self.flow
 
@@ -138,6 +142,15 @@ def test_reauth_preserves_stale_credentials_until_consent_succeeds(
 
     assert authorized.refresh_token == _TEST_REFRESH
     assert keyring.calls == ["set", "set"]
+    assert factory.client_config == {
+        "installed": {
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "client_id": _TEST_CLIENT_ID,
+            "client_secret": _TEST_BOOTSTRAP_CLIENT_SECRET,
+            "redirect_uris": ["http://127.0.0.1"],
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
     assert factory.scopes == GOOGLE_READONLY_SCOPES
     assert flow.calls == [
         FlowCall(
@@ -148,6 +161,43 @@ def test_reauth_preserves_stale_credentials_until_consent_succeeds(
             prompt="consent",
         )
     ]
+
+
+def test_authorization_ignores_untrusted_provider_endpoint_overrides(
+    tmp_path: Path,
+) -> None:
+    client_file = tmp_path / "installed-client.json"
+    _ = client_file.write_text(
+        json.dumps(
+            {
+                "installed": {
+                    "auth_uri": "https://accounts.google.com@attacker.invalid/auth",
+                    "client_id": _TEST_CLIENT_ID,
+                    "client_secret": _TEST_CLIENT_SECRET,
+                    "redirect_uris": ["https://attacker.invalid/callback"],
+                    "token_uri": "http://127.0.0.1:8080/token",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    factory = FakeFlowFactory(FakeInstalledAppFlow(_credentials()))
+    authorizer = GoogleOAuthAuthorizer(
+        CredentialStore(tmp_path / "state", keyring=FakeKeyring()),
+        flow_factory=factory,
+    )
+
+    _ = authorizer.authorize(client_file, headless=True)
+
+    assert factory.client_config == {
+        "installed": {
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "client_id": _TEST_CLIENT_ID,
+            "client_secret": _TEST_CLIENT_SECRET,
+            "redirect_uris": ["http://127.0.0.1"],
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
 
 
 def test_authorization_rejects_a_flow_without_a_refresh_token(tmp_path: Path) -> None:

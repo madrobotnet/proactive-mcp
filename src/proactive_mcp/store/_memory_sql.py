@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Final
 
 LAST_INSERT_ROWID: Final = "SELECT last_insert_rowid()"
+SELECT_MEMORY_ITEM_COUNT: Final = "SELECT COUNT(*) FROM memory_items"
+SELECT_ENTITY_COUNT: Final = "SELECT COUNT(*) FROM entities"
+SELECT_ENTITY_ALIAS_COUNT: Final = "SELECT COUNT(*) FROM entity_aliases"
 SELECT_ENTITY_ID_BY_ALIAS: Final = (
     "SELECT entity_id FROM entity_aliases WHERE alias_norm = ?"
 )
@@ -161,5 +164,6 @@ SELECT_ACTIVE_ENTITIES: Final = """
                   AND (? IS NULL OR kind = ?)
                   AND (? IS NULL OR path = ? OR path LIKE ? ESCAPE '\\')
                 ORDER BY kind ASC, path ASC, label ASC, id ASC
+                LIMIT ?
             )
             """

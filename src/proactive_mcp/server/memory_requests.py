@@ -7,6 +7,7 @@ from typing import Annotated, ClassVar, TypedDict
 from pydantic import BaseModel, ConfigDict, Field
 
 from proactive_mcp.store import (
+    MAX_MEMORY_LEAD_DAYS,
     EntityKind,
     MemoryAttribute,
     MemoryKind,
@@ -28,7 +29,7 @@ class RememberRequest(BaseModel):
     attribute: MemoryAttribute = "free"
     date_anchor: str | None = None
     recurrence: MemoryRecurrence = "none"
-    lead_days: Annotated[int, Field(ge=0)] = 7
+    lead_days: Annotated[int, Field(ge=0, le=MAX_MEMORY_LEAD_DAYS)] = 7
 
 
 class UpdateRequest(RememberRequest):
