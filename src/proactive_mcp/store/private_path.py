@@ -65,7 +65,6 @@ def _is_posix_backend(module: ModuleType) -> TypeGuard[_PosixBackend]:
             "prepare_private_database_file",
             "private_initialization_lock",
             "enforce_private_sidecars",
-            "private_database_guard",
         )
     )
 
@@ -78,6 +77,7 @@ def _is_windows_backend(module: ModuleType) -> TypeGuard[_WindowsBackend]:
             "prepare_private_database_file",
             "private_initialization_lock",
             "enforce_private_sidecars",
+            "private_database_guard",
         )
     )
 

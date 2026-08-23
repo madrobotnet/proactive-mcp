@@ -41,6 +41,7 @@ SE_FILE_OBJECT: Final[int] = 1
 SET_ACCESS: Final[int] = 2
 SUB_CONTAINERS_AND_OBJECTS_INHERIT: Final[int] = 3
 TOKEN_QUERY: Final[int] = 0x0008
+TOKEN_OWNER: Final[int] = 4
 TOKEN_USER: Final[int] = 1
 TRUSTEE_IS_SID: Final[int] = 0
 TRUSTEE_IS_UNKNOWN: Final[int] = 0
@@ -71,6 +72,19 @@ class TokenUser(ctypes.Structure):
         """Initialize the typed ctypes field."""
         super().__init__()
         self.user = _SidAndAttributes()
+
+
+@final
+class TokenOwner(ctypes.Structure):
+    """Represent the TokenOwner result from GetTokenInformation."""
+
+    owner: int | None
+    _fields_ = [("owner", ctypes.c_void_p)]
+
+    def __init__(self) -> None:
+        """Initialize the typed ctypes field."""
+        super().__init__()
+        self.owner = None
 
 
 @final
