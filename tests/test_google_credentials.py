@@ -9,6 +9,7 @@ import pytest
 from google.oauth2.credentials import Credentials
 from keyring.errors import NoKeyringError, PasswordDeleteError
 
+import proactive_mcp.sources.credentials as credentials_module
 from proactive_mcp.sources.credentials import (
     GOOGLE_READONLY_SCOPES,
     CredentialStorageError,
@@ -28,6 +29,7 @@ _TEST_CLIENT_SECRET = "test-client" + "-secret"
 _EPOCH_A = "epoch" + "-a"
 _EPOCH_B = "epoch" + "-b"
 _TOMBSTONED = "must-not" + "-return"
+_LEGACY_KEYRING_KEY = ("proactive-mcp", "google-readonly-oauth")
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +115,74 @@ def test_credentials_are_isolated_by_state_root(tmp_path: Path) -> None:
     remaining = second.load()
     assert remaining is not None
     assert remaining.refresh_token == second_refresh
+
+
+def test_default_state_migrates_previous_global_keyring_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = tmp_path / "default-state"
+    monkeypatch.setattr(credentials_module, "_DEFAULT_STATE_DIRECTORY", state)
+    keyring = FakeKeyring()
+    legacy = _credentials().to_json()
+    keyring.passwords[_LEGACY_KEYRING_KEY] = legacy
+    store = CredentialStore(state, keyring=keyring)
+
+    loaded = store.load()
+    loaded_again = CredentialStore(state, keyring=keyring).load()
+
+    assert loaded is not None
+    assert loaded.refresh_token == _TEST_REFRESH
+    assert loaded_again is not None
+    assert loaded_again.refresh_token == _TEST_REFRESH
+    assert keyring.passwords[_LEGACY_KEYRING_KEY] != legacy
+    assert _TEST_REFRESH not in keyring.passwords[_LEGACY_KEYRING_KEY]
+    assert ("proactive-mcp", store.keyring_username) in keyring.passwords
+    assert store.state_path.exists()
+
+
+def test_custom_state_does_not_claim_ambiguous_global_keyring_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        credentials_module,
+        "_DEFAULT_STATE_DIRECTORY",
+        tmp_path / "default-state",
+    )
+    keyring = FakeKeyring()
+    legacy = _credentials().to_json()
+    keyring.passwords[_LEGACY_KEYRING_KEY] = legacy
+    custom = CredentialStore(tmp_path / "custom-state", keyring=keyring)
+
+    loaded = custom.load()
+
+    assert loaded is None
+    assert keyring.passwords[_LEGACY_KEYRING_KEY] == legacy
+    assert ("proactive-mcp", custom.keyring_username) not in keyring.passwords
+
+
+def test_default_state_rejects_overbroad_global_keyring_credential(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = tmp_path / "default-state"
+    monkeypatch.setattr(credentials_module, "_DEFAULT_STATE_DIRECTORY", state)
+    keyring = FakeKeyring()
+    legacy = _credentials(
+        scopes=(
+            *GOOGLE_READONLY_SCOPES,
+            "https://www.googleapis.com/auth/gmail.modify",
+        )
+    ).to_json()
+    keyring.passwords[_LEGACY_KEYRING_KEY] = legacy
+    store = CredentialStore(state, keyring=keyring)
+
+    loaded = store.load()
+
+    assert loaded is None
+    assert keyring.passwords == {_LEGACY_KEYRING_KEY: legacy}
+    assert not store.state_path.exists()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="0600 fallback is POSIX-only")
