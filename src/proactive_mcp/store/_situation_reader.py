@@ -117,6 +117,17 @@ class SituationReader:
         )
         return self._ints[0] if self._ints else 0
 
+    def count_deliveries(self) -> int:
+        """Return the immutable delivery-event row count."""
+        self._ints.clear()
+        _ = self._connection.execute(
+            """
+            SELECT _proactive_capture_situation_int(COUNT(*))
+            FROM situation_deliveries
+            """
+        )
+        return self._ints[0] if self._ints else 0
+
     def _capture(
         self,
         sql: str,

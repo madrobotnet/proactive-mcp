@@ -57,6 +57,7 @@ async def test_get_status_over_stdio(tmp_path: Path) -> None:
     assert status.fallback.failed == 0
     assert status.fallback.failure_codes == ()
     assert status.budget.daily_budget == 4
+    assert status.deliveries.total == 0
     assert status.overall == "degraded"
     assert status.warnings
     assert "all-clear" not in status.model_dump_json().lower()
@@ -170,6 +171,48 @@ def test_status_keeps_a_sixty_minute_override_daemon_running_at_sixteen_minutes(
     assert status.daemon.liveness == "running"
     assert status.daemon.status == "running"
     assert all("heartbeat is stale" not in warning for warning in status.warnings)
+
+
+def test_status_counts_critical_deliveries_that_budget_used_ignores(
+    tmp_path: Path,
+) -> None:
+    # Given: a fresh installation with a pinned UTC budget day.
+    paths = ProactivePaths.for_database(tmp_path / "proactive.db")
+    _ = paths.config.write_text(
+        '[attention]\ntimezone = "UTC"\n',
+        encoding="utf-8",
+    )
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with Store(paths.database, clock=clock) as store:
+        empty = status_response(store, clock, paths)
+
+        # When: a critical claim is recorded, then a routine claim crosses midnight.
+        _ = store.situations.upsert_detections(
+            (pending_detection("critical", "critical"),)
+        )
+        _ = store.situations.mark_delivered((store.situations.list_situations()[0].id,))
+        after_critical = status_response(store, clock, paths)
+        _ = store.situations.upsert_detections((pending_detection("routine"),))
+        routine_id = next(
+            item.id
+            for item in store.situations.list_situations()
+            if item.state == "pending"
+        )
+        _ = store.situations.mark_delivered((routine_id,))
+        after_routine = status_response(store, clock, paths)
+        clock.advance(timedelta(days=1))
+        after_midnight = status_response(store, clock, paths)
+
+    # Then: deliveries.total tracks every immutable event; budget.used does not.
+    assert empty.deliveries.model_dump() == {"total": 0}
+    assert empty.budget.used == 0
+    assert after_critical.deliveries.model_dump() == {"total": 1}
+    assert after_critical.budget.used == 0
+    assert after_routine.deliveries.model_dump() == {"total": 2}
+    assert after_routine.budget.used == 1
+    assert after_midnight.deliveries.model_dump() == {"total": 2}
+    assert after_midnight.budget.used == 0
+    assert UNTRUSTED_SUBJECT not in after_midnight.model_dump_json()
 
 
 def test_status_never_started_falls_back_to_configured_cadence(

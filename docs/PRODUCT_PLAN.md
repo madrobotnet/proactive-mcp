@@ -12,7 +12,7 @@
 
 **proactive-mcp는 모든 AI 에이전트에게 "먼저 말 걸기" 능력을 부여하는 로컬 MCP 서버다.**
 
-AI 에이전트는 기본적으로 요청-응답 구조라서 사용자가 묻기 전에는 돕지 못한다. proactive-mcp는 사용자의 Gmail·Google Calendar를 백그라운드에서 감시하고, 에이전트와의 대화에서 저장된 메모리를 근거로, **지금 사용자에게 알릴 가치가 있는 상황(Situation)** 을 감지한다. 감지된 상황은 사용자가 이미 쓰고 있는 에이전트의 자체 채널(Cursor 대화창, Hermes Home Channel, Telegram 봇 등)을 통해 선제적으로 전달된다.
+AI 에이전트는 기본적으로 요청-응답 구조라서 사용자가 묻기 전에는 돕지 못한다. proactive-mcp는 사용자의 Gmail·Google Calendar를 백그라운드에서 감시하고, 에이전트와의 대화에서 저장된 메모리를 근거로, **지금 사용자에게 알릴 가치가 있는 상황(Situation)** 을 감지한다. 감지된 상황은 사용자가 이미 쓰고 있는 에이전트의 자체 채널(CLI 대화, Hermes Home Channel, Telegram 봇 등)을 통해 선제적으로 전달된다.
 
 핵심 원칙:
 
@@ -59,8 +59,8 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 flowchart LR
     subgraph agents [에이전트들]
         A1[Hermes + Native Cron]
-        A2[Cursor + Automations]
-        A3[Claude Desktop 등]
+        A2[Grok / Codex + OS Scheduler]
+        A3[Claude Code Desktop]
     end
     subgraph host [사용자 머신]
         subgraph pm [proactive-mcp]
@@ -90,7 +90,7 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 | `proactive-mcp serve` | 에이전트가 stdio로 spawn (다중 인스턴스 허용) | MCP 도구 표면 제공. DB 읽기/쓰기 |
 | `proactive-mcp daemon` | 상시 실행 (systemd / Windows 작업 스케줄러 / 수동) | 주기적 Google sync, Situation 평가, 폴백 알림 발송 |
 | `proactive-mcp setup` | 1회성 CLI | Google OAuth 연동, 초기 설정 |
-| `proactive-mcp status` | 1회성 CLI | 연결·신선도·데몬 상태 진단 |
+| `proactive-mcp status` | 1회성 CLI | 연결·신선도·데몬 상태·누적 전달 수 진단 |
 
 **데몬 없는 degraded 모드:** 데몬이 꺼져 있어도 `proactive_check` 호출 시 마지막 sync가 오래되었으면 인라인으로 lazy sync 후 평가한다. 이 경우 폴백 알림은 동작하지 않으며 `get_status`가 이를 명시한다. 데몬은 권장 사항이지 필수가 아니다.
 
@@ -118,7 +118,7 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 | `remember` | 메모리 저장 | `kind, content, entity?, date_anchor?, recurrence?` |
 | `recall` | 메모리 검색 | `query, kind?` → 메모리 배열 |
 | `forget` | 메모리 삭제(아카이브) | `id` |
-| `get_status` | 연결 상태, 소스 신선도, 데몬 상태, 예산 사용량 | 입력 없음 → 상태 객체 |
+| `get_status` | 연결 상태, 소스 신선도, 데몬 상태, 예산 사용량, 누적 전달 수 | 입력 없음 → 상태 객체 |
 
 메모리 도구의 시그니처는 M2.5부터 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md)가 정본이다 — `remember`/`recall` 확장과 `update`/`list_entities` 추가 (2026-08-21 개정, §8 참조).
 
@@ -138,7 +138,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 
 에이전트 플랫폼 스케줄러가 없어도, 사용자가 에이전트에게 말을 걸어 도구를 호출하는 순간이 전달 기회다. 이를 위해 `proactive_check` 도구 설명에 "세션 시작 시 1회 호출 권장"을 명시하고, 연동 레시피(M5)에서 각 플랫폼의 룰/시스템 프롬프트에 이 관례를 넣는 방법을 문서화한다.
 
-### 5.3 플랫폼 전달 매트릭스 (2026-08-21 Owner 조사, M5 정본)
+### 5.3 플랫폼 전달 매트릭스 (2026-08-22 Owner 개정, M5 정본)
 
 "먼저 말 걸기"의 성립 조건은 MCP 지원 여부가 아니라 다음 둘이다.
 
@@ -147,15 +147,17 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 
 | 플랫폼 | stdio 로컬 | 스케줄 트리거 | 판정 |
 |---|---|---|---|
-| Cursor | O | Automations | M5 1순위 |
-| Grok CLI | O — `grok mcp add` 또는 `~/.grok/config.toml`. Cursor(`.cursor/mcp.json`)·Claude(`~/.claude.json`) 설정을 자동 로드하므로 추가 설정이 사실상 0 | 없음 → OS 스케줄러 | M5 1순위 |
+| Grok CLI | O — `grok mcp add` 또는 `~/.grok/config.toml`. `~/.claude.json` 설정도 자동 로드 | 없음 → OS 스케줄러 | M5 1순위 |
 | Codex CLI | O — `~/.codex/config.toml` | 없음 → OS 스케줄러 | M5 1순위 |
 | Hermes | O | Native Cron | Owner 전용 검증 |
 | Claude Code Desktop | O | 로컬 예약 작업(최소 간격 1분, 로컬 MCP 접근 가능) | 레시피 문서화만 (Owner 미설치, 실증 제외) |
 | ChatGPT 웹/데스크톱 | X — 웹은 원격 HTTPS 커넥터만. 데스크톱은 stdio를 표방하나 도구가 채팅 세션에 노출되지 않는 미해결 버그([openai/codex#38162](https://github.com/openai/codex/issues/38162)) | Tasks (클라우드 실행) | **V2 HTTP transport 대기** |
 | Claude 클라우드 Routines | X — 로컬 파일·프로세스 접근 없음 | O | **V2 HTTP transport 대기** |
+| OpenClaw | V2에서 조사·설계 | V2에서 조사·설계 | **V2 지원 대상** (#20 Owner 결정) |
 
 주의: 같은 "Claude"라도 Desktop 로컬 예약 작업(로컬 MCP 접근 가능)과 클라우드 Routines(불가)는 다르다. 연동 문서에서 반드시 구분한다. ChatGPT 웹·Claude 클라우드 Routines 등 원격 실행 에이전트 지원은 V2 HTTP transport의 대표 동기다. **V2 전까지 이 두 플랫폼을 M5 대상으로 삼지 않는다** — 우리 코드가 아닌 플랫폼 제약에 시간을 쓰게 된다.
+
+**2026-08-22 Owner 결정 (#20):** Cursor Automations는 cloud agent에서 실행되어 V1 로컬 stdio 서버에 닿을 수 없으므로 지원 목록에서 제거한다. 이를 우회하기 위한 HTTP transport를 M5에 앞당기지 않는다. 대신 OpenClaw를 V2 지원 대상으로 추가하며, 구체 transport·스케줄 연동은 V2 기획에서 조사·확정한다.
 
 ## 6. Situation 카탈로그 v1
 
@@ -258,12 +260,12 @@ CREATE TABLE memory_items (
 | **M2.5 메모리 모델 v2** | entity 테이블·별칭, 1차 카테고리 고정 enum + 하위 자유 경로 계층, 중복 병합과 모순 보존, `update`/`list_entities` 도구 — 설계 정본 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md) | 해당 문서 §8 완료 기준 충족 |
 | **M3 Situation 엔진** | 3종 감지기, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 상태 머신 | fake clock 결정론 테스트로 3종 감지·정책 검증 |
 | **M4 전달** | `proactive_check`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
-| **M5 연동 레시피** | §5.3 매트릭스 1순위(Cursor Automations·Grok CLI·Codex CLI·Hermes Cron) 연동 문서와 룰 템플릿, OS 스케줄러 등록 예시(cron·Windows 작업 스케줄러), Claude Code Desktop은 문서만 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 — 기본 조합은 Owner 머신의 Cursor + (Grok CLI 또는 Codex CLI) |
+| **M5 연동 레시피** | §5.3 매트릭스 1순위(Grok CLI·Codex CLI·Hermes Cron) 연동 문서와 룰 템플릿, OS 스케줄러 등록 예시(cron·Windows 작업 스케줄러), Claude Code Desktop은 문서만 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 — 기본 조합은 Owner 머신의 Grok CLI + Codex CLI |
 | **M6 클로즈드 알파 릴리스** | README 정비, GCP OAuth 설정 가이드, wheel 빌드와 테스터 배포 절차 (PyPI 미사용) | 새 환경에서 clean install → 온보딩 완료까지 15분 이내, 지정 테스터에게 전달 가능한 상태 |
 
 **M6 이후 — 공개 전환 (Owner 결정):** 지정 테스터의 1차 검증에서 문제가 없으면 저장소를 공개로 전환하고 PyPI `proactive-mcp` 0.1.0을 게시하며 홍보를 시작한다. PyPI 게시는 저장소가 private이어도 패키지를 공개하는 행위이므로, 반드시 공개 전환 시점에 함께 수행한다.
 
-2단계(V2, 별도 기획): 쓰기 액션(approval-first), Google Tasks·Docs, Telegram 채널, HTTP transport(원격 데몬 — ChatGPT 웹·Claude 클라우드 Routines 등 원격 실행 에이전트 지원의 전제, §5.3), 다중 계정.
+2단계(V2, 별도 기획): 쓰기 액션(approval-first), Google Tasks·Docs, Telegram 채널, HTTP transport(원격 데몬 — ChatGPT 웹·Claude 클라우드 Routines 등 원격 실행 에이전트 지원의 전제, §5.3), OpenClaw 지원, 다중 계정.
 
 ## 11. 테스트 전략
 

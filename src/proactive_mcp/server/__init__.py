@@ -79,7 +79,8 @@ def create_server() -> MCPServer[None]:
         name="get_status",
         description=(
             "Report database, Google source freshness, daemon liveness, OS "
-            "notification fallback outcomes, and today's delivery budget."
+            "notification fallback outcomes, today's delivery budget, and "
+            "the cumulative delivery count."
         ),
     )
     _ = tool(get_status)

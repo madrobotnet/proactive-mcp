@@ -1,4 +1,4 @@
-"""The get_status document: database, sources, daemon, fallback, and budget."""
+"""Status document: database, sources, daemon, fallback, budget, and deliveries."""
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 __all__ = [
     "DaemonStatusResponse",
     "DatabaseStatusResponse",
+    "DeliveriesStatusResponse",
     "FallbackStatusResponse",
     "StatusResponse",
     "build_status",
@@ -95,6 +96,14 @@ class FallbackStatusResponse(BaseModel):
     failure_codes: tuple[FallbackFailureCode, ...]
 
 
+class DeliveriesStatusResponse(BaseModel):
+    """Cumulative immutable delivery-event count, including critical claims."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    total: int
+
+
 class StatusResponse(BaseModel):
     """Typed status result shared by the CLI and the get_status tool."""
 
@@ -106,6 +115,7 @@ class StatusResponse(BaseModel):
     daemon: DaemonStatusResponse
     fallback: FallbackStatusResponse
     budget: BudgetResponse
+    deliveries: DeliveriesStatusResponse
     warnings: tuple[str, ...]
 
 
@@ -156,6 +166,7 @@ def status_response(
         daemon=_daemon_response(daemon),
         fallback=fallback,
         budget=budget_response(runtime.attention.budget_usage(now)),
+        deliveries=DeliveriesStatusResponse(total=store.situations.count_deliveries()),
         warnings=warnings,
     )
 
