@@ -4,12 +4,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from proactive_mcp.situations import SituationEngine
+from proactive_mcp.sources.calendar import CalendarReadResult
 from proactive_mcp.sources.gmail import (
     GMAIL_PROFILE_URL,
     GMAIL_THREADS_URL,
     GmailAdapter,
     GmailHttpResponse,
 )
+from proactive_mcp.sources.google_sync import GoogleReadDependencies, GoogleSyncService
+from proactive_mcp.store import Store
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -29,6 +33,23 @@ class FixedClock:
 
     def now(self) -> datetime:
         return self._now
+
+
+class FakeCalendarReader:
+    def list_events(self) -> CalendarReadResult:
+        return CalendarReadResult(
+            events=(),
+            fetched_at=NOW.isoformat(),
+            window_start=NOW.isoformat(),
+            window_end=NOW.isoformat(),
+            page_count=1,
+            skipped_count=0,
+        )
+
+
+class FakeCredentials:
+    def delete(self) -> None:
+        raise AssertionError
 
 
 class FakeGmailTransport:
@@ -90,3 +111,56 @@ def test_neutral_labels_are_ambiguous_and_not_resolution_safe() -> None:
     assert snapshot.degradation_reasons == ("direction_metadata_ambiguous",)
     assert THREAD_ID in result.resolution_excluded_thread_ids
     assert THREAD_ID not in result.resolution_safe_thread_ids
+
+
+def test_partial_thread_warning_does_not_degrade_successful_source_read(
+    tmp_path: Path,
+) -> None:
+    # Given: Gmail successfully returns one neutral-label thread whose projection
+    # is warning-bearing and unsafe for resolution.
+    thread_url = f"{GMAIL_THREADS_URL}/{THREAD_ID}"
+    starred_latest = _fixture("thread_deadline.json").replace(
+        b'"labelIds": ["INBOX"]',
+        b'"labelIds": ["STARRED"]',
+    )
+    transport = FakeGmailTransport(
+        {
+            GMAIL_PROFILE_URL: {None: (200, _fixture("profile.json"))},
+            GMAIL_THREADS_URL: {None: (200, _fixture("threads_deadline.json"))},
+            thread_url: {None: (200, starred_latest)},
+        }
+    )
+    clock: Clock = FixedClock(NOW)
+
+    with Store(tmp_path / "proactive.db") as store:
+        service = GoogleSyncService(
+            GoogleReadDependencies(
+                store=store,
+                gmail=GmailAdapter(transport, clock),
+                calendar=FakeCalendarReader(),
+                credentials=FakeCredentials(),
+            )
+        )
+
+        # When: the same result crosses the legacy smoke/sync surface and the
+        # daemon's evaluation preparation and persistence path.
+        smoke = service.read_smoke(enabled=True)
+        prepared = service.prepare_evaluation()
+        evaluated = SituationEngine(store, clock, UTC).evaluate(prepared)
+        sync_state = store.get_source_sync("gmail")
+        generation_state = store.source_generation_state("gmail")
+
+    # Then: provider freshness is successful, while the warning and unsafe
+    # resolution scope remain explicit through evaluation.
+    assert smoke.gmail_count == 1
+    assert smoke.gmail_error_code is None
+    assert sync_state.last_error_code is None
+    assert sync_state.last_success_at is not None
+    assert prepared.gmail_threads is not None
+    assert prepared.gmail_threads.complete is True
+    assert prepared.gmail_threads.warning_codes == ("direction_metadata_ambiguous",)
+    assert prepared.gmail_threads.resolution_scope_ids == frozenset()
+    assert prepared.gmail_threads.resolution_excluded_ids == frozenset({THREAD_ID})
+    assert evaluated.gmail_freshness.status == "ok"
+    assert "gmail: direction_metadata_ambiguous" in evaluated.warnings
+    assert generation_state.status == "complete"
