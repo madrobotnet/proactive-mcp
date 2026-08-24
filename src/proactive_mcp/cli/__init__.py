@@ -121,7 +121,6 @@ def run_setup(arguments: _CliArguments) -> None:
             headless=arguments.headless,
         ),
     )
-    _ = sys.stdout.write("Google read-only sources configured.\n")
 
 
 def run_google_smoke(arguments: _CliArguments) -> None:
