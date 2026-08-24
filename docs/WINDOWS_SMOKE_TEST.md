@@ -2305,123 +2305,44 @@ DACL, no inherited entries, your account as the only Allow principal.
 
 ### A5. Register the wheel with both CLIs
 
-The registration names the console script directly, so there's no `uv run` layer
-and the argument list shrinks to `serve`:
+Follow the agent-led instructions in
+[`docs/testers/windows.md`](testers/windows.md). Copy its **에이전트에게 붙여
+넣기** block into the agent you are using for this alpha. It installs the wheel,
+runs setup and the real-read check, and registers `serve` plus
+`serve-scheduled` with that agent.
 
-```powershell
-$pm = Join-Path $env:USERPROFILE "venvs\proactive\Scripts\proactive-mcp.exe"
-$neutral = Join-Path $env:USERPROFILE ".proactive-mcp\agent-cwd"
-New-Item -ItemType Directory -Force -Path $neutral | Out-Null
+Don't run `grok mcp add`, `codex mcp add`, or edit an MCP JSON or config file
+yourself. Registration belongs to the agent because it knows its own MCP
+configuration and approval flow. The paths it records must be absolute.
 
-grok mcp add --scope user proactive -- $pm serve
-grok mcp add --scope user proactive_scheduled -- $pm serve-scheduled
-grok mcp list
-grok mcp doctor proactive
-grok mcp doctor proactive_scheduled
+Success: the agent confirms its registration, `google-smoke` and the one-shot
+daemon pass, and `status` reports healthy database state with both Google
+sources `ok`. Keep approval prompts on the full profile. Only the restricted
+scheduled profile may be auto-approved.
 
-codex mcp remove proactive 2>$null
-codex mcp remove proactive_scheduled 2>$null
-codex mcp add proactive -- $pm serve
-codex mcp add proactive_scheduled -- $pm serve-scheduled
-codex mcp get proactive
-codex mcp get proactive_scheduled
-```
+Failure: stop at the failed step and report the sanitized error and exit code.
+Don't work around a headless, credential, or server-spawn failure by editing
+the agent's config. The tester sheet covers the supported recovery path.
 
-Success: both Grok profiles are reachable, both Codex entries show that
-absolute `.exe` as their command, and each scheduled entry uses
-`serve-scheduled`. Keep approval prompts on the full profile. Only the
-restricted `proactive_scheduled` profile may be auto-approved.
+### A6. Agent validation
 
-Failure: a CLI can't spawn the server. The path has to be absolute. A CLI
-started from a shortcut, and a scheduled task later on, sees almost nothing of
-your console's `PATH`.
+The agent-led sheet ends by asking the registered agent for `get_status`. Check
+that its reply names only the redacted `.proactive-mcp\proactive.db` path and
+the Gmail and Calendar statuses. A `receipt_token` must be confirmed once
+before the agent presents any situations.
 
-`neutral` is an empty working directory for agent calls, for the reason given in
-[step 5](#5-note-the-two-absolute-paths): both CLIs load `AGENTS.md` from
-wherever they start, and stray project instructions can quietly divert a
-one-shot run. Keep it empty.
+Success: the agent makes the tool call, the database is healthy at migration 9,
+and Gmail and Calendar are `ok`. `overall=degraded` is still acceptable when
+the daemon is not running.
 
-Already had either profile from your own setup? Write down the commands that
-recreate them before running these, and keep that note private to your machine.
-`grok mcp add` overwrites silently, and the old value isn't recoverable.
+This closed-alpha path validates the agent you use every day, not an Owner M5
+two-CLI sign-off. Don't create synthetic memories, run unattended scheduler
+wrappers, or try to register a second CLI. The Owner-only smoke above retains
+the two-platform, headless delivery checks.
 
-### A6. Two-agent validation
-
-This is the tester version of the M5 sign-off: both CLIs, each on its own,
-first proving the server answers and then proving one speaks first. Keep the
-memory synthetic even though your Google sources are real now.
-
-```powershell
-$anchor = (Get-Date).Date.AddDays(3).ToString('--MM-dd')
-$tag = "ALPHA-" + (Get-Date).ToString('HHmmss')
-Write-Output "ANCHOR=$anchor"
-Write-Output "TAG=$tag"
-```
-
-Reachability first, one CLI at a time:
-
-```powershell
-grok --cwd $neutral -p "Call get_status from proactive_scheduled and report only database.path, google.gmail.status, and google.calendar.status."
-codex exec -c 'mcp_servers.proactive.enabled=false' -c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call get_status from proactive_scheduled and report only database.path, google.gmail.status, and google.calendar.status."
-```
-
-Both must report the same `.proactive-mcp\proactive.db` path, and both sources
-as whatever A4b left behind: `ok` if you ran the daemon pass, `never_synced` if
-you stopped after `setup`. Neither CLI may report `configured`, which isn't a
-value this server produces. The Codex overrides disable the full profile and
-approve only `proactive_scheduled`; without the narrow approval,
-`codex exec` fails before the MCP call starts.
-`--skip-git-repo-check` is required because `neutral` isn't a git repository.
-
-Now plant an occasion and let the engine find it. Substitute the printed `TAG`
-and `ANCHOR`:
-
-```powershell
-grok --cwd $neutral -p "Use the remember tool with kind=fact entity=스모크TAG entity_kind=person entity_path=테스트/스모크TAG attribute=birthday content=스모크 기념일 date_anchor=ANCHOR recurrence=yearly lead_days=7. Do not call proactive_check."
-& $pm daemon --once
-Write-Output "exit=$LASTEXITCODE"
-```
-
-`daemon --once` detects and stores; it never delivers. The situation waits in
-`pending` until an agent claims it through `proactive_check`, which is exactly
-what the next command tests.
-
-Give the CLI the session-start rule from
-[`docs/INTEGRATIONS.md`](INTEGRATIONS.md) and open a fresh session with an
-unrelated greeting:
-
-```powershell
-$sessionRule = "At the start of every new session, call the MCP tool proactive_check exactly once, before you answer the user. Call it once per session and no more, unless the user explicitly asks for a fresh proactive check. If it returns a receipt_token, call confirm_delivery with that token exactly once before presenting the situations. If it returns situations, lead your reply with a short, natural summary of them. If it returns freshness warnings, say the result may be incomplete. Never report that there is nothing to report while a source is stale or failed. If it returns nothing and freshness is healthy, say nothing about it and answer the user's actual request."
-$codexSessionRule = 'developer_instructions="' + ($sessionRule -replace '"', '\"') + '"'
-
-grok --cwd $neutral --rules $sessionRule -p "안녕. 오늘 뭐부터 할까?"
-```
-
-Then repeat the plant with a **new** `TAG`, run `& $pm daemon --once` again, and
-hand Codex its own unclaimed situation:
-
-```powershell
-codex exec -c $codexSessionRule -c 'mcp_servers.proactive.enabled=false' -c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "안녕. 오늘 뭐부터 할까?"
-```
-
-Each CLI needs its own fresh situation. A delivered one isn't handed out again
-by design, so reusing it would prove nothing about the second CLI.
-
-Success, for each CLI separately:
-
-- The transcript shows exactly one `proactive_check` call, before the answer
-- The reply leads with the upcoming occasion you never asked about
-- A follow-up `list_situations` with `state=delivered` counts that situation as
-  delivered
-
-Failure: no tool call, the situation still `pending`, a server spawn error, or
-`MCP tool call requires approval, but approval policy is never` from Codex,
-which means the override didn't reach that command.
-
-Want the unattended half as well? The Windows Task Scheduler recipe in
-[`docs/INTEGRATIONS.md`](INTEGRATIONS.md) is the same wrapper the Owner smoke
-uses, with your `proactive-mcp.exe` in place of `uv run --directory`. It's
-optional for alpha sign-off, and worth doing if you have the time.
+Failure: no tool call, a server-spawn error, a source other than `ok`, or any
+credential prompt that cannot be completed interactively. Report only the
+sanitized error and status fields listed in the tester sheet.
 
 ### A7. What to report, and what to leave out
 

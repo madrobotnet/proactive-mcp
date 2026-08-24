@@ -156,7 +156,8 @@ does not provide an independent transit-integrity check.
 One or two testers should instead be told to bring their own OAuth client,
 following [`SETUP_GOOGLE.md`](SETUP_GOOGLE.md) from Step 1. That's how the new
 OAuth onboarding guide gets validated rather than bypassed. Those testers get
-the wheel and digest, but no JSON.
+the wheel and digest, but no JSON. Send them `docs/SETUP_GOOGLE.md` alongside
+the matching OS sheet so their agent has the guide without repository access.
 
 **The message itself.** Tell the tester the wheel filename, the commit you
 built from, the target Python and uv versions, which separate channel carries
@@ -165,92 +166,53 @@ report back. Do not repeat the digest on the wheel channel. Keep it short. §12
 sets the bar at clean install to finished onboarding in fifteen minutes, and a
 wall of text is the fastest way to miss it.
 
-## 6. Tester: clean install
+## 6. Tester handoff sheet
 
-Paste this section to the tester. It needs no repository access, no `git`, and no package index.
+Privately deliver the wheel and the exact matching sheet from
+`docs/testers/windows.md`, `docs/testers/linux.md`, or `docs/testers/macos.md`.
+The sheet is delivered alongside the wheel as a separate document. It is not
+packaged into the wheel. Send the wheel checksum over a separate authenticated
+channel, and send the Owner OAuth client JSON as its own separate message.
+BYO testers receive no Owner JSON. Send them `docs/SETUP_GOOGLE.md` alongside
+the matching OS sheet, outside the wheel, so their agent can follow the guide
+while creating and placing their own client JSON.
 
-Prerequisites are Python ≥3.11 and [uv](https://docs.astral.sh/uv/). Verify the file you received before you install it:
+The tester opens their existing agent and pastes that sheet's single text block
+into the agent. They do not paste shell or PowerShell into a terminal. They do
+not need a repository, `git`, a package index, `mcp add`, or manual MCP JSON.
+The agent carries out the OS-specific handoff: checksum verification, Python and
+uv checks, virtual environment creation, wheel installation, OAuth JSON
+placement and permissions, MCP registration, setup, smoke checks,
+`daemon --once`, and status verification.
 
-```bash
-cd /path/to/downloads
-sha256sum proactive_mcp-<version>-py3-none-any.whl
-```
+If the checksum differs, the agent stops before installation and reports the
+mismatch. The expected pre-setup status is `"overall":"degraded"` with sources
+`not_configured`. The sheet directs the agent to use headless setup where the
+machine has no browser.
 
-Compare that against the digest the Owner sent separately. If they differ, stop and say so; don't install it.
+## 7. Tester report
 
-Create a dedicated virtual environment and install the wheel into it. A dedicated venv is what makes the rollback in section 8 trivial.
-
-```bash
-uv venv --python 3.11 ~/venvs/proactive
-uv pip install --python ~/venvs/proactive/bin/python \
-  /path/to/proactive_mcp-<version>-py3-none-any.whl
-```
-
-The installed console script lives at `~/venvs/proactive/bin/proactive-mcp` (Windows: `%USERPROFILE%\venvs\proactive\Scripts\proactive-mcp.exe`). Use that absolute path everywhere. Schedulers and agent config files get a minimal environment and can't expand `~` or find things on `PATH`.
-
-## 7. Tester: verify the install
-
-Five commands, and all five must exit `0`. Run them before touching any Google credential, because they prove the package landed correctly and separate packaging problems from OAuth problems.
-
-```bash
-BIN=~/venvs/proactive/bin/proactive-mcp
-for cmd in "--help" "setup --help" "status --help" "serve --help" "daemon --help"; do
-  $BIN $cmd >/dev/null 2>&1
-  echo "$cmd -> $?"
-done
-```
-
-Every line should end in `-> 0`. Confirm the version too:
-
-```bash
-~/venvs/proactive/bin/python -c \
-  "import importlib.metadata as m; print(m.version('proactive-mcp'))"
-```
-
-Then the first real run. `status` prints JSON and works before any Google setup:
-
-```bash
-$BIN status
-```
-
-On a fresh machine it reports `"overall":"degraded"` with sources `not_configured`. That's the expected starting state, not a failure. From here, place the OAuth client JSON as instructed, run `$BIN setup` (add `--headless` on a box with no browser), and register the server with your agent following [`INTEGRATIONS.md`](INTEGRATIONS.md). Wheel installs skip `uv run` and `--directory` entirely: wherever that guide says `uv run --directory <checkout> proactive-mcp serve`, you run `~/venvs/proactive/bin/proactive-mcp serve`.
-
-Report back: whether all five help commands exited `0`, the version string, the
-redacted status fields listed in section 9 before and after `setup`, and how
-long the whole thing took. Do not send the complete JSON document.
+Within the fifteen-minute onboarding window, report success or failure, elapsed
+onboarding time, and the blocked step, if any. Include only the redacted status
+fields named in section 9 before and after setup. Do not send complete status
+JSON, OAuth JSON, tokens, database paths, PIDs, or timestamps. The agent must
+report a checksum mismatch without installing the wheel.
 
 ## 8. Rollback
 
-Rollback has two levels, and which one you want depends on whether the local database should survive.
+The tester asks their existing agent to roll back using the matching OS sheet.
+The agent first stops any watcher daemon or scheduled job, then deletes the
+stored credential and confirms that deletion succeeded. Only after successful
+credential deletion may it remove MCP registration, the state directory, the
+virtual environment, or the wheel installation. This order is mandatory because
+a keyring credential can outlive the state directory and appear to be a legacy
+credential on reinstall.
 
-**Uninstall the package, keep your data.** Removes the code and the console script, leaves `~/.proactive-mcp/` untouched, so reinstalling picks up where you left off.
-
-```bash
-uv pip uninstall --python ~/venvs/proactive/bin/python proactive-mcp
-```
-
-If you registered a watcher daemon or a scheduled job, stop and remove that first, otherwise the scheduler keeps firing at a script that no longer exists. Also remove the `proactive` entry from your agent's MCP config.
-
-**Full removal.** Remove the stored credential before deleting its authority
-marker. A keyring-backed credential lives outside the state directory, and
-deleting `~/.proactive-mcp/` first can make that stale keyring value look like a
-legacy credential on reinstall.
-
-```bash
-~/venvs/proactive/bin/python -c \
-  'from pathlib import Path; from proactive_mcp.sources.credentials import CredentialStore; CredentialStore(Path.home() / ".proactive-mcp").delete()'
-rm -rf ~/.proactive-mcp
-rm -rf ~/venvs/proactive
-```
-
-The credential-deletion command must exit `0` before you remove the state
-directory. If it reports unavailable storage, leave the state directory and
-its tombstone in place, revoke access in your Google Account permissions page,
-and report the failure to the Owner. Deleting the venv while leaving
-`~/.proactive-mcp/` in place is the useful middle ground when you want to
-reinstall a newer wheel against the same database.
-
-**Going back to a previous wheel.** Uninstall, then install the older `.whl` you kept. Migrations only move forward, so a database written by a newer build may not be readable by an older one. If you need to downgrade with data intact, copy `~/.proactive-mcp/` aside first and tell the Owner what you're doing.
+If credential storage is unavailable, the agent leaves the state directory and
+its tombstone in place, revokes access in Google Account permissions, and
+reports the failure to the Owner. For a downgrade, the agent uninstalls before
+installing the older wheel. Migrations only move forward, so it copies the state
+directory aside before a downgrade that must retain data.
 
 ## 9. Evidence capture
 
@@ -271,14 +233,13 @@ mkdir -p ~/alpha-records
 
 For each handoff, record the tester's name, the date, the wheel digest they got, which channel carried the wheel and which carried the JSON, whether they're on the Owner-client path or BYO, and the date access was revoked when the alpha ends.
 
-For each tester report, record the five help exit codes, the version string,
-and only these redacted status fields before and after setup: `overall`,
+For each tester report, record success or failure, elapsed onboarding time
+against the fifteen-minute bar from §12, and the blocked step, if any. Retain
+only these redacted status fields before and after setup: `overall`,
 `database.status`, `database.migration_version`, each Google source `status`
-and `error_code`, `daemon.status`, and warning strings. Do not retain or ask
-for `database.path`, PID, or timestamps. Also record elapsed onboarding time
-against the fifteen-minute bar from §12 and anything they got stuck on. The
-stuck points are the valuable part; they're what the onboarding docs get fixed
-from.
+and `error_code`, and warning strings. Do not retain or ask for
+`database.path`, PID, or timestamps. The blocked steps are the valuable part;
+they're what the onboarding docs get fixed from.
 
 ## Owner checklist
 
@@ -293,5 +254,5 @@ from.
 - [ ] OAuth client JSON sent as its own message, with placement, permissions, and no-commit warning
 - [ ] `git status` clean, no OAuth JSON anywhere in the tree
 - [ ] No PyPI publication, and no `uv publish` in the build history
-- [ ] Tester confirmed five help commands at exit `0` plus a `status` run
+- [ ] Tester report records success or failure, elapsed onboarding time, and any blocked step
 - [ ] Rollback steps delivered with the install steps, not after the tester asks

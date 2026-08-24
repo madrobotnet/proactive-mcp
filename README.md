@@ -15,10 +15,7 @@ A local-first MCP server that turns read-only signals and local memory into grou
 </div>
 
 > [!IMPORTANT]
-> **proactive-mcp is in closed alpha.** The package isn't on PyPI yet, so the
-> public-release commands below are written for launch day and don't work
-> today. What works right now is a source checkout or the private wheel in
-> [Closed-alpha testers](#closed-alpha-testers).
+> **proactive-mcp is in closed alpha.** The package isn't on PyPI yet, so the public package path below is written for launch day and doesn't work today. What works right now is a source checkout or the private wheel in [Closed-alpha testers](#closed-alpha-testers).
 
 ## Why proactive-mcp?
 
@@ -75,58 +72,23 @@ flowchart LR
 ### Public release path (not active yet)
 
 > [!WARNING]
-> These package-index commands start working only after the Owner approves the
-> public release. During the closed alpha they'll fail, by design, because
-> nothing is published to PyPI. Use one of the two paths below instead.
+> `uvx proactive-mcp` becomes available only after the Owner approves the public release. During the closed alpha it fails by design because nothing is published to PyPI.
 
-```bash
-uv tool install proactive-mcp
-proactive-mcp setup
-proactive-mcp daemon --once
-proactive-mcp status
+After public release, open the local agent you already use and paste this request:
+
+```text
+Install proactive-mcp with uvx, register it as a local stdio MCP server for this agent with absolute paths, complete its read-only Google setup, start the recommended watcher, and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md before changing configuration. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
 ```
 
-The expected first-run progression is:
+You approve the Google consent screen. The expected status progression is `not_configured`, then `never_synced`, then `ok` after the first successful read. For BYO Google OAuth details, see [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
 
-1. Before setup: both Google sources are `not_configured`.
-2. After OAuth setup: both sources are `never_synced`.
-3. After the first successful read: both sources become `ok`.
+### Source checkout
 
-For the Google Cloud console steps and exact OAuth file handling, follow [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
-
-### Install from source (works today)
-
-Repository collaborators can use this path now, and it stays useful after the public launch:
-
-```bash
-git clone https://github.com/madrobotnet/proactive-mcp.git
-cd proactive-mcp
-uv python install 3.11
-uv sync --locked
-uv run proactive-mcp --help
-uv run proactive-mcp setup
-uv run proactive-mcp daemon --once
-uv run proactive-mcp status
-```
-
-When following the remaining examples from a source checkout, read `proactive-mcp` as `uv run proactive-mcp`.
+Repository collaborators can ask their existing agent to install from its checkout and complete the same request. Give the agent the checkout's absolute path; it can follow the source-specific instructions in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). The public path uses the package through `uvx`; the alpha path uses the delivered artifact.
 
 ## Connect an agent
 
-For clients that use the common MCP server schema:
-
-```json
-{
-  "mcpServers": {
-    "proactive": {
-      "command": "proactive-mcp",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-Closed-alpha wheel users should replace `proactive-mcp` with the absolute path to the virtual environment binary. Source users should use the absolute `uv` command and repository path documented in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
+Your agent registers the local stdio MCP server, including the interactive `serve` profile and, where needed, the restricted `serve-scheduled` profile. Don't manually run an MCP add command or edit MCP JSON for the primary path. The exact host recipes, command shapes, and configuration examples are agent-facing references in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
 Integration recipes are available for:
 
@@ -153,34 +115,11 @@ This receipt rule keeps delivery history accurate across crashes, retries, and m
 Thank you for validating this path before public release.
 
 > [!TIP]
-> Start with the private handoff checklist in
-> [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md), then use
-> [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) for OAuth.
+> Receive the private wheel first, its SHA-256 checksum through a different authenticated channel, and, unless you are validating BYO, the OAuth client JSON in a separate private message. Do not install anything until the checksum matches.
 
-### Install the private wheel
+### Use your OS tester sheet
 
-The Owner sends each integrity- or credential-sensitive item separately:
-
-1. The wheel over an authenticated private channel.
-2. Its SHA-256 checksum through a different authenticated channel.
-3. The OAuth client JSON as a separate private message, unless you are validating the BYO flow.
-
-Verify the checksum before installation, then:
-
-```bash
-uv venv --python 3.11 ~/venvs/proactive
-uv pip install \
-  --python ~/venvs/proactive/bin/python \
-  ./proactive_mcp-0.1.0-py3-none-any.whl
-
-PROACTIVE="$HOME/venvs/proactive/bin/proactive-mcp"
-"$PROACTIVE" --help
-"$PROACTIVE" setup
-"$PROACTIVE" daemon --once
-"$PROACTIVE" status
-```
-
-Windows testers should use the PowerShell path in [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md).
+The Owner sends the OS tester sheet alongside the wheel. Open [`docs/testers/README.md`](docs/testers/README.md), choose your operating system, and paste exactly its one block into the agent you already use. The agent performs installation, MCP registration, and setup. You only handle the Google consent screen and report blocked steps. Private handoff, evidence, and rollback rules are in [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md).
 
 ### Alpha completion checklist
 
@@ -246,6 +185,7 @@ Python 3.11 or newer is required. Tests use fake clocks and local fixtures; norm
 | [`README.ko.md`](README.ko.md) | Korean README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth setup |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Grok, Codex, Hermes, Claude Desktop, and schedulers |
+| [`docs/testers/README.md`](docs/testers/README.md) | Closed-alpha OS tester sheets |
 | [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) | Private wheel build, handoff, evidence, and rollback |
 | [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Windows Owner and alpha-tester smoke paths |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | Memory model and tool contracts |

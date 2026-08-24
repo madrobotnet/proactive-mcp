@@ -4,7 +4,7 @@
 
 모든 AI 에이전트가 먼저 말을 걸 수 있게 합니다.
 
-읽기 전용 신호와 로컬 메모리에서 지금 알릴 가치가 있는 상황을 가려내, 이미 사용 중인 에이전트가 전달하도록 돕는 로컬 우선 MCP 서버입니다.
+읽기 전용 신호와 로컬 메모리에서 지금 알려야 할 상황만 골라, 이미 사용 중인 에이전트가 전달하게 하는 로컬 우선 MCP 서버입니다.
 
 <a href="README.md">English</a> · <strong>한국어</strong>
 
@@ -15,13 +15,13 @@
 </div>
 
 > [!IMPORTANT]
-> **proactive-mcp는 클로즈드 알파 단계입니다.** 아직 PyPI에 올라가 있지 않습니다. 아래 공개 배포 명령은 출시 시점을 위해 미리 적어 둔 것으로, 현재는 동작하지 않습니다. 지금 실제로 사용할 수 있는 경로는 소스 체크아웃과 [클로즈드 알파 테스터](#클로즈드-알파-테스터)의 비공개 wheel뿐입니다.
+> **proactive-mcp는 클로즈드 알파 단계입니다.** 아직 PyPI에 올라가 있지 않습니다. 아래 공개 패키지 경로는 출시 시점을 위해 미리 적어 둔 것으로, 현재는 동작하지 않습니다. 지금 실제로 사용할 수 있는 경로는 소스 체크아웃과 [클로즈드 알파 테스터](#클로즈드-알파-테스터)의 비공개 wheel뿐입니다.
 
 ## 왜 proactive-mcp인가
 
-AI 에이전트는 답하는 법은 알지만, 언제 먼저 말을 걸어야 하는지는 거의 모릅니다.
+AI 에이전트는 답하는 방법은 알지만, 언제 먼저 말을 걸어야 하는지는 거의 모릅니다.
 
-proactive-mcp는 이 빈틈을 채웁니다. 승인된 읽기 전용 소스를 백그라운드에서 확인하고 사용자가 의도적으로 저장한 메모리와 합친 뒤, 지금 알릴 가치가 있을 때만 구조화된 상황(Situation)을 만듭니다.
+proactive-mcp는 이 공백을 메웁니다. 승인된 읽기 전용 소스를 백그라운드에서 확인해 사용자가 의도적으로 저장한 메모리와 합치고, 지금 알려야 할 때만 구조화된 상황(Situation)을 만듭니다.
 
 | 읽기 전용 신호 | 로컬 컨텍스트 | 에이전트 중립 전달 |
 |:---|:---|:---|
@@ -29,7 +29,7 @@ proactive-mcp는 이 빈틈을 채웁니다. 승인된 읽기 전용 소스를 �
 
 ### 알림이 아니라 상황
 
-새 이벤트를 모두 대화창에 쏟아붓지는 않습니다. 결정론적 감지기는 소스 데이터에서 근거 있는 상황을 소수만 가려냅니다.
+새 이벤트를 모두 대화창에 쏟아붓지 않습니다. 결정론적 감지기는 소스 데이터에서 근거가 있는 상황만 추립니다.
 
 | 상황 | 예시 |
 |:---|:---|
@@ -37,7 +37,7 @@ proactive-mcp는 이 빈틈을 채웁니다. 승인된 읽기 전용 소스를 �
 | `calendar_conflict` | 수락했거나 내가 소유한 시간 지정 일정 두 개가 겹칩니다. |
 | `personal_occasion` | 저장해 둔 개인 기념일이 다가와 지금 알릴 만합니다. |
 
-각 결과는 제목, 지금 중요한 이유, 범위가 제한된 근거, 제안 행동, 우선순위, 만료 시각을 담습니다. 외부에서 들어온 텍스트는 명시적으로 신뢰하지 않습니다.
+각 결과에는 제목, 지금 중요한 이유, 범위가 제한된 근거, 제안 행동, 우선순위, 만료 시각이 담깁니다. 외부에서 들어온 텍스트는 명시적으로 신뢰하지 않습니다.
 
 ## 작동 방식
 
@@ -72,56 +72,23 @@ flowchart LR
 ### 공개 배포 경로 (아직 비활성)
 
 > [!WARNING]
-> 아래 패키지 인덱스 명령은 Owner가 공개 배포를 승인한 뒤부터 동작합니다. 클로즈드 알파 동안에는 PyPI에 아무것도 게시되어 있지 않으므로 의도적으로 실패합니다. 지금은 아래 두 경로 중 하나를 사용해 주세요.
+> `uvx proactive-mcp`는 Owner가 공개 배포를 승인한 뒤에만 사용할 수 있습니다. 클로즈드 알파에서는 PyPI에 아무것도 게시하지 않으므로 의도적으로 실패합니다.
 
-```bash
-uv tool install proactive-mcp
-proactive-mcp setup
-proactive-mcp daemon --once
-proactive-mcp status
+공개 배포 후에는 이미 사용 중인 로컬 에이전트를 열어 아래 요청을 붙여 넣어 주세요.
+
+```text
+uvx로 proactive-mcp를 설치하고, 절대 경로를 사용해 이 에이전트의 로컬 stdio MCP 서버로 등록한 뒤, 읽기 전용 Google 설정을 완료하고 권장 watcher를 시작한 다음 연결을 확인해 주세요. 설정을 바꾸기 전에 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md를 읽어 주세요. HTTP transport는 사용하지 말고, 메일을 보내거나 일정을 만들지 마세요. 실행한 모든 명령과 변경한 파일, 제 승인이 필요한 항목을 보고해 주세요.
 ```
 
-처음 실행하면 상태가 다음 순서로 바뀝니다.
+Google 동의 화면은 직접 승인해 주세요. 상태는 `not_configured`, `never_synced`, 첫 읽기 성공 후 `ok` 순서로 바뀝니다. BYO Google OAuth 상세 절차는 [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md)를 참고해 주세요.
 
-1. setup 전에는 두 Google 소스가 모두 `not_configured` 상태입니다.
-2. OAuth setup 후에는 두 소스가 모두 `never_synced` 상태입니다.
-3. 첫 읽기에 성공하면 두 소스가 모두 `ok` 상태입니다.
+### 소스 체크아웃
 
-Google Cloud 콘솔 절차와 OAuth 파일을 정확히 어디에 두어야 하는지는 [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md)를 참고해 주세요.
-
-### 소스에서 설치 (지금 동작)
-
-저장소 collaborator는 지금 이 경로로 설치할 수 있으며, 공개 이후에도 같은 방법을 계속 쓸 수 있습니다.
-
-```bash
-git clone https://github.com/madrobotnet/proactive-mcp.git
-cd proactive-mcp
-uv python install 3.11
-uv sync --locked
-uv run proactive-mcp --help
-uv run proactive-mcp setup
-uv run proactive-mcp daemon --once
-uv run proactive-mcp status
-```
-
-소스 체크아웃에서 이후 예시를 따라갈 때는 `proactive-mcp` 대신 `uv run proactive-mcp`를 사용하시면 됩니다.
+저장소 collaborator는 기존 에이전트에게 체크아웃에서 설치하고 같은 요청을 처리하도록 맡길 수 있습니다. 에이전트에 체크아웃의 절대 경로를 알려 주시면 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)의 소스 전용 안내를 따릅니다. 공개 경로는 `uvx` 패키지를 사용하고, 알파 경로는 전달받은 artifact를 사용합니다.
 
 ## 에이전트 연결
 
-일반적인 MCP 서버 스키마를 지원하는 클라이언트에는 아래 설정을 등록합니다.
-
-```json
-{
-  "mcpServers": {
-    "proactive": {
-      "command": "proactive-mcp",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-클로즈드 알파 wheel 사용자는 `proactive-mcp` 자리에 가상환경 실행 파일의 절대 경로를 넣습니다. 소스 사용자는 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)에 정리된 절대 `uv` 명령과 저장소 경로를 사용합니다.
+에이전트가 로컬 stdio MCP 서버를 등록합니다. 여기에는 대화용 `serve` 프로필과 필요한 경우 제한된 스케줄용 `serve-scheduled` 프로필이 포함됩니다. 기본 경로에서는 MCP add 명령을 직접 실행하거나 MCP JSON을 직접 편집하지 마세요. 호스트별 정확한 레시피, 명령 형태, 설정 예시는 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)의 에이전트용 참고 자료에 있습니다.
 
 다음 클라이언트에 사용할 레시피가 있습니다.
 
@@ -141,39 +108,18 @@ uv run proactive-mcp status
 3. 돌아온 상황을 모두 에이전트의 기존 채널로 전달합니다.
 4. 영수증 토큰이 없는 응답은 확정하지 않습니다.
 
-크래시나 재시도가 발생하거나 여러 에이전트가 섞여도, 이 영수증 규칙에 따라 전달 이력이 정직하게 남습니다.
+크래시나 재시도가 발생하거나 여러 에이전트가 함께 작동해도, 이 영수증 규칙에 따라 전달 이력이 정확하게 남습니다.
 
 ## 클로즈드 알파 테스터
 
 공개 전에 이 경로가 제대로 작동하는지 검증해 주셔서 감사합니다.
 
 > [!TIP]
-> [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md)의 비공개 핸드오프 체크리스트로 시작하고, OAuth는 [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md)를 따라 주세요.
+> 먼저 비공개 wheel을 받고, 다른 인증된 채널로 SHA-256 체크섬을 받으세요. BYO를 검증하지 않는 경우 OAuth 클라이언트 JSON도 별도의 비공개 메시지로 받습니다. 체크섬이 일치하기 전에는 설치하지 마세요.
 
-### 비공개 wheel 설치
+### 운영체제 테스터 시트 사용하기
 
-Owner는 무결성 또는 자격 증명과 관련된 항목을 각각 따로 보냅니다.
-
-1. wheel 파일은 인증된 비공개 채널로 보냅니다.
-2. SHA-256 체크섬은 다른 인증된 채널로 보냅니다.
-3. OAuth 클라이언트 JSON은 별도의 비공개 메시지로 보냅니다. BYO 경로를 검증하는 테스터에게는 보내지 않습니다.
-
-설치하기 전에 체크섬부터 확인한 뒤 진행해 주세요.
-
-```bash
-uv venv --python 3.11 ~/venvs/proactive
-uv pip install \
-  --python ~/venvs/proactive/bin/python \
-  ./proactive_mcp-0.1.0-py3-none-any.whl
-
-PROACTIVE="$HOME/venvs/proactive/bin/proactive-mcp"
-"$PROACTIVE" --help
-"$PROACTIVE" setup
-"$PROACTIVE" daemon --once
-"$PROACTIVE" status
-```
-
-Windows 테스터는 [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md)의 PowerShell 경로를 사용합니다.
+Owner가 wheel과 함께 운영체제 테스터 시트를 전달합니다. [`docs/testers/README.md`](docs/testers/README.md)를 열어 사용 중인 운영체제를 고르고, 안내된 붙여 넣기 블록 하나를 이미 사용 중인 에이전트에 그대로 붙여 넣어 주세요. 설치, MCP 등록, setup은 에이전트가 처리합니다. 직접 하실 일은 Google 동의 화면을 처리하고 막힌 단계를 알려 주시는 것뿐입니다. 비공개 핸드오프, 증거, 롤백 규칙은 [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md)에 있습니다.
 
 ### 알파 완료 체크리스트
 
@@ -230,7 +176,7 @@ uv run pytest
 uv build
 ```
 
-Python 3.11 이상이 필요합니다. 테스트에서는 fake clock과 로컬 fixture를 사용하며, 일반 테스트 실행 중에는 실제 Google API를 호출하지 않습니다.
+Python 3.11 이상이 필요합니다. 테스트는 fake clock과 로컬 fixture를 사용하며, 일반 테스트를 실행할 때는 실제 Google API를 호출하지 않습니다.
 
 ## 문서
 
@@ -239,6 +185,7 @@ Python 3.11 이상이 필요합니다. 테스트에서는 fake clock과 로컬 f
 | [`README.md`](README.md) | 영어 README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth 설정 |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Grok, Codex, Hermes, Claude Desktop, 스케줄러 |
+| [`docs/testers/README.md`](docs/testers/README.md) | 클로즈드 알파 운영체제 테스터 시트 |
 | [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) | 비공개 wheel 빌드, 핸드오프, 증거, 롤백 |
 | [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Windows Owner·알파 테스터 스모크 경로 |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | 메모리 모델과 도구 계약 |
