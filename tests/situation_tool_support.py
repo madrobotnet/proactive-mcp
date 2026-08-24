@@ -94,13 +94,21 @@ class BarrierClock:
         return self._clock.now()
 
 
-def write_config(state_directory: Path, *, daily_budget: int = 4) -> None:
+def write_config(
+    state_directory: Path,
+    *,
+    daily_budget: int = 4,
+    quiet_hours_start: str = "21:00",
+    quiet_hours_end: str = "07:00",
+) -> None:
     """Pin the timezone and budget the tool tests reason about."""
     _ = (state_directory / "config.toml").write_text(
         dedent(f"""\
             [attention]
             timezone = "UTC"
             daily_budget = {daily_budget}
+            quiet_hours_start = "{quiet_hours_start}"
+            quiet_hours_end = "{quiet_hours_end}"
             """),
         encoding="utf-8",
     )
@@ -157,9 +165,13 @@ def pending_detection(key: str, priority: SituationPriority = "routine") -> Dete
 def deliver_one(harness: ToolHarness, key: str) -> SituationResponse:
     """Detect one situation and let the harness claim it for delivery."""
     _ = harness.store.situations.upsert_detections((pending_detection(key),))
-    claimed = harness.service.proactive_check().situations
+    response = harness.service.proactive_check()
+    claimed = response.situations
     assert len(claimed) == 1
-    return claimed[0]
+    assert response.receipt_token is not None
+    confirmation = harness.service.confirm_delivery(response.receipt_token)
+    assert confirmation.delivered_count == 1
+    return harness.service.get_situation(claimed[0].id)
 
 
 def tool_schema(tool: Tool) -> ToolSchema:
@@ -185,4 +197,7 @@ def check_in_worker(
         racing = SituationToolService(
             replace(harness.dependencies, clock=BarrierClock(harness.clock, barrier))
         )
-        return racing.proactive_check()
+        response = racing.proactive_check()
+        if response.receipt_token is not None:
+            _ = racing.confirm_delivery(response.receipt_token)
+        return response

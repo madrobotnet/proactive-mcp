@@ -11,6 +11,7 @@ from ._situation_consistency import (
 )
 from ._situation_models import (
     DeliveryClaim,
+    DeliveryReservation,
     Detection,
     DetectionApplySummary,
     DetectionUpsertSummary,
@@ -50,6 +51,8 @@ __all__ = [
     "SituationStore",
 ]
 
+MAX_SITUATION_PAGE_SIZE = 100
+
 
 class SituationStore:
     """Persist situations and enforce their delivery state machine."""
@@ -84,7 +87,7 @@ class SituationStore:
         """Persist one detection batch without duplicating a dedupe key."""
         return self._consistency.upsert_detections(detections)
 
-    def apply_source_generation(
+    def apply_source_generation(  # noqa: PLR0913
         self,
         generation: SourceGeneration,
         detections: Sequence[Detection],
@@ -92,6 +95,9 @@ class SituationStore:
         status: SourceGenerationStatus,
         sync_cursor: str | None = None,
         error_code: SourceErrorCode | None = None,
+        resolve_absent: bool = False,
+        resolution_scope_ids: Collection[str] = (),
+        resolution_excluded_ids: Collection[str] = (),
     ) -> DetectionApplySummary:
         """Atomically accept source truth, detections, and resolutions."""
         return self._consistency.apply_source_generation(
@@ -100,6 +106,9 @@ class SituationStore:
             status,
             sync_cursor=sync_cursor,
             error_code=error_code,
+            resolve_absent=resolve_absent,
+            resolution_scope_ids=resolution_scope_ids,
+            resolution_excluded_ids=resolution_excluded_ids,
         )
 
     def apply_local_detections(
@@ -152,6 +161,27 @@ class SituationStore:
         """Atomically claim only rows that pass all attention limits."""
         return self._consistency.claim_for_delivery(claim)
 
+    def reserve_for_delivery(
+        self,
+        claim: DeliveryClaim,
+        *,
+        claim_token: str,
+        expires_at: datetime,
+    ) -> DeliveryReservation:
+        """Lease pending situations without prematurely recording delivery."""
+        return self._consistency.reserve_for_delivery(
+            claim,
+            claim_token=claim_token,
+            expires_at=_utc_iso(expires_at),
+        )
+
+    def confirm_delivery(self, claim_token: str) -> tuple[Situation, ...]:
+        """Confirm that a host received one leased proactive result."""
+        return self._consistency.confirm_delivery(
+            claim_token,
+            confirmed_at=self._now_iso(),
+        )
+
     def acknowledge_situation(self, situation_id: int) -> Situation:
         """Mark one active situation as acknowledged by the user."""
         return self._transition(situation_id, ACKNOWLEDGE_SITUATION, "acknowledge")
@@ -201,9 +231,29 @@ class SituationStore:
     def list_situations(
         self,
         state: SituationState | None = None,
+        *,
+        after_id: int = 0,
+        limit: int = 20,
     ) -> tuple[Situation, ...]:
         """List situations, optionally filtered to one state, oldest first."""
-        return self._reader.list_situations(state)
+        if after_id < 0 or not 1 <= limit <= MAX_SITUATION_PAGE_SIZE:
+            raise SituationValidationError(
+                field="pagination",
+                reason="after_id must be nonnegative and limit must be 1..100",
+            )
+        return self._reader.list_situations(
+            state,
+            after_id=after_id,
+            limit=limit,
+        )
+
+    def count_situations(self, state: SituationState | None = None) -> int:
+        """Count situations without materializing their evidence."""
+        return self._reader.count_situations(state)
+
+    def count_pending_unclaimed(self, now: datetime) -> int:
+        """Count rows another host has not already leased."""
+        return self._reader.count_pending_unclaimed(_utc_iso(now))
 
     def get_situation(self, situation_id: int) -> Situation | None:
         """Return one situation by id, or None if it does not exist."""
@@ -214,6 +264,19 @@ class SituationStore:
         return self._reader.count_delivered_between(
             _utc_iso(start),
             _utc_iso(end),
+        )
+
+    def count_reserved_between(
+        self,
+        start: datetime,
+        end: datetime,
+        now: datetime,
+    ) -> int:
+        """Count unexpired non-critical leases in one half-open window."""
+        return self._reader.count_reserved_between(
+            _utc_iso(start),
+            _utc_iso(end),
+            _utc_iso(now),
         )
 
     def count_deliveries(self) -> int:

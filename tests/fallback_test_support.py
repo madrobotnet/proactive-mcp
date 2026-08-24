@@ -30,7 +30,7 @@ NOW = utc_datetime(2026, 8, 21, 16)
 WAIT = timedelta(minutes=30)
 SECOND = timedelta(seconds=1)
 SEOUL = ZoneInfo("Asia/Seoul")
-NOTIFY = ("notify-send", "--")
+NOTIFY = ("/usr/bin/notify-send", "--")
 POISON_TITLE = "Alice Johnson"
 CANARY_SUBJECT = "CANARY_SUBJECT_Q3-layoff-list"
 CANARY_SENDER = "CANARY_SENDER_alice.secret@corp.example"

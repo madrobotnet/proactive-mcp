@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -146,6 +146,34 @@ def test_sync_records_successful_gmail_projection_and_cursor(
     assert summary.gmail_ids == ("thread-1",)
     assert gmail_state.last_success_at is not None
     assert gmail_state.sync_cursor == "history-2"
+
+
+def test_sync_does_not_record_degraded_projection_as_fresh(tmp_path: Path) -> None:
+    degraded_gmail = replace(
+        _gmail_inbox_result(),
+        is_complete=False,
+        degradation_reasons=("pagination_limit",),
+    )
+    degraded_calendar = replace(_calendar_result(), skipped_count=1)
+    with Store(tmp_path / "proactive.db") as store:
+        service = GoogleSyncService(
+            GoogleReadDependencies(
+                store=store,
+                gmail=FakeInboxReader(degraded_gmail),
+                calendar=FakeCalendarReader(degraded_calendar),
+                credentials=FakeCredentials(),
+            )
+        )
+
+        summary = service.sync()
+        gmail_state, calendar_state = store.list_source_sync()
+
+    assert summary.gmail_error_code == "degraded"
+    assert summary.calendar_error_code == "degraded"
+    assert gmail_state.last_success_at is None
+    assert calendar_state.last_success_at is None
+    assert gmail_state.last_error_code == "degraded"
+    assert calendar_state.last_error_code == "degraded"
 
 
 def test_prepare_evaluation_reserves_ordered_detector_snapshots(

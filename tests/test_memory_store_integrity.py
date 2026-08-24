@@ -9,6 +9,7 @@ from unicodedata import normalize
 
 import pytest
 
+import proactive_mcp.store.memory as memory_module
 from proactive_mcp.store import (
     MemoryNotFoundError,
     MemoryValidationError,
@@ -150,6 +151,22 @@ def test_remember_rolls_back_entity_and_alias_when_memory_insert_fails(
         assert _scalar_count(connection, "SELECT COUNT(*) FROM entities") == 0
         assert _scalar_count(connection, "SELECT COUNT(*) FROM entity_aliases") == 0
         assert _scalar_count(connection, "SELECT COUNT(*) FROM memory_items") == 0
+
+
+def test_memory_row_quota_rejects_growth_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(memory_module, "_MAX_MEMORY_ROWS", 1)
+    with Store(tmp_path / "proactive.db") as store:
+        _ = store.remember(NewMemory(kind="note", content="first"))
+        connection = store.connection()
+
+        with pytest.raises(MemoryValidationError):
+            _ = store.remember(NewMemory(kind="note", content="second"))
+
+        assert _scalar_count(connection, "SELECT COUNT(*) FROM memory_items") == 1
+        assert store.recall("")[0].content == "first"
 
 
 def test_update_rolls_back_new_entity_when_memory_update_fails(

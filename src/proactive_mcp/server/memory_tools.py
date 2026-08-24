@@ -26,11 +26,14 @@ from proactive_mcp.server.memory_responses import (
 )
 from proactive_mcp.server.memory_validation import validate_memory_date
 from proactive_mcp.store import (
+    MAX_MEMORY_LEAD_DAYS,
+    MAX_MEMORY_PAGE_SIZE,
     EntityKind,
     MemoryAttribute,
     MemoryKind,
     MemoryRecurrence,
     Store,
+    validate_new_memory,
 )
 
 if TYPE_CHECKING:
@@ -51,8 +54,10 @@ async def remember(
     """Store a memory item from an agent conversation."""
     memory = RememberRequest(kind=kind, content=content, entity=entity, **options)
     validate_memory_date(memory)
+    candidate = new_memory(memory)
+    validate_new_memory(candidate)
     with Store(_database_path()) as store:
-        item = store.remember(new_memory(memory))
+        item = store.remember(candidate)
     return memory_item_response(item).model_dump_json()
 
 
@@ -91,7 +96,7 @@ remember.__dict__["__signature__"] = Signature(
             "lead_days",
             Parameter.KEYWORD_ONLY,
             default=7,
-            annotation=Annotated[int, Field(ge=0)],
+            annotation=Annotated[int, Field(ge=0, le=MAX_MEMORY_LEAD_DAYS)],
         ),
     ],
     return_annotation=str,
@@ -104,7 +109,7 @@ async def recall(
     kind: MemoryKind | None = None,
     entity_kind: EntityKind | None = None,
     path_prefix: str | None = None,
-    limit: Annotated[int, Field(ge=1)] = 20,
+    limit: Annotated[int, Field(ge=1, le=MAX_MEMORY_PAGE_SIZE)] = 20,
 ) -> str:
     """Return matching active memory items as a JSON object."""
     with Store(_database_path()) as store:
@@ -131,8 +136,10 @@ async def update(
     """Replace a memory item's mutable values while retaining its id."""
     memory = UpdateRequest(kind=kind, content=content, entity=entity, **options)
     validate_memory_date(memory)
+    candidate = new_memory(memory)
+    validate_new_memory(candidate)
     with Store(_database_path()) as store:
-        item = store.update(memory_id, new_memory(memory))
+        item = store.update(memory_id, candidate)
     return memory_item_response(item).model_dump_json()
 
 
@@ -176,7 +183,7 @@ update.__dict__["__signature__"] = Signature(
             "lead_days",
             Parameter.KEYWORD_ONLY,
             default=7,
-            annotation=Annotated[int, Field(ge=0)],
+            annotation=Annotated[int, Field(ge=0, le=MAX_MEMORY_LEAD_DAYS)],
         ),
     ],
     return_annotation=str,
@@ -187,12 +194,20 @@ async def list_entities(
     *,
     kind: EntityKind | None = None,
     path_prefix: str | None = None,
+    after_id: Annotated[int, Field(ge=0)] = 0,
+    limit: Annotated[int, Field(ge=1, le=MAX_MEMORY_PAGE_SIZE)] = 20,
 ) -> str:
     """Return active entities as a JSON object."""
     with Store(_database_path()) as store:
-        entities = store.list_entities(kind=kind, path_prefix=path_prefix)
+        entities = store.list_entities(
+            kind=kind,
+            path_prefix=path_prefix,
+            after_id=after_id,
+            limit=limit,
+        )
     return ListEntitiesResponse(
-        items=tuple(entity_response(entity) for entity in entities)
+        items=tuple(entity_response(entity) for entity in entities),
+        next_after_id=entities[-1].id if len(entities) == limit and entities else None,
     ).model_dump_json()
 
 

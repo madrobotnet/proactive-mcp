@@ -56,7 +56,9 @@ _HTTP_OK: Final[int] = 200
 _HTTP_SERVER_ERROR_MIN: Final[int] = 500
 _HTTP_SERVER_ERROR_MAX: Final[int] = 600
 
-CalendarErrorCode: TypeAlias = Literal["http_4xx", "http_5xx", "unknown"]
+CalendarErrorCode: TypeAlias = Literal[
+    "http_4xx", "http_5xx", "resource_limit", "unknown"
+]
 _STATUSES: Final[dict[str, EventStatus]] = {
     "confirmed": "confirmed",
     "tentative": "tentative",
@@ -98,6 +100,7 @@ class CalendarHttpResponse:
 
     status_code: int
     body: bytes
+    limit_reason: Literal["response", "sync"] | None = None
 
 
 class _CalendarTransport(Protocol):
@@ -179,6 +182,7 @@ class CalendarAdapter:
             if page_token is not None:
                 query["pageToken"] = page_token
             response = self._transport.request("GET", CALENDAR_EVENTS_URL, query)
+            _require_within_limit(response)
             if response.status_code != _HTTP_OK:
                 if response.status_code in {401, 403}:
                     raise CalendarAuthError(
@@ -218,6 +222,11 @@ class CalendarAdapter:
                     skipped_count=skipped_count,
                 )
         raise CalendarParseError(error_code="unknown")
+
+
+def _require_within_limit(response: CalendarHttpResponse) -> None:
+    if response.limit_reason is not None:
+        raise CalendarParseError(error_code="resource_limit")
 
 
 def _rfc3339_z(value: datetime) -> str:

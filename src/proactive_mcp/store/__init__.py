@@ -16,6 +16,8 @@ from ._lazy_sync_lease import InvalidLazySyncLeaseDurationError, LazySyncLease
 from ._situation_models import (
     ACTIVE_SITUATION_STATES,
     DeliveryClaim,
+    DeliveryReceiptError,
+    DeliveryReservation,
     Detection,
     DetectionApplySummary,
     DetectionUpsertSummary,
@@ -48,6 +50,8 @@ from .freshness import (
     evaluate_source_freshness,
 )
 from .memory import (
+    MAX_MEMORY_LEAD_DAYS,
+    MAX_MEMORY_PAGE_SIZE,
     Entity,
     EntityAliasConflictError,
     EntityKind,
@@ -60,6 +64,7 @@ from .memory import (
     MemorySource,
     MemoryValidationError,
     NewMemory,
+    validate_new_memory,
 )
 from .private_path import UnsafeDatabasePathError
 from .situations import SituationStore
@@ -76,6 +81,8 @@ __all__ = [
     "ACTIVE_SITUATION_STATES",
     "DEFAULT_BUSY_TIMEOUT_MS",
     "DEFAULT_STALE_AFTER",
+    "MAX_MEMORY_LEAD_DAYS",
+    "MAX_MEMORY_PAGE_SIZE",
     "DaemonLiveness",
     "DaemonNotStartedError",
     "DaemonStatus",
@@ -83,6 +90,8 @@ __all__ = [
     "DatabaseStatus",
     "DelayedSourceGenerationError",
     "DeliveryClaim",
+    "DeliveryReceiptError",
+    "DeliveryReservation",
     "Detection",
     "DetectionApplySummary",
     "DetectionUpsertSummary",
@@ -130,4 +139,5 @@ __all__ = [
     "SyncStore",
     "UnsafeDatabasePathError",
     "evaluate_source_freshness",
+    "validate_new_memory",
 ]

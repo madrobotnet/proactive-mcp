@@ -53,8 +53,8 @@ def test_migration_007_adds_daemon_and_fallback_contract(tmp_path: Path) -> None
         connection = store.connection()
 
         # Then: daemon liveness and fallback history carry only structural fields.
-        assert tuple(number for number, _sql in load_migrations())[-1] == 8
-        assert store.status().migration_version == 8
+        assert tuple(number for number, _sql in load_migrations())[-1] == 9
+        assert store.status().migration_version == 9
         assert table_names(connection) >= {"daemon_status", "situation_fallbacks"}
         assert column_names(connection, "daemon_status") == {
             "id",
@@ -92,7 +92,7 @@ def test_migration_007_is_idempotent_across_reopen(tmp_path: Path) -> None:
         )
 
     # Then: the migration is recorded exactly once.
-    assert (first, second, applied) == (8, 8, 1)
+    assert (first, second, applied) == (9, 9, 1)
 
 
 def test_migration_007_applies_once_under_concurrent_startup(tmp_path: Path) -> None:
@@ -113,7 +113,7 @@ def test_migration_007_applies_once_under_concurrent_startup(tmp_path: Path) -> 
             store.connection(),
             "SELECT COUNT(*) FROM schema_migrations WHERE version = 7",
         )
-    assert versions == [8, 8, 8, 8]
+    assert versions == [9, 9, 9, 9]
     assert applied == 1
 
 

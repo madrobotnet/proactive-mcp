@@ -40,12 +40,23 @@ def list_active_entities(
     *,
     kind: EntityKind | None = None,
     path_prefix: str | None = None,
+    after_id: int = 0,
+    limit: int,
 ) -> tuple[Entity, ...]:
     """List active entities in stable kind, path, label, and id order."""
     normalized_prefix, prefix_pattern = prefix_filter(path_prefix)
     return queries.capture_entities(
         SELECT_ACTIVE_ENTITIES,
-        (kind, kind, normalized_prefix, normalized_prefix, prefix_pattern),
+        (
+            after_id,
+            after_id,
+            kind,
+            kind,
+            normalized_prefix,
+            normalized_prefix,
+            prefix_pattern,
+            limit,
+        ),
     )
 
 

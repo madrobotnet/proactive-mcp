@@ -34,6 +34,8 @@ async def test_memory_tool_schemas_expose_the_v2_contract(tmp_path: Path) -> Non
         "list_entities",
         "forget",
     } <= set(tools)
+    assert "untrusted" in (tools["proactive_check"].description or "")
+    assert "untrusted_memory_data" in (tools["recall"].description or "")
 
     remember_schema = ToolInputSchema.model_validate(tools["remember"].input_schema)
     assert set(remember_schema.required) >= {"kind", "content"}
@@ -77,7 +79,12 @@ async def test_memory_tool_schemas_expose_the_v2_contract(tmp_path: Path) -> Non
     entities_schema = ToolInputSchema.model_validate(
         tools["list_entities"].input_schema
     )
-    assert set(entities_schema.properties) >= {"kind", "path_prefix"}
+    assert set(entities_schema.properties) >= {
+        "kind",
+        "path_prefix",
+        "after_id",
+        "limit",
+    }
 
     forget_schema = ToolInputSchema.model_validate(tools["forget"].input_schema)
     assert set(forget_schema.required) >= {"id"}
@@ -132,3 +139,45 @@ async def test_remember_rejects_invalid_dates_without_reflecting_input(
         content.text for content in invalid.content if isinstance(content, TextContent)
     )
     assert yearless_nonrecurring.is_error is True
+
+
+@pytest.mark.anyio
+async def test_memory_tools_enforce_storage_and_result_bounds(tmp_path: Path) -> None:
+    exact_content = "x" * 4096
+    oversized_utf8 = "한" * 1366
+    async with memory_session(tmp_path) as session:
+        accepted = await session.call_tool(
+            "remember",
+            {"kind": "note", "content": exact_content},
+        )
+        oversized = await session.call_tool(
+            "remember",
+            {"kind": "note", "content": oversized_utf8},
+        )
+        excessive_lead = await session.call_tool(
+            "remember",
+            {"kind": "note", "content": "bounded", "lead_days": 367},
+        )
+        boundary_date = await session.call_tool(
+            "remember",
+            {
+                "kind": "commitment",
+                "content": "bounded",
+                "date_anchor": "9999-12-31",
+            },
+        )
+        recall_overflow = await session.call_tool(
+            "recall",
+            {"query": "", "limit": 101},
+        )
+        entity_overflow = await session.call_tool(
+            "list_entities",
+            {"limit": 101},
+        )
+
+    assert accepted.is_error is False
+    assert oversized.is_error is True
+    assert excessive_lead.is_error is True
+    assert boundary_date.is_error is True
+    assert recall_overflow.is_error is True
+    assert entity_overflow.is_error is True

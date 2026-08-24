@@ -4,11 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
 
 from proactive_mcp.store import (
     DeliveryClaim,
+    DeliveryReceiptError,
     Detection,
     FallbackClaim,
     FallbackNotClaimedError,
@@ -308,6 +310,35 @@ def test_agent_delivery_before_the_boundary_suppresses_the_fallback(
     assert tuple(item.dedupe_key for item in delivered) == ("agent-first",)
     assert candidates == ()
     assert claimed is None
+
+
+def test_unconfirmed_agent_lease_defers_fallback_until_it_expires(
+    tmp_path: Path,
+) -> None:
+    # Given: an aged critical row leased to an agent without a receipt.
+    clock = FakeClock(_NOW - _WAIT - timedelta(minutes=1))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections((_conflict("leased"),))
+        clock.set(_NOW)
+        reservation = store.situations.reserve_for_delivery(
+            _delivery(_NOW),
+            claim_token=uuid4().hex,
+            expires_at=_NOW + timedelta(minutes=2),
+        )
+
+        # When: fallback checks before and after the unconfirmed lease expires.
+        active_candidates = store.fallbacks.candidates(_claim(_NOW))
+        clock.advance(timedelta(minutes=3))
+        fallback = store.fallbacks.claim_next(_claim(clock.now()))
+        with pytest.raises(DeliveryReceiptError):
+            _ = store.situations.confirm_delivery(reservation.claim_token)
+
+        # Then: the active host lease cannot race the fallback, but an abandoned
+        # lease cannot suppress the safety notification or create delivery history.
+        assert active_candidates == ()
+        assert fallback is not None
+        assert fallback.dedupe_key == "leased"
+        assert store.situations.count_deliveries() == 0
 
 
 def test_fallback_claim_leaves_the_row_deliverable_to_agents(tmp_path: Path) -> None:

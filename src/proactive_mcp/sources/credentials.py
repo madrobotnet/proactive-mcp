@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import secrets
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Final, Protocol, TypedDict
+from typing import TYPE_CHECKING, ClassVar, Final, Literal, Protocol, TypedDict
 
 import keyring as os_keyring
 from google.oauth2.credentials import Credentials
 from keyring.errors import InitError, KeyringError, NoKeyringError, PasswordDeleteError
 from typing_extensions import override
 
+from proactive_mcp.paths import DEFAULT_DATABASE
 from proactive_mcp.store.private_file import (
     PrivateFileUnsupportedError,
     delete_private_file,
@@ -21,7 +25,7 @@ from proactive_mcp.store.storage_errors import UnsafeDatabasePathError
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 GOOGLE_READONLY_SCOPES: Final[tuple[str, str]] = (
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -30,7 +34,10 @@ GOOGLE_READONLY_SCOPES: Final[tuple[str, str]] = (
 _KEYRING_SERVICE: Final[str] = "proactive-mcp"
 _KEYRING_USERNAME: Final[str] = "google-readonly-oauth"
 _CREDENTIAL_FILE_NAME: Final[str] = "google-readonly-oauth.json"
+_CREDENTIAL_STATE_FILE_NAME: Final[str] = "google-readonly-oauth.state.json"
 _OAUTH_ENDPOINT: Final[str] = "https://oauth2.googleapis.com/token"
+_DEFAULT_STATE_DIRECTORY: Final[Path] = DEFAULT_DATABASE.expanduser().parent
+_LEGACY_MIGRATED_MARKER: Final[str] = "proactive-mcp:migrated-to-profile:v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,12 +139,42 @@ _AUTHORIZED_USER_ADAPTER: Final[TypeAdapter[_AuthorizedUserWire]] = TypeAdapter(
 )
 
 
+class _CredentialEnvelope(BaseModel):
+    """Version and generation carried with every credential backend value."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    version: Literal[1] = 1
+    epoch: int = Field(ge=1)
+    revision: str = Field(min_length=64, max_length=64)
+    credential: str
+
+
+class _CredentialState(BaseModel):
+    """Non-secret authority marker that prevents stale backend resurrection."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    version: Literal[1] = 1
+    epoch: int = Field(ge=1)
+    revision: str = Field(min_length=64, max_length=64)
+    backend: Literal["keyring", "file", "deleted"]
+    tombstone: bool = False
+
+
+_ENVELOPE_ADAPTER: Final[TypeAdapter[_CredentialEnvelope]] = TypeAdapter(
+    _CredentialEnvelope
+)
+_STATE_ADAPTER: Final[TypeAdapter[_CredentialState]] = TypeAdapter(_CredentialState)
+
+
 @dataclass(frozen=True, slots=True)
 class CredentialStore:
-    """Store one shared Google credential in the OS keyring or a private fallback."""
+    """Store one profile-bound Google credential in keyring or private fallback."""
 
     state_directory: Path
     keyring: CredentialKeyring
+    _loaded_version: tuple[int, str] | None
 
     def __init__(
         self,
@@ -152,43 +189,115 @@ class CredentialStore:
             "keyring",
             os_keyring if keyring is None else keyring,
         )
+        object.__setattr__(self, "_loaded_version", None)
 
     @property
     def file_path(self) -> Path:
         """Return the private fallback path without creating it."""
         return self.state_directory / "credentials" / _CREDENTIAL_FILE_NAME
 
+    @property
+    def state_path(self) -> Path:
+        """Return the private non-secret backend authority marker path."""
+        return self.state_directory / "credentials" / _CREDENTIAL_STATE_FILE_NAME
+
+    @property
+    def keyring_username(self) -> str:
+        """Return the non-secret keyring identity for this state root."""
+        canonical = _canonical_state_root(self.state_directory)
+        profile_id = hashlib.sha256(os.fsencode(canonical)).hexdigest()
+        return f"{_KEYRING_USERNAME}:{profile_id}"
+
     def save(self, credentials: GoogleCredential) -> None:
         """Persist only refreshable credentials with the frozen read-only scopes."""
         _require_refreshable_readonly_credentials(credentials)
-        serialized = credentials.to_json()
+        state = self._read_state()
+        epoch = 1 if state is None else state.epoch + 1
+        revision = secrets.token_hex(32)
+        serialized = _CredentialEnvelope(
+            epoch=epoch,
+            revision=revision,
+            credential=credentials.to_json(),
+        ).model_dump_json()
         try:
-            self.keyring.set_password(_KEYRING_SERVICE, _KEYRING_USERNAME, serialized)
+            self.keyring.set_password(
+                _KEYRING_SERVICE,
+                self.keyring_username,
+                serialized,
+            )
         except (InitError, NoKeyringError):
             self._write_private_file(serialized)
+            self._write_state(
+                _CredentialState(
+                    epoch=epoch,
+                    revision=revision,
+                    backend="file",
+                )
+            )
+            object.__setattr__(self, "_loaded_version", (epoch, revision))
             return
         except KeyringError as error:
             raise CredentialStorageError from error
+        self._write_state(
+            _CredentialState(
+                epoch=epoch,
+                revision=revision,
+                backend="keyring",
+            )
+        )
         _delete_fallback(self.file_path)
+        object.__setattr__(self, "_loaded_version", (epoch, revision))
 
     def load(self) -> GoogleCredential | None:
         """Load valid read-only credentials and treat malformed data as absent."""
+        state = self._read_state()
+        if state is None:
+            return self._load_legacy()
+        object.__setattr__(self, "_loaded_version", (state.epoch, state.revision))
+        if state.tombstone or state.backend == "deleted":
+            self._purge_tombstoned()
+            return None
+        if state.backend == "file":
+            return self._load_authoritative_file(state)
         try:
-            serialized = self.keyring.get_password(_KEYRING_SERVICE, _KEYRING_USERNAME)
-        except (InitError, NoKeyringError):
-            serialized = self._read_private_file()
+            serialized = self.keyring.get_password(
+                _KEYRING_SERVICE,
+                self.keyring_username,
+            )
+        except (InitError, NoKeyringError) as error:
+            raise CredentialStorageError from error
         except KeyringError as error:
             raise CredentialStorageError from error
         if serialized is None:
-            serialized = self._read_private_file()
-        if serialized is None:
             return None
-        return _parse_credentials(serialized)
+        return _parse_enveloped_credentials(
+            serialized,
+            state.epoch,
+            state.revision,
+        )
 
     def delete(self) -> None:
         """Delete both keyring and fallback copies of the shared credential."""
+        state = self._read_state()
+        if (
+            self._loaded_version is not None
+            and state is not None
+            and (state.epoch, state.revision) != self._loaded_version
+        ):
+            return
+        epoch = 1 if state is None else state.epoch + 1
+        revision = secrets.token_hex(32)
+        self._write_state(
+            _CredentialState(
+                epoch=epoch,
+                revision=revision,
+                backend="deleted",
+                tombstone=True,
+            )
+        )
+        object.__setattr__(self, "_loaded_version", (epoch, revision))
         try:
-            self.keyring.delete_password(_KEYRING_SERVICE, _KEYRING_USERNAME)
+            self.keyring.delete_password(_KEYRING_SERVICE, self.keyring_username)
         except (InitError, NoKeyringError):
             _delete_fallback(self.file_path)
             return
@@ -210,6 +319,16 @@ class CredentialStore:
         ) as error:
             raise CredentialStorageError from error
 
+    def _write_state(self, state: _CredentialState) -> None:
+        try:
+            write_private_text(self.state_path, state.model_dump_json())
+        except (
+            OSError,
+            PrivateFileUnsupportedError,
+            UnsafeDatabasePathError,
+        ) as error:
+            raise CredentialStorageError from error
+
     def _read_private_file(self) -> str | None:
         """Read a regular private fallback file without following symlinks."""
         try:
@@ -221,6 +340,184 @@ class CredentialStore:
             UnsafeDatabasePathError,
         ):
             return None
+
+    def _read_state(self) -> _CredentialState | None:
+        try:
+            serialized = read_private_text(self.state_path)
+        except (
+            OSError,
+            PrivateFileUnsupportedError,
+            UnicodeDecodeError,
+            UnsafeDatabasePathError,
+        ):
+            return None
+        if serialized is None:
+            return None
+        try:
+            return _STATE_ADAPTER.validate_json(serialized)
+        except ValidationError:
+            return None
+
+    def _load_authoritative_file(
+        self,
+        state: _CredentialState,
+    ) -> GoogleCredential | None:
+        serialized = self._read_private_file()
+        if serialized is None:
+            return None
+        credentials = _parse_enveloped_credentials(
+            serialized,
+            state.epoch,
+            state.revision,
+        )
+        if credentials is None:
+            return None
+        try:
+            self.keyring.set_password(
+                _KEYRING_SERVICE,
+                self.keyring_username,
+                serialized,
+            )
+        except (InitError, NoKeyringError):
+            return credentials
+        except KeyringError as error:
+            raise CredentialStorageError from error
+        self._write_state(
+            _CredentialState(
+                epoch=state.epoch,
+                revision=state.revision,
+                backend="keyring",
+            )
+        )
+        _delete_fallback(self.file_path)
+        return credentials
+
+    def _load_legacy(self) -> GoogleCredential | None:
+        """Migrate one valid single-backend legacy record into an epoch."""
+        try:
+            serialized = self.keyring.get_password(
+                _KEYRING_SERVICE,
+                self.keyring_username,
+            )
+        except (InitError, NoKeyringError):
+            return self._adopt_legacy_value(self._read_private_file(), backend="file")
+        except KeyringError as error:
+            raise CredentialStorageError from error
+        if serialized is not None:
+            return self._adopt_legacy_value(serialized, backend="keyring")
+        if self._is_default_state_root():
+            try:
+                serialized = self.keyring.get_password(
+                    _KEYRING_SERVICE,
+                    _KEYRING_USERNAME,
+                )
+            except (InitError, NoKeyringError) as error:
+                raise CredentialStorageError from error
+            except KeyringError as error:
+                raise CredentialStorageError from error
+            if serialized not in (None, _LEGACY_MIGRATED_MARKER):
+                credentials = _parse_credentials(serialized)
+                if credentials is None:
+                    return None
+                return self._migrate_global_legacy(serialized, credentials)
+        return self._adopt_legacy_value(self._read_private_file(), backend="file")
+
+    def _adopt_legacy_value(
+        self,
+        serialized: str | None,
+        *,
+        backend: Literal["keyring", "file"],
+    ) -> GoogleCredential | None:
+        if serialized is None:
+            return None
+        envelope = _parse_envelope(serialized)
+        if envelope is not None:
+            credentials = _parse_credentials(envelope.credential)
+            if credentials is None:
+                return None
+            if backend == "keyring" and self._is_default_state_root():
+                self._retire_global_legacy(envelope.credential)
+            self._write_state(
+                _CredentialState(
+                    epoch=envelope.epoch,
+                    revision=envelope.revision,
+                    backend=backend,
+                )
+            )
+            object.__setattr__(
+                self,
+                "_loaded_version",
+                (envelope.epoch, envelope.revision),
+            )
+            return credentials
+        credentials = _parse_credentials(serialized)
+        if credentials is None:
+            return None
+        self.save(credentials)
+        return credentials
+
+    def _migrate_global_legacy(
+        self,
+        serialized: str,
+        credentials: GoogleCredential,
+    ) -> GoogleCredential:
+        revision = secrets.token_hex(32)
+        envelope = _CredentialEnvelope(
+            epoch=1,
+            revision=revision,
+            credential=serialized,
+        )
+        try:
+            self.keyring.set_password(
+                _KEYRING_SERVICE,
+                self.keyring_username,
+                envelope.model_dump_json(),
+            )
+        except (InitError, NoKeyringError, KeyringError) as error:
+            raise CredentialStorageError from error
+        self._retire_global_legacy(serialized)
+        self._write_state(
+            _CredentialState(
+                epoch=1,
+                revision=revision,
+                backend="keyring",
+            )
+        )
+        _delete_fallback(self.file_path)
+        object.__setattr__(self, "_loaded_version", (1, revision))
+        return credentials
+
+    def _retire_global_legacy(self, expected: str) -> None:
+        try:
+            current = self.keyring.get_password(
+                _KEYRING_SERVICE,
+                _KEYRING_USERNAME,
+            )
+            if current in (None, _LEGACY_MIGRATED_MARKER):
+                return
+            if current != expected:
+                raise CredentialStorageError
+            self.keyring.set_password(
+                _KEYRING_SERVICE,
+                _KEYRING_USERNAME,
+                _LEGACY_MIGRATED_MARKER,
+            )
+        except (InitError, NoKeyringError, KeyringError) as error:
+            raise CredentialStorageError from error
+
+    def _is_default_state_root(self) -> bool:
+        return _canonical_state_root(self.state_directory) == _canonical_state_root(
+            _DEFAULT_STATE_DIRECTORY
+        )
+
+    def _purge_tombstoned(self) -> None:
+        _delete_fallback(self.file_path)
+        try:
+            self.keyring.delete_password(_KEYRING_SERVICE, self.keyring_username)
+        except (InitError, NoKeyringError, PasswordDeleteError):
+            return
+        except KeyringError as error:
+            raise CredentialStorageError from error
 
 
 def _require_refreshable_readonly_credentials(credentials: GoogleCredential) -> None:
@@ -255,6 +552,31 @@ def _parse_credentials(serialized: str) -> GoogleCredential | None:
     except (CredentialScopeError, MissingRefreshTokenError):
         return None
     return credentials
+
+
+def _parse_enveloped_credentials(
+    serialized: str,
+    expected_epoch: int,
+    expected_revision: str,
+) -> GoogleCredential | None:
+    envelope = _parse_envelope(serialized)
+    if envelope is None:
+        return None
+    if envelope.epoch != expected_epoch or envelope.revision != expected_revision:
+        return None
+    return _parse_credentials(envelope.credential)
+
+
+def _parse_envelope(serialized: str) -> _CredentialEnvelope | None:
+    try:
+        envelope = _ENVELOPE_ADAPTER.validate_json(serialized)
+    except ValidationError:
+        return None
+    return envelope
+
+
+def _canonical_state_root(path: Path) -> str:
+    return os.path.normcase(str(path.expanduser().resolve()))
 
 
 def _delete_fallback(path: Path) -> None:

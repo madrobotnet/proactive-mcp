@@ -74,9 +74,12 @@ def test_the_mothers_birthday_reaches_the_user_once_every_year(
 
         # Then: that agent receives the occasion and owns its delivery.
         assert tuple(item.id for item in received.situations) == (occasion.id,)
-        assert received.situations[0].state == "delivered"
+        assert received.situations[0].state == "pending"
         assert received.situations[0].priority == "high"
         assert received.held_count == 0
+        assert received.receipt_token is not None
+        _ = harness.service.confirm_delivery(received.receipt_token)
+        assert harness.service.get_situation(occasion.id).state == "delivered"
 
         # When: the same session checks a second time.
         repeated = harness.service.proactive_check()
@@ -100,13 +103,15 @@ def test_the_mothers_birthday_reaches_the_user_once_every_year(
         # When: the agent checks in on the D-7 morning of the next year.
         harness.clock.set(_NEXT_LEAD_MORNING)
         next_year = harness.service.proactive_check()
+        assert next_year.receipt_token is not None
+        _ = harness.service.confirm_delivery(next_year.receipt_token)
+        renewed = harness.service.get_situation(next_year.situations[0].id)
         states = tuple(
             item.state for item in harness.store.situations.list_situations()
         )
 
     # Then: the next occurrence is delivered as its own situation...
     assert len(next_year.situations) == 1
-    renewed = next_year.situations[0]
     assert renewed.id != occasion.id
     assert renewed.state == "delivered"
     assert "D-7" in renewed.why_now

@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 _LOOPBACK_HOST: Final[str] = "127.0.0.1"
 _LOOPBACK_PORT: Final[int] = 0
 _AUTHORIZATION_TIMEOUT_SECONDS: Final[int] = 300
+_GOOGLE_AUTHORIZATION_ENDPOINT: Final[str] = "https://accounts.google.com/o/oauth2/auth"
+_GOOGLE_OAUTH_ENDPOINT: Final[str] = "https://oauth2.googleapis.com/token"
+_SUPPORTED_REDIRECT_URIS: Final[tuple[str, ...]] = ("http://127.0.0.1",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,24 +96,21 @@ class InstalledAppFlowFactory(Protocol):
 
 
 class _InstalledAppClientWire(BaseModel):
-    """Parse the installed-app credentials section at the file boundary."""
+    """Parse only client identity from the untrusted bootstrap file."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="ignore")
 
-    auth_uri: str
     client_id: str
     client_secret: str
-    redirect_uris: tuple[str, ...]
-    token_uri: str
 
     def as_google_config(self) -> GoogleInstalledApplicationConfig:
-        """Produce the strictly typed config shape required by the OAuth library."""
+        """Build a provider-pinned config for the OAuth library."""
         return {
-            "auth_uri": self.auth_uri,
+            "auth_uri": _GOOGLE_AUTHORIZATION_ENDPOINT,
             "client_id": self.client_id,
             "client_secret": self.client_secret,
-            "redirect_uris": list(self.redirect_uris),
-            "token_uri": self.token_uri,
+            "redirect_uris": list(_SUPPORTED_REDIRECT_URIS),
+            "token_uri": _GOOGLE_OAUTH_ENDPOINT,
         }
 
 

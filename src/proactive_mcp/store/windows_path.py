@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Final, NoReturn
+from typing import TYPE_CHECKING, Final, NoReturn, cast
 
 from ._windows_bindings import (
     ERROR_FILE_NOT_FOUND,
@@ -29,6 +29,7 @@ from ._windows_bindings import (
     Overlapped,
     kernel32,
 )
+from ._windows_dacl import require_current_user_owner
 from ._windows_dacl import set_private_dacl as _set_private_dacl
 from .storage_errors import UnsafeDatabasePathError
 
@@ -81,6 +82,32 @@ def private_initialization_lock(path: Path) -> Generator[None, None, None]:
         _close_handle(handle, path)
 
 
+@contextmanager
+def private_database_guard(path: Path) -> Generator[None, None, None]:
+    """Pin the verified parent and database identities for the Store lifetime."""
+    parent_handle = _open_path(
+        path.parent,
+        path,
+        _OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        share_mode=FILE_SHARE_READ | FILE_SHARE_WRITE,
+    )
+    database_handle = INVALID_HANDLE_VALUE
+    try:
+        _verify_directory(parent_handle, path)
+        require_current_user_owner(parent_handle, path)
+        database_handle = _open_regular_file(
+            path,
+            path,
+            _OPEN_EXISTING,
+            share_mode=FILE_SHARE_READ | FILE_SHARE_WRITE,
+        )
+        yield
+    finally:
+        _close_handle(database_handle, path)
+        _close_handle(parent_handle, path)
+
+
 def enforce_private_sidecars(path: Path) -> None:
     """Secure the database and its existing SQLite WAL and SHM sidecars."""
     _secure_regular_file(path, path, _OPEN_EXISTING)
@@ -109,6 +136,7 @@ def _secure_directory(directory: Path, database_path: Path) -> None:
     )
     try:
         _verify_directory(handle, database_path)
+        require_current_user_owner(handle, database_path)
         set_private_dacl(
             handle,
             database_path,
@@ -134,15 +162,19 @@ def _open_regular_file(
     file_path: Path,
     database_path: Path,
     creation_disposition: int,
+    *,
+    share_mode: int = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 ) -> int:
     handle = _open_path(
         file_path,
         database_path,
         creation_disposition,
         FILE_FLAG_OPEN_REPARSE_POINT | FILE_ATTRIBUTE_NORMAL,
+        share_mode=share_mode,
     )
     try:
         _verify_regular_file(handle, database_path)
+        require_current_user_owner(handle, database_path)
     except UnsafeDatabasePathError:
         _close_handle(handle, database_path)
         raise
@@ -163,11 +195,13 @@ def _open_path(
     database_path: Path,
     creation_disposition: int,
     flags_and_attributes: int,
+    *,
+    share_mode: int = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 ) -> int:
     handle = kernel32.create_file(
         str(file_path),
         GENERIC_READ | GENERIC_WRITE | READ_CONTROL | WRITE_DAC,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        share_mode,
         None,
         creation_disposition,
         flags_and_attributes,
@@ -201,6 +235,11 @@ def _verify_regular_file(handle: int, database_path: Path) -> None:
         raise UnsafeDatabasePathError(
             database_path,
             "private path cannot be a reparse point",
+        )
+    if cast("int", information.number_of_links) != 1:
+        raise UnsafeDatabasePathError(
+            database_path,
+            "private path must have exactly one hard link",
         )
 
 
@@ -257,6 +296,7 @@ __all__ = [
     "enforce_private_sidecars",
     "prepare_private_database_file",
     "prepare_private_parent",
+    "private_database_guard",
     "private_initialization_lock",
     "set_private_dacl",
 ]

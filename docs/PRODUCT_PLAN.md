@@ -45,6 +45,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | 코드베이스 | 새 저장소, MCP-first. 기존 repo는 참고자료만 |
 | 언어/스택 | Python ≥3.11, 공식 MCP Python SDK, SQLite, uv |
 | 전달 구조 | 하이브리드 — 서버가 감시·판단, 주 전달은 각 에이전트의 자체 채널, 폴백은 OS 알림 |
+| 전달 영수증 | `proactive_check`는 짧은 lease로 상황을 예약하고, 호스트가 결과를 받은 뒤 `confirm_delivery`를 호출해야 `delivered`로 확정. 미확인 lease는 만료 후 pending으로 복귀 (2026-08-24 Owner 보안 수정 승인) |
 | MVP 범위 | 읽기 + 알림만. 외부 쓰기는 2단계 |
 | MVP Situation | Reply Deadline, Calendar Conflict, Personal Occasion 3종 |
 | 메모리 | MVP 포함 — `remember`/`recall` 도구, 상황 감지가 메모리를 근거로 사용 |
@@ -109,7 +110,8 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 
 | 도구 | 목적 | 핵심 입출력 |
 |---|---|---|
-| `proactive_check` | **핵심 도구.** 미전달 상황 요약을 반환하고 전달 상태로 마킹. 가볍고 빨라야 함(<1s, sync 필요 시 예외) | 입력 없음 → `{situations[], freshness, warnings}` |
+| `proactive_check` | **핵심 도구.** 미전달 상황 요약을 짧은 lease로 예약해 반환. 가볍고 빨라야 함(<1s, sync 필요 시 예외) | 입력 없음 → `{situations[], receipt_token?, freshness, warnings}` |
+| `confirm_delivery` | 호스트가 `proactive_check` 결과를 수령한 뒤 lease를 전달 완료로 확정 | `receipt_token` → `{delivered_count}` |
 | `list_situations` | 상황 목록 조회 (상태 필터) | `state?` → 상황 배열 |
 | `get_situation` | 상황 상세 + 근거(evidence) | `id` → 상세 |
 | `acknowledge_situation` | 사용자가 인지/처리함 | `id` |
@@ -125,13 +127,16 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 ### 5.1 전달 상태 머신
 
 ```text
-detected → pending → delivered(에이전트가 proactive_check로 수령)
-  → acknowledged | snoozed(시각 도래 시 pending 복귀) | muted | expired
+detected → pending --proactive_check--> pending(leased; 별도 lease 레코드)
+pending(leased) --confirm_delivery--> delivered
+pending(leased) --lease 만료--> pending
+delivered → acknowledged | snoozed(시각 도래 시 pending 복귀) | muted | expired
 pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일정 변경 등)
 ```
 
-- `proactive_check`가 상황을 반환하면 `delivered`로 기록하고, 이후 동일 상황은 기본적으로 재반환하지 않는다(에이전트가 `list_situations`로는 조회 가능).
-- 여러 에이전트가 있어도 최초 수령 에이전트만 전달 책임을 진다. 중복 전달 방지가 dedupe의 핵심이다.
+- `proactive_check`가 상황을 반환한 것만으로는 `delivered`로 기록하지 않는다. 응답의 `receipt_token`을 결과 수령 후 `confirm_delivery`에 전달해야 전달 이력이 확정되고 이후 동일 상황이 기본적으로 재반환되지 않는다(에이전트가 `list_situations`로는 조회 가능).
+- 활성 lease 동안에는 다른 에이전트와 OS 폴백이 같은 상황을 가져가지 않는다. 호스트가 결과를 확인하지 못하면 lease가 만료되어 pending으로 다시 제공되므로 전송 실패가 알림 유실로 바뀌지 않는다.
+- 기존에 `proactive_check`만 호출하던 private-alpha 연동은 반드시 `confirm_delivery` 호출을 추가해야 한다. 이를 생략하면 안전한 실패 방식으로 lease 만료 후 상황이 재제공된다.
 - `delivered` 후 사용자 반응 없이 상황이 소스에서 해소되면 `resolved`로 자동 정리한다.
 
 ### 5.2 세션 시작 전달
@@ -205,7 +210,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 **OS 알림 폴백 (2026-08-21 Owner 확정, #14):**
 
 - 대상은 **critical만** (V1에서는 calendar_conflict 시작 2h 이내가 유일). high/routine은 폴백하지 않는다 — 세션 시작 전달(§5.2)과 에이전트 스케줄러(§5.3)로 충분하고, 폴백 남발은 침묵 우선 원칙과 충돌한다.
-- 트리거: detected 후 **30분** 내 어떤 에이전트도 수령(delivered)하지 않으면 OS 알림 1회, 재발송 없음. 두 값(대상 등급, 대기 시간)은 config.toml로 조정 가능.
+- 트리거: detected 후 **30분** 내 어떤 에이전트도 수령을 `confirm_delivery`로 확정하지 않으면 OS 알림 1회, 재발송 없음. 활성 lease 동안에는 중복을 피하기 위해 보류하고, 미확인 lease가 만료되면 다시 폴백 대상이 된다. 두 값(대상 등급, 대기 시간)은 config.toml로 조정 가능.
 - 구현: 3개 OS 모두 OS 기본 도구 subprocess 호출로 통일 — Linux `notify-send`, macOS `osascript`, Windows는 WinRT `ToastNotificationManager`를 호출하는 고정 PowerShell 스크립트(신규 의존성 0, AUMID는 PowerShell 기본값 재사용). 구현 중 신뢰성 문제가 실측되면 `winotify`로 전환하고 사유를 PR에 기록한다.
 - 내용 제약: 토스트 본문은 §9.2에 따라 상황 유형 + 짧은 표시명 수준의 최소 컨텍스트만 (토스트는 Windows 알림 센터 DB에 남는다). 외부 입력이 섞이는 문자열의 이스케이프를 hermetic 테스트로 검증한다. 발송 실패는 조용히 삼키지 않고 redacted 로그와 `get_status`에 노출한다.
 
@@ -259,7 +264,7 @@ CREATE TABLE memory_items (
 | **M2 Google read** | `setup` OAuth 플로우(headless 지원), Gmail/Calendar read adapter, sync 상태·신선도 추적 | 실계정 read 성공(Owner 계정, Owner 실행), fixture 기반 hermetic 테스트 통과 |
 | **M2.5 메모리 모델 v2** | entity 테이블·별칭, 1차 카테고리 고정 enum + 하위 자유 경로 계층, 중복 병합과 모순 보존, `update`/`list_entities` 도구 — 설계 정본 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md) | 해당 문서 §8 완료 기준 충족 |
 | **M3 Situation 엔진** | 3종 감지기, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 상태 머신 | fake clock 결정론 테스트로 3종 감지·정책 검증 |
-| **M4 전달** | `proactive_check`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
+| **M4 전달** | `proactive_check`/`confirm_delivery`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
 | **M5 연동 레시피** | §5.3 매트릭스 1순위(Grok CLI·Codex CLI·Hermes Cron) 연동 문서와 룰 템플릿, OS 스케줄러 등록 예시(cron·Windows 작업 스케줄러), Claude Code Desktop은 문서만 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 — 기본 조합은 Owner 머신의 Grok CLI + Codex CLI |
 | **M6 클로즈드 알파 릴리스** | README 정비, GCP OAuth 설정 가이드, wheel 빌드와 테스터 배포 절차 (PyPI 미사용) | 새 환경에서 clean install → 온보딩 완료까지 15분 이내, 지정 테스터에게 전달 가능한 상태 |
 
@@ -287,11 +292,12 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
    — M2.5 v2 시그니처 기준 (정본: MEMORY_MODEL_V2.md). "엄마"는 별칭으로 entity에 자동 연결
 2. fake clock을 07-11 09:00으로 설정, watcher 평가 실행
 3. personal_occasion 상황 생성 확인 (priority=high, why_now에 D-7 명시)
-4. proactive_check → 상황 수령, delivered 마킹 확인
-5. 같은 세션에서 재호출 → 동일 상황 재반환 없음 (dedupe)
-6. acknowledge → acknowledged 전이 확인
-7. 다음 해 07-11 → 새 occurrence로 재감지 확인
-8. 변형: Gmail sync가 stale인 상태에서도 3번이 성립하고,
+4. proactive_check → 상황과 receipt_token 수령, 아직 pending이며 활성 lease임을 확인
+5. confirm_delivery(receipt_token) → delivered 마킹 확인
+6. 같은 세션에서 재호출 → 동일 상황 재반환 없음 (dedupe)
+7. acknowledge → acknowledged 전이 확인
+8. 다음 해 07-11 → 새 occurrence로 재감지 확인
+9. 변형: Gmail sync가 stale인 상태에서도 3번이 성립하고,
    응답에 stale warning이 포함되는지 확인
 ```
 
@@ -312,7 +318,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 }
 ```
 
-- 온보딩 순서: `uvx proactive-mcp setup` (GCP OAuth 안내 포함) → 에이전트 mcp.json 등록 → (권장) 데몬 등록 → 에이전트 룰에 `proactive_check` 관례 추가.
+- 온보딩 순서: `uvx proactive-mcp setup` (GCP OAuth 안내 포함) → 에이전트 mcp.json 등록 → (권장) 데몬 등록 → 에이전트 룰에 `proactive_check` 후 `confirm_delivery` 관례 추가.
 - GCP OAuth 클라이언트 생성 가이드는 `docs/SETUP_GOOGLE.md`로 M6에서 작성한다.
 
 ## 13. 미결 사항

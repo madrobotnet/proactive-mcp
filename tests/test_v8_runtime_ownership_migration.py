@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,7 @@ def _write_v7_running_daemon(
     heartbeat_at: datetime,
 ) -> None:
     """Create the persisted running row that migration 008 upgrades."""
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.create_function("_proactive_normalize_label", 1, _identity)
         connection.create_function("_proactive_alias_norm", 1, _identity)
         for version, sql in load_migrations():

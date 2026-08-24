@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from contextlib import ExitStack
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
@@ -14,6 +15,7 @@ from proactive_mcp.delivery import EvaluationDependencies, EvaluationService
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server.situation_requests import MuteScope, parse_snooze_until
 from proactive_mcp.server.situation_responses import (
+    ConfirmDeliveryResponse,
     ListSituationsResponse,
     MuteResponse,
     ProactiveCheckResponse,
@@ -28,7 +30,13 @@ from proactive_mcp.sources.lazy_sync import (
     LazySyncPolicy,
     open_source_access,
 )
-from proactive_mcp.store import SituationNotFoundError, SituationState, Store
+from proactive_mcp.store import (
+    SituationNotFoundError,
+    SituationState,
+    Store,
+    evaluate_source_freshness,
+)
+from proactive_mcp.store.situations import MAX_SITUATION_PAGE_SIZE
 
 if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
@@ -40,6 +48,7 @@ __all__ = [
     "SituationToolDependencies",
     "SituationToolService",
     "acknowledge_situation",
+    "confirm_delivery",
     "get_situation",
     "list_situations",
     "mute_situation",
@@ -49,6 +58,7 @@ __all__ = [
 ]
 
 _SituationId = Annotated[int, Field(validation_alias="id")]
+_MIN_EVALUATION_INTERVAL = timedelta(seconds=5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,11 +72,11 @@ class SituationToolDependencies:
 
 
 class SituationToolService:
-    """Answer the six delivery tools from one open store.
+    """Answer the seven delivery tools from one open store.
 
-    ``proactive_check`` runs the shared evaluation pass first and then
-    claims rows atomically, so several agent sessions may check the same
-    database without either of them delivering one situation twice (§5.1).
+    ``proactive_check`` runs the shared evaluation pass and leases rows
+    atomically. Only ``confirm_delivery`` commits the delivery after the host
+    received the result, preventing silent loss when a transport fails (§5.1).
     """
 
     _dependencies: SituationToolDependencies
@@ -76,34 +86,60 @@ class SituationToolService:
         self._dependencies = dependencies
 
     def proactive_check(self) -> ProactiveCheckResponse:
-        """Evaluate, claim what attention policy allows, report what is held."""
-        completed = self._dependencies.evaluation.run_once()
+        """Evaluate, lease what attention policy allows, report what is held."""
         now = self._dependencies.clock.now()
+        if self._dependencies.store.try_start_evaluation(
+            minimum_interval=_MIN_EVALUATION_INTERVAL
+        ):
+            completed = self._dependencies.evaluation.run_once()
+            gmail_freshness = completed.result.gmail_freshness
+            calendar_freshness = completed.result.calendar_freshness
+            warnings = completed.warnings
+        else:
+            gmail_state, calendar_state = self._dependencies.store.list_source_sync()
+            gmail_freshness = evaluate_source_freshness(gmail_state, now)
+            calendar_freshness = evaluate_source_freshness(calendar_state, now)
+            warnings = tuple(
+                f"{source}: source is {freshness.status}"
+                for source, freshness in (
+                    ("gmail", gmail_freshness),
+                    ("calendar", calendar_freshness),
+                )
+                if freshness.status != "ok"
+            )
         attention = self._dependencies.runtime.attention
-        claimed = attention.claim_for_delivery(now)
-        held_count = len(self._situations.list_situations(state="pending"))
+        reservation = attention.reserve_for_delivery(now)
+        claimed = reservation.situations
+        held_count = self._situations.count_pending_unclaimed(now)
         return ProactiveCheckResponse(
             situations=tuple(situation_response(item) for item in claimed),
+            receipt_token=reservation.claim_token if claimed else None,
             freshness=google_freshness_response(
-                completed.result.gmail_freshness,
-                completed.result.calendar_freshness,
+                gmail_freshness,
+                calendar_freshness,
             ),
             budget=budget_response(attention.budget_usage(now)),
             held_count=held_count,
-            warnings=completed.warnings,
-            all_clear=not claimed and held_count == 0 and not completed.warnings,
+            warnings=warnings,
+            all_clear=not claimed and held_count == 0 and not warnings,
         )
 
     def list_situations(
         self,
         state: SituationState | None = None,
+        *,
+        after_id: int = 0,
+        limit: int = 20,
     ) -> ListSituationsResponse:
         """List stored situations, optionally filtered to one state."""
+        page = self._situations.list_situations(
+            state,
+            after_id=after_id,
+            limit=limit,
+        )
         return ListSituationsResponse(
-            items=tuple(
-                situation_response(item)
-                for item in self._situations.list_situations(state)
-            )
+            items=tuple(situation_response(item) for item in page),
+            next_after_id=page[-1].id if len(page) == limit and page else None,
         )
 
     def get_situation(self, situation_id: int) -> SituationResponse:
@@ -112,6 +148,11 @@ class SituationToolService:
         if situation is None:
             raise SituationNotFoundError(situation_id)
         return situation_response(situation)
+
+    def confirm_delivery(self, receipt_token: str) -> ConfirmDeliveryResponse:
+        """Confirm that the MCP host received a proactive-check result."""
+        delivered = self._situations.confirm_delivery(receipt_token)
+        return ConfirmDeliveryResponse(delivered_count=len(delivered))
 
     def acknowledge_situation(self, situation_id: int) -> SituationResponse:
         """Record that the user handled one delivered situation."""
@@ -206,21 +247,36 @@ class _ToolCall:
 
 
 async def proactive_check() -> str:
-    """Return the situations worth raising now and mark them delivered."""
+    """Return situations under a lease that requires receipt confirmation."""
     with _ToolCall() as service:
         return service.proactive_check().model_dump_json()
 
 
-async def list_situations(*, state: SituationState | None = None) -> str:
+async def list_situations(
+    *,
+    state: SituationState | None = None,
+    after_id: Annotated[int, Field(ge=0)] = 0,
+    limit: Annotated[int, Field(ge=1, le=MAX_SITUATION_PAGE_SIZE)] = 20,
+) -> str:
     """Return stored situations without delivering any of them."""
     with _ToolCall() as service:
-        return service.list_situations(state).model_dump_json()
+        return service.list_situations(
+            state,
+            after_id=after_id,
+            limit=limit,
+        ).model_dump_json()
 
 
 async def get_situation(situation_id: _SituationId) -> str:
     """Return one situation and its evidence by id."""
     with _ToolCall() as service:
         return service.get_situation(situation_id).model_dump_json()
+
+
+async def confirm_delivery(receipt_token: str) -> str:
+    """Confirm receipt of a proactive result before it becomes delivered."""
+    with _ToolCall() as service:
+        return service.confirm_delivery(receipt_token).model_dump_json()
 
 
 async def acknowledge_situation(situation_id: _SituationId) -> str:

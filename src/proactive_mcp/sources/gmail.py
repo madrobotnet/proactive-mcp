@@ -29,9 +29,11 @@ _HTTP_SERVER_ERROR_MIN: Final[int] = 500
 _HTTP_SERVER_ERROR_MAX: Final[int] = 600
 _MAX_THREAD_RESPONSE_BYTES: Final[int] = 1_000_000
 
-GmailErrorCode: TypeAlias = Literal["http_4xx", "http_5xx", "unknown"]
+GmailErrorCode: TypeAlias = Literal["http_4xx", "http_5xx", "resource_limit", "unknown"]
 GmailDegradationReason: TypeAlias = (
     Literal[
+        "pagination_limit",
+        "sync_budget_exhausted",
         "thread_projection_limit",
         "thread_response_too_large",
         "thread_list_entry_skipped",
@@ -70,6 +72,7 @@ class GmailHttpResponse:
 
     status_code: int
     body: bytes
+    limit_reason: Literal["response", "sync"] | None = None
 
 
 class _GmailTransport(Protocol):
@@ -107,6 +110,8 @@ class GmailReadResult:
     fetched_at: str
     page_count: int
     skipped_count: int
+    is_complete: bool
+    degradation_reasons: tuple[GmailDegradationReason, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +124,9 @@ class GmailInboxReadResult:
     page_count: int
     is_complete: bool
     degradation_reasons: tuple[GmailDegradationReason, ...]
+    allows_absent_resolution: bool = False
+    resolution_safe_thread_ids: frozenset[str] = frozenset()
+    resolution_excluded_thread_ids: frozenset[str] = frozenset()
 
 
 class _Wire(BaseModel):
@@ -183,6 +191,7 @@ class GmailAdapter:
         skipped_count = 0
         page_count = 0
         page_token: str | None = None
+        seen_tokens: set[str] = set()
         while page_count < DEFAULT_MAX_PAGES:
             query = {
                 "maxResults": str(DEFAULT_MAX_RESULTS),
@@ -208,28 +217,57 @@ class GmailAdapter:
                     fetched_at=now.isoformat(),
                     page_count=page_count,
                     skipped_count=skipped_count,
+                    is_complete=True,
+                    degradation_reasons=(),
                 )
-        raise GmailParseError(error_code="unknown")
+            if page_token in seen_tokens:
+                raise GmailParseError(error_code="unknown")
+            seen_tokens.add(page_token)
+        return GmailReadResult(
+            threads=tuple(threads),
+            fetched_at=now.isoformat(),
+            page_count=page_count,
+            skipped_count=skipped_count,
+            is_complete=False,
+            degradation_reasons=("pagination_limit",),
+        )
 
     def read_inbox_threads(self) -> GmailInboxReadResult:
         """Return detector-ready snapshots from profile, list, and thread reads."""
         profile = self.read_profile()
         listed = self.list_threads()
         snapshots: list[InboxThreadSnapshot] = []
-        reasons: list[GmailDegradationReason] = []
+        reasons: list[GmailDegradationReason] = list(listed.degradation_reasons)
+        excluded_thread_ids: set[str] = set()
         if listed.skipped_count:
             reasons.append("thread_list_entry_skipped")
         projected_threads = listed.threads[: self._max_projected_threads]
         if len(projected_threads) < len(listed.threads):
             reasons.append("thread_projection_limit")
-        for thread in projected_threads:
-            response_body = _get(
-                self._transport,
-                f"{GMAIL_THREADS_URL}/{quote(thread.id, safe='')}",
-                {"format": "full"},
+            excluded_thread_ids.update(
+                thread.id for thread in listed.threads[len(projected_threads) :]
             )
+        for thread in projected_threads:
+            try:
+                response_body = _get(
+                    self._transport,
+                    f"{GMAIL_THREADS_URL}/{quote(thread.id, safe='')}",
+                    {"format": "full"},
+                )
+            except _GmailBodyLimitError as error:
+                if error.limit_reason == "sync":
+                    reasons.append("sync_budget_exhausted")
+                    start = projected_threads.index(thread)
+                    excluded_thread_ids.update(
+                        item.id for item in projected_threads[start:]
+                    )
+                    break
+                reasons.append("thread_response_too_large")
+                excluded_thread_ids.add(thread.id)
+                continue
             if len(response_body) > _MAX_THREAD_RESPONSE_BYTES:
                 reasons.append("thread_response_too_large")
+                excluded_thread_ids.add(thread.id)
                 continue
             detail = _parse_json(
                 THREAD_DETAIL_ADAPTER,
@@ -243,9 +281,12 @@ class GmailAdapter:
             )
             if snapshot is None:
                 reasons.append("thread_without_projectable_message")
+                excluded_thread_ids.add(thread.id)
             else:
                 snapshots.append(snapshot)
                 reasons.extend(snapshot.degradation_reasons)
+                if not snapshot.is_complete:
+                    excluded_thread_ids.add(thread.id)
         unique_reasons = tuple(dict.fromkeys(reasons))
         return GmailInboxReadResult(
             threads=tuple(snapshots),
@@ -254,7 +295,23 @@ class GmailAdapter:
             page_count=listed.page_count,
             is_complete=not unique_reasons,
             degradation_reasons=unique_reasons,
+            allows_absent_resolution=(
+                listed.is_complete
+                and listed.skipped_count == 0
+                and len(projected_threads) == len(listed.threads)
+            ),
+            resolution_safe_thread_ids=frozenset(
+                item.thread_id for item in snapshots if item.is_complete
+            ),
+            resolution_excluded_thread_ids=frozenset(excluded_thread_ids),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _GmailBodyLimitError(GmailError):
+    """Signal a production transport byte or pass-budget boundary."""
+
+    limit_reason: Literal["response", "sync"] = "response"
 
 
 def _get(
@@ -263,6 +320,11 @@ def _get(
     query: dict[str, str],
 ) -> bytes:
     response = transport.request("GET", url, query)
+    if response.limit_reason is not None:
+        raise _GmailBodyLimitError(
+            error_code="resource_limit",
+            limit_reason=response.limit_reason,
+        )
     if response.status_code == _HTTP_OK:
         return response.body
     if response.status_code in {401, 403}:

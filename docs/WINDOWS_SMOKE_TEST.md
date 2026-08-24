@@ -949,7 +949,7 @@ Checkpoint, and the isolation gate. All of these have to hold before you go on:
 - **`database.path` ends with `m5-smoke\proactive.db`.** If it ends with `.proactive-mcp\proactive.db`, the variable didn't take and you are one command away from pointing an agent at your real data. Stop and set it again.
 - **`google.gmail.status` is `not_configured` and `google.calendar.status` is `not_configured`.** Anything else means credentials are reachable from the smoke directory, so stop and check what you copied in there.
 - `database.status` is `healthy`, `database.journal_mode` is `wal`
-- **`database.migration_version` is `8`.** Version `7` means you're still on M4 code, so redo M5-P1.
+- **`database.migration_version` is `9`.** Version `8` lacks the security-hardening migration, so update the checkout and rerun setup.
 - `overall` is `degraded`, `daemon.status` is `not_running`, `budget.daily_budget` is `20`
 
 `degraded` is expected. M5 never runs Google setup, and the smoke directory has no credentials by design.
@@ -1056,7 +1056,7 @@ canonical session-start rule from [`docs/INTEGRATIONS.md`](INTEGRATIONS.md),
 clause for clause, flattened onto one line:
 
 ```powershell
-$sessionRule = "At the start of every new session, call the MCP tool proactive_check exactly once, before you answer the user. Call it once per session and no more, unless the user explicitly asks for a fresh proactive check. If it returns situations, lead your reply with a short, natural summary of them. If it returns freshness warnings, say the result may be incomplete. Never report that there is nothing to report while a source is stale or failed. If it returns nothing and freshness is healthy, say nothing about it and answer the user's actual request."
+$sessionRule = "At the start of every new session, call the MCP tool proactive_check exactly once, before you answer the user. Call it once per session and no more, unless the user explicitly asks for a fresh proactive check. If it returns a receipt_token, call confirm_delivery with that token exactly once before presenting the situations. If it returns situations, lead your reply with a short, natural summary of them. If it returns freshness warnings, say the result may be incomplete. Never report that there is nothing to report while a source is stale or failed. If it returns nothing and freshness is healthy, say nothing about it and answer the user's actual request."
 $grokSessionRule = $sessionRule
 $codexSessionRule = 'developer_instructions="' + ($sessionRule -replace '"', '\"') + '"'
 Write-Output $grokSessionRule
@@ -1768,7 +1768,7 @@ Fail:
 
 Go through this before you write the sign-off comment. Counts and states only, no content.
 
-1. Branch is `feat/m5-integration-recipes` (or `main` after merge), `migration_version` is `8`
+1. Branch is the intended test branch (or `main` after merge), and `migration_version` is `9`
 2. **Every scenario ran against `m5-smoke\proactive.db`,** with `google.gmail.status` and `google.calendar.status` both `not_configured`, and your real database was never opened
 3. The test-only config is the one from M5-P2, it sits in `m5-smoke`, and you know it isn't production behavior
 4. Every claim used a fresh `TAG` and its own `daemon --once` pass

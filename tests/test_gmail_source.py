@@ -154,6 +154,55 @@ def test_read_inbox_threads_projects_deadline_from_plain_text_body() -> None:
     assert transport.calls[2][2] == {"format": "full"}
 
 
+def test_spoofed_from_header_cannot_impersonate_a_sent_message() -> None:
+    thread_url = f"{GMAIL_THREADS_URL}/thread-deadline"
+    spoofed = _fixture("thread_deadline.json").replace(
+        b"Fixture Sender <sender@example.test>",
+        b"User <USER@EXAMPLE.COM>",
+    )
+    transport = FakeGmailTransport(
+        {
+            GMAIL_PROFILE_URL: {None: (200, _fixture("profile.json"))},
+            GMAIL_THREADS_URL: {None: (200, _fixture("threads_deadline.json"))},
+            thread_url: {None: (200, spoofed)},
+        }
+    )
+
+    snapshot = _adapter(transport).read_inbox_threads().threads[0]
+
+    assert snapshot.latest_from_user is False
+    assert snapshot.user_is_recipient is True
+
+
+def test_missing_provider_direction_labels_degrade_without_header_fallback() -> None:
+    thread_url = f"{GMAIL_THREADS_URL}/thread-deadline"
+    missing_labels = (
+        _fixture("thread_deadline.json")
+        .replace(
+            b'      "labelIds": ["INBOX"],\r\n',
+            b"",
+        )
+        .replace(
+            b'      "labelIds": ["INBOX"],\n',
+            b"",
+        )
+    )
+    transport = FakeGmailTransport(
+        {
+            GMAIL_PROFILE_URL: {None: (200, _fixture("profile.json"))},
+            GMAIL_THREADS_URL: {None: (200, _fixture("threads_deadline.json"))},
+            thread_url: {None: (200, missing_labels)},
+        }
+    )
+
+    result = _adapter(transport).read_inbox_threads()
+
+    assert result.threads[0].latest_from_user is False
+    assert result.threads[0].user_is_recipient is False
+    assert "direction_metadata_missing" in result.degradation_reasons
+    assert result.is_complete is False
+
+
 def test_read_inbox_threads_preserves_adjacent_html_block_deadline() -> None:
     # Given: the deadline phrase spans adjacent block elements in an HTML-only body.
     thread_url = f"{GMAIL_THREADS_URL}/thread-html-deadline"
@@ -337,13 +386,15 @@ def test_skips_thread_missing_id() -> None:
     assert result.skipped_count == 1
 
 
-def test_page_cap_raises_parse_error() -> None:
+def test_page_cap_returns_bounded_partial_result() -> None:
     transport = FakeGmailTransport(repeating=True)
 
-    with pytest.raises(GmailParseError):
-        _ = _adapter(transport).list_threads()
+    result = _adapter(transport).list_threads()
 
     assert len(transport.calls) == DEFAULT_MAX_PAGES
+    assert result.threads == ()
+    assert result.is_complete is False
+    assert result.degradation_reasons == ("pagination_limit",)
 
 
 def test_logs_and_errors_omit_email_pii(caplog: pytest.LogCaptureFixture) -> None:

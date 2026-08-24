@@ -37,7 +37,7 @@ def test_v4_maps_person_fact_to_fact_and_preserves_legacy_fields(
     seed_legacy_v3_database(db_path)
 
     with Store(db_path) as store:
-        assert store.status().migration_version == 8
+        assert store.status().migration_version == 9
 
     with closing(sqlite3.connect(db_path)) as connection:
         assert migrated_memory_projection(connection) == expected_migrated_rows()
@@ -67,8 +67,8 @@ def test_v4_legacy_upgrade_is_idempotent(tmp_path: Path) -> None:
         second = store.status().migration_version
 
     with closing(sqlite3.connect(db_path)) as connection:
-        assert first == second == 8
-        assert applied_versions(connection) == {1, 2, 3, 4, 5, 6, 7, 8}
+        assert first == second == 9
+        assert applied_versions(connection) == {1, 2, 3, 4, 5, 6, 7, 8, 9}
         assert scalar_int(connection, "SELECT COUNT(*) FROM memory_items") == 5
         assert scalar_int(connection, "SELECT COUNT(*) FROM entities") == 2
         assert migrated_memory_projection(connection) == expected_migrated_rows()
@@ -122,7 +122,7 @@ def test_v4_collapses_equivalent_alias_spellings(
     seed_legacy_database(db_path, rows)
 
     with Store(db_path) as store:
-        assert store.status().migration_version == 8
+        assert store.status().migration_version == 9
 
     with closing(sqlite3.connect(db_path)) as connection:
         assert scalar_int(connection, "SELECT COUNT(*) FROM memory_items") == 2
@@ -252,7 +252,7 @@ def test_v4_preserves_every_memory_row_and_distinct_alias(tmp_path: Path) -> Non
     seed_legacy_database(db_path, rows)
 
     with Store(db_path) as store:
-        assert store.status().migration_version == 8
+        assert store.status().migration_version == 9
 
     with closing(sqlite3.connect(db_path)) as connection:
         assert scalar_int(connection, "SELECT COUNT(*) FROM memory_items") == 8

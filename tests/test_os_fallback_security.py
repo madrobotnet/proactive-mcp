@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,6 +16,7 @@ from proactive_mcp.delivery.notify import (
     SubprocessNotificationRunner,
     parse_notification_platform,
     send_os_notification,
+    trusted_notifier_path,
 )
 from proactive_mcp.delivery.payload import NotificationPayload, notification_payload
 from proactive_mcp.store import Detection, SituationEvidence
@@ -32,7 +34,12 @@ CANARY_EVENT_TITLE = "CANARY_EVENT_stealth-acquisition"
 SERVER_TITLE = "Calendar conflict on 2026-08-22"
 POISON_TITLE = "Alice Johnson"
 INJECTION_TITLE = '-e "pwned"; -Command Start-Process calc; $(whoami)'
-_NOTIFY = ("notify-send", "--", SERVER_TITLE, "calendar_conflict")
+_NOTIFY = (
+    trusted_notifier_path("linux"),
+    "--",
+    SERVER_TITLE,
+    "calendar_conflict",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,12 +124,15 @@ def test_payload_drops_quoted_external_and_why_now() -> None:
 @pytest.mark.parametrize(
     ("platform", "prefix"),
     [
-        ("linux", ("notify-send", "--")),
-        ("darwin", ("osascript", str(MACOS_NOTIFICATION_SCRIPT))),
+        ("linux", (trusted_notifier_path("linux"), "--")),
+        (
+            "darwin",
+            (trusted_notifier_path("darwin"), str(MACOS_NOTIFICATION_SCRIPT)),
+        ),
         (
             "win32",
             (
-                "powershell.exe",
+                trusted_notifier_path("win32"),
                 "-NoProfile",
                 "-NonInteractive",
                 "-File",
@@ -175,11 +185,11 @@ def test_injection_title_stays_one_argv_element(
 def test_subprocess_runner_uses_argv_without_shell_or_stdin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen: list[tuple[tuple[str, ...], Mapping[str, bool | float]]] = []
+    seen: list[tuple[tuple[str, ...], Mapping[str, object]]] = []
 
     def fake_run(
         argv: Sequence[str],
-        **kwargs: bool | float,
+        **kwargs: object,
     ) -> subprocess.CompletedProcess[str]:
         seen.append((tuple(argv), kwargs))
         return subprocess.CompletedProcess(argv, 0)
@@ -187,19 +197,30 @@ def test_subprocess_runner_uses_argv_without_shell_or_stdin(
     monkeypatch.setattr(subprocess, "run", fake_run)
     SubprocessNotificationRunner().run(_NOTIFY, DEFAULT_NOTIFICATION_TIMEOUT)
 
-    assert seen == [
-        (
-            _NOTIFY,
-            {
-                "check": False,
-                "shell": False,
-                "stdin": subprocess.DEVNULL,
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-                "timeout": DEFAULT_NOTIFICATION_TIMEOUT.total_seconds(),
-            },
-        )
-    ]
+    assert len(seen) == 1
+    argv, options = seen[0]
+    assert argv == _NOTIFY
+    assert options["check"] is False
+    assert options["shell"] is False
+    assert options["stdin"] == subprocess.DEVNULL
+    assert options["stdout"] == subprocess.DEVNULL
+    assert options["stderr"] == subprocess.DEVNULL
+    assert options["timeout"] == DEFAULT_NOTIFICATION_TIMEOUT.total_seconds()
+    assert options["cwd"] == str(Path(_NOTIFY[0]).parent)
+    environment = options["env"]
+    assert isinstance(environment, dict)
+    assert environment["PATH"] != "attacker"
+
+
+def test_hostile_path_never_controls_notifier_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PATH", "attacker")
+
+    argv = _send(NotificationPayload("calendar_conflict", "Calendar conflict"), "linux")
+
+    assert argv[0] == "/usr/bin/notify-send"
+    assert "attacker" not in argv[0]
 
 
 def test_timeout_error_is_redacted_code_only(

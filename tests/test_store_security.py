@@ -43,7 +43,7 @@ def test_macos_platform_creates_private_store(
 
     assert status.path == (tmp_path / "proactive.db").absolute()
     assert status.journal_mode.lower() == "wal"
-    assert status.migration_version == 8
+    assert status.migration_version == 9
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows permissions use ACLs")
@@ -121,6 +121,33 @@ def test_windows_store_installs_protected_current_user_acl(
     assert applied
     assert 0 in applied
     assert 3 in applied
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows identity pinning")
+def test_windows_store_pins_parent_and_database_for_its_lifetime(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    db_path = state / "proactive.db"
+
+    with Store(db_path):
+        with pytest.raises(PermissionError):
+            db_path.unlink()
+        with pytest.raises(PermissionError):
+            _ = state.rename(tmp_path / "replaced-state")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows hard-link defense")
+def test_windows_store_rejects_hardlinked_database(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    original = state / "original.db"
+    db_path = state / "proactive.db"
+    with Store(original):
+        pass
+    os.link(original, db_path)
+
+    with pytest.raises(UnsafeDatabasePathError), Store(db_path):
+        pass
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux strong path defense")

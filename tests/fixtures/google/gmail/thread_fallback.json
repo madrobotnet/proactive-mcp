@@ -4,6 +4,7 @@
   "messages": [
     {
       "id": "message-fallback",
+      "labelIds": ["INBOX"],
       "threadId": "thread-fallback",
       "internalDate": "1787302800000",
       "snippet": "Fallback preview",

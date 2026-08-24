@@ -4,6 +4,7 @@
   "messages": [
     {
       "id": "message-z",
+      "labelIds": ["INBOX"],
       "threadId": "thread-deadline",
       "internalDate": "1787302800000",
       "snippet": "Please review the attached details.",
@@ -26,6 +27,7 @@
     },
     {
       "id": "message-a",
+      "labelIds": ["SENT"],
       "threadId": "thread-deadline",
       "internalDate": "1787302800000",
       "snippet": "Older message",

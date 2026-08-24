@@ -22,6 +22,11 @@ _ELIGIBLE: Final = """
                     WHERE situation_id = situations.id
                 )
                 AND NOT EXISTS (
+                    SELECT 1 FROM situation_delivery_claims
+                    WHERE situation_id = situations.id
+                      AND expires_at > ?
+                )
+                AND NOT EXISTS (
                     SELECT 1 FROM situation_fallbacks
                     WHERE situation_id = situations.id
                 )

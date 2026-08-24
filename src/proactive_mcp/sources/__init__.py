@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from typing_extensions import override
 
@@ -61,6 +61,32 @@ class MissingGoogleCredentialsError(Exception):
         return "Google credentials are missing; run proactive-mcp setup"
 
 
+_LimitReason: TypeAlias = Literal["response", "sync"]
+_MAX_GMAIL_PROFILE_BYTES = 64 * 1024
+_MAX_GMAIL_PAGE_BYTES = 1_000_000
+_MAX_GMAIL_THREAD_BYTES = 1_000_000
+_MAX_CALENDAR_PAGE_BYTES = 2_000_000
+_MAX_SOURCE_SYNC_BYTES = 8_000_000
+_MAX_SOURCE_SYNC_REQUESTS = 64
+
+
+@dataclass(slots=True)
+class _SourceReadBudget:
+    """Bound cumulative allocation and request work for one source pass."""
+
+    bytes_remaining: int = _MAX_SOURCE_SYNC_BYTES
+    requests_remaining: int = _MAX_SOURCE_SYNC_REQUESTS
+
+    def request_limit(self, endpoint_limit: int) -> int:
+        if self.requests_remaining <= 0 or self.bytes_remaining <= 0:
+            return 0
+        self.requests_remaining -= 1
+        return min(endpoint_limit, self.bytes_remaining)
+
+    def consume(self, size: int) -> None:
+        self.bytes_remaining = max(0, self.bytes_remaining - size)
+
+
 def configure_google_sources(
     database_path: Path,
     options: GoogleSetupOptions,
@@ -81,6 +107,7 @@ class _GmailReadTransport:
     """Adapt the shared transport to Gmail's nominal response contract."""
 
     transport: GoogleAuthenticatedGetTransport
+    budget: _SourceReadBudget = field(default_factory=_SourceReadBudget)
 
     def request(
         self,
@@ -90,8 +117,28 @@ class _GmailReadTransport:
     ) -> GmailHttpResponse:
         """Perform one Gmail GET and return its adapter-specific response type."""
         del method
-        response = self.transport.get(url, query)
-        return GmailHttpResponse(status_code=response.status_code, body=response.body)
+        endpoint_limit = (
+            _MAX_GMAIL_PROFILE_BYTES
+            if url.endswith("/profile")
+            else _MAX_GMAIL_THREAD_BYTES
+            if "/threads/" in url
+            else _MAX_GMAIL_PAGE_BYTES
+        )
+        allowed = self.budget.request_limit(endpoint_limit)
+        if allowed == 0:
+            return GmailHttpResponse(200, b"", limit_reason="sync")
+        response = self.transport.get(url, query, max_bytes=allowed)
+        limit_reason: _LimitReason | None = None
+        if response.too_large:
+            self.budget.consume(allowed)
+            limit_reason = "sync" if allowed < endpoint_limit else "response"
+        else:
+            self.budget.consume(len(response.body))
+        return GmailHttpResponse(
+            status_code=response.status_code,
+            body=response.body,
+            limit_reason=limit_reason,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +146,7 @@ class _CalendarReadTransport:
     """Adapt the shared transport to Calendar's nominal response contract."""
 
     transport: GoogleAuthenticatedGetTransport
+    budget: _SourceReadBudget = field(default_factory=_SourceReadBudget)
 
     def request(
         self,
@@ -108,10 +156,20 @@ class _CalendarReadTransport:
     ) -> CalendarHttpResponse:
         """Perform one Calendar GET and return its adapter-specific response type."""
         del method
-        response = self.transport.get(url, query)
+        allowed = self.budget.request_limit(_MAX_CALENDAR_PAGE_BYTES)
+        if allowed == 0:
+            return CalendarHttpResponse(200, b"", limit_reason="sync")
+        response = self.transport.get(url, query, max_bytes=allowed)
+        limit_reason: _LimitReason | None = None
+        if response.too_large:
+            self.budget.consume(allowed)
+            limit_reason = "sync" if allowed < _MAX_CALENDAR_PAGE_BYTES else "response"
+        else:
+            self.budget.consume(len(response.body))
         return CalendarHttpResponse(
             status_code=response.status_code,
             body=response.body,
+            limit_reason=limit_reason,
         )
 
 

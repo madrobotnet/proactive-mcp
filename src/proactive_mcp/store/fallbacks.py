@@ -129,10 +129,11 @@ class FallbackStore:
         return self._clock.now().astimezone(UTC).isoformat()
 
 
-def _eligibility(claim: FallbackClaim) -> tuple[str, str, str]:
+def _eligibility(claim: FallbackClaim) -> tuple[str, str, str, str]:
     """Bind the fallback eligibility parameters in their SQL order."""
     return (
         json.dumps(list(claim.priorities)),
         claim.detected_before,
+        claim.claimed_at,
         claim.claimed_at,
     )

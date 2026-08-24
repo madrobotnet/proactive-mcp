@@ -47,6 +47,11 @@ class _WindowsBackend(Protocol):
 
     def enforce_private_sidecars(self, path: Path) -> None: ...
 
+    def private_database_guard(
+        self,
+        path: Path,
+    ) -> AbstractContextManager[None]: ...
+
 
 def _uses_windows_backend() -> bool:
     return os.name == "nt"
@@ -72,6 +77,7 @@ def _is_windows_backend(module: ModuleType) -> TypeGuard[_WindowsBackend]:
             "prepare_private_database_file",
             "private_initialization_lock",
             "enforce_private_sidecars",
+            "private_database_guard",
         )
     )
 
@@ -138,6 +144,20 @@ def enforce_private_sidecars(directory_fd: int | None, path: Path) -> None:
     _posix_backend(path).enforce_private_sidecars(directory_fd, path)
 
 
+@contextmanager
+def private_database_guard(
+    directory_fd: int | None,
+    path: Path,
+) -> Generator[None]:
+    """Prevent Windows parent/file replacement while SQLite is open."""
+    del directory_fd
+    if _uses_windows_backend():
+        with _windows_backend(path).private_database_guard(path):
+            yield
+        return
+    yield
+
+
 def sqlite_connection_target(directory_fd: int | None, path: Path) -> str:
     """Return the Linux descriptor-pinned target or the real absolute path."""
     if directory_fd is not None and sys.platform == "linux":
@@ -150,6 +170,7 @@ __all__ = [
     "enforce_private_sidecars",
     "open_private_parent",
     "prepare_private_database_file",
+    "private_database_guard",
     "private_initialization_lock",
     "sqlite_connection_target",
 ]

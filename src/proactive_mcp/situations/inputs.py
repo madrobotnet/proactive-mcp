@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 InboxThreadDegradationReason: TypeAlias = Literal[
     "body_snippet_fallback",
     "body_truncated",
+    "direction_metadata_ambiguous",
+    "direction_metadata_missing",
+    "identity_headers_ambiguous",
     "mime_structure_truncated",
 ]
 SnapshotItem = TypeVar("SnapshotItem")
@@ -58,6 +61,9 @@ class SourceSnapshot(Generic[SnapshotItem]):
     sync_cursor: str | None = None
     warning_codes: tuple[str, ...] = ()
     error_code: SourceErrorCode | None = None
+    resolve_absent: bool = False
+    resolution_scope_ids: frozenset[str] = frozenset()
+    resolution_excluded_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
 from typing import TYPE_CHECKING, Final
 
 from proactive_mcp.config import AttentionSettings
@@ -14,11 +15,12 @@ from ._dates import local_day_end, local_day_start
 if TYPE_CHECKING:
     from datetime import time, tzinfo
 
-    from proactive_mcp.store import Situation, SituationStore
+    from proactive_mcp.store import DeliveryReservation, Situation, SituationStore
 
 __all__ = ["AttentionPolicy", "BudgetUsage", "QuietState", "is_quiet_time"]
 
 _PRIORITY_RANK: Final[dict[str, int]] = {"critical": 0, "high": 1, "routine": 2}
+_DELIVERY_CLAIM_LEASE: Final = timedelta(minutes=2)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,12 +112,34 @@ class AttentionPolicy:
             )
         )
 
+    def reserve_for_delivery(self, now: datetime) -> DeliveryReservation:
+        """Lease deliverable rows until the MCP host confirms receipt."""
+        utc_now = now.astimezone(UTC)
+        local_today = now.astimezone(self._tz).date()
+        return self._situations.reserve_for_delivery(
+            DeliveryClaim(
+                delivered_at=_utc_iso(utc_now),
+                cooldown_after=_utc_iso(utc_now - self._settings.cooldown),
+                local_day_start=_utc_iso(local_day_start(local_today, self._tz)),
+                local_day_end=_utc_iso(local_day_end(local_today, self._tz)),
+                daily_budget=self._settings.daily_budget,
+                allow_noncritical=not self.quiet_state(now).active,
+            ),
+            claim_token=token_urlsafe(32),
+            expires_at=utc_now + _DELIVERY_CLAIM_LEASE,
+        )
+
     def budget_usage(self, now: datetime) -> BudgetUsage:
         """Return today's non-critical usage and remaining daily budget."""
         local_today = now.astimezone(self._tz).date()
         used = self._situations.count_delivered_between(
             local_day_start(local_today, self._tz),
             local_day_end(local_today, self._tz),
+        )
+        used += self._situations.count_reserved_between(
+            local_day_start(local_today, self._tz),
+            local_day_end(local_today, self._tz),
+            now,
         )
         daily_budget = self._settings.daily_budget
         return BudgetUsage(

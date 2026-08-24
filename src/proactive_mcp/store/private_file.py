@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Final
 
 from typing_extensions import override
 
-from .private_path import open_private_parent
+from .private_path import open_private_parent, prepare_private_database_file
 from .storage_errors import UnsafeDatabasePathError
 
 if TYPE_CHECKING:
@@ -34,6 +34,9 @@ class PrivateFileUnsupportedError(Exception):
 
 def write_private_text(path: Path, content: str) -> None:
     """Atomically replace a private POSIX text file through a pinned parent."""
+    if os.name == "nt":
+        _write_windows_private_text(path, content)
+        return
     directory_fd = _open_posix_parent(path)
     temporary_name = f".{path.name}.{secrets.token_hex(8)}.tmp"
     try:
@@ -62,6 +65,8 @@ def write_private_text(path: Path, content: str) -> None:
 
 def read_private_text(path: Path) -> str | None:
     """Read a private POSIX text file through a pinned parent descriptor."""
+    if os.name == "nt":
+        return _read_windows_private_text(path)
     directory_fd = _open_posix_parent(path)
     try:
         try:
@@ -76,6 +81,9 @@ def read_private_text(path: Path) -> str | None:
 
 def delete_private_file(path: Path) -> None:
     """Delete a private POSIX file without following a redirected parent."""
+    if os.name == "nt":
+        _delete_windows_private_file(path)
+        return
     directory_fd = _open_posix_parent(path)
     try:
         with suppress(FileNotFoundError):
@@ -112,3 +120,36 @@ def _open_regular(
         raise UnsafeDatabasePathError(path, "private file owner or type is unsafe")
     os.fchmod(descriptor, _PRIVATE_FILE_MODE)
     return descriptor
+
+
+def _write_windows_private_text(path: Path, content: str) -> None:
+    """Replace a DACL-protected Windows file from a protected sibling temp."""
+    _ = open_private_parent(path)
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        prepare_private_database_file(None, temporary)
+        with temporary.open("w", encoding="utf-8") as private_file:
+            _ = private_file.write(content)
+            private_file.flush()
+            os.fsync(private_file.fileno())
+        _ = temporary.replace(path)
+        prepare_private_database_file(None, path)
+    finally:
+        with suppress(FileNotFoundError):
+            temporary.unlink()
+
+
+def _read_windows_private_text(path: Path) -> str | None:
+    _ = open_private_parent(path)
+    if not path.exists():
+        return None
+    prepare_private_database_file(None, path)
+    return path.read_text(encoding="utf-8")
+
+
+def _delete_windows_private_file(path: Path) -> None:
+    _ = open_private_parent(path)
+    if not path.exists():
+        return
+    prepare_private_database_file(None, path)
+    path.unlink()

@@ -128,8 +128,9 @@ class DaemonRun:
 class WatcherDaemon:
     """Compose one watcher process from its liveness, evaluation, and fallback.
 
-    The daemon never claims delivery of a situation: only an agent calling
-    ``proactive_check`` may mark one delivered (§5.1). A pass therefore
+    The daemon never commits agent delivery: only a host that receives a
+    ``proactive_check`` result and calls ``confirm_delivery`` may do so (§5.1).
+    A pass therefore
     evaluates, hands unreceived rows to the OS notification fallback, and
     records the heartbeat that proves the cycle completed.
     """
