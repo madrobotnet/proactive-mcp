@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from proactive_mcp.store import DaemonStatus, SourceFreshnessStatus
 
 __all__ = [
+    "DaemonDiagnosticResponse",
     "DaemonStatusResponse",
     "DatabaseStatusResponse",
     "DeliveriesStatusResponse",
@@ -61,6 +62,21 @@ class DatabaseStatusResponse(BaseModel):
     journal_mode: str
     busy_timeout: int
     migration_version: int
+
+
+class DaemonDiagnosticResponse(BaseModel):
+    """Journal-safe identity of one failed daemon phase."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    phase: Literal[
+        "config", "database", "credential", "source_sync", "evaluation",
+        "notification", "heartbeat", "runtime_ownership",
+    ]
+    code: Literal[
+        "invalid", "unsafe_path", "open_failed", "unavailable", "failed",
+        "ownership_conflict",
+    ]
 
 
 class DaemonStatusResponse(BaseModel):
@@ -207,7 +223,7 @@ def _daemon_warnings(liveness: DaemonLiveness) -> tuple[str, ...]:
     # Exhaustive over DaemonLiveness: a new value leaves ``warning`` unbound,
     # breaking this match at type-check time rather than silently reporting a
     # healthy installation.
-    match liveness:
+    match liveness:  # noqa: MATCH_OK - pyright proves the literal exhaustive.
         case "running":
             warning = ""
         case "never_started":

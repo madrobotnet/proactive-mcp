@@ -8,9 +8,10 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 
 from proactive_mcp.config import load_config
+from proactive_mcp.delivery.daemon import DaemonFailureError, DaemonFailureKind
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server import StatusResponse, build_status
-from proactive_mcp.server.status import status_response
+from proactive_mcp.server.status import DaemonDiagnosticResponse, status_response
 from proactive_mcp.store import FallbackClaim, Store
 from tests.situation_test_support import FakeClock, utc_datetime
 from tests.situation_tool_support import UNTRUSTED_SUBJECT, pending_detection
@@ -235,3 +236,17 @@ def test_status_never_started_falls_back_to_configured_cadence(
     assert status.daemon.liveness == "never_started"
     assert status.daemon.status == "not_running"
     assert any("never run" in warning for warning in status.warnings)
+
+
+@pytest.mark.parametrize("kind", tuple(DaemonFailureKind))
+def test_daemon_diagnostic_taxonomy_serializes_only_phase_and_code(
+    kind: DaemonFailureKind,
+) -> None:
+    # Given: one member of the closed daemon failure taxonomy.
+    failure = DaemonFailureError(kind)
+
+    # When: the journal-facing response is serialized.
+    payload = DaemonDiagnosticResponse(phase=failure.phase, code=failure.code)
+
+    # Then: only bounded routing values cross the status boundary.
+    assert payload.model_dump() == {"phase": failure.phase, "code": failure.code}

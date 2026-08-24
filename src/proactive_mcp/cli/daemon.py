@@ -6,6 +6,7 @@ import os
 import signal
 import sqlite3
 import sys
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, ClassVar, Final
 
@@ -15,8 +16,11 @@ from proactive_mcp.clock import UtcClock
 from proactive_mcp.config import ConfigError, load_config
 from proactive_mcp.delivery.daemon import (
     DaemonDependencies,
+    DaemonFailureError,
+    DaemonFailureKind,
     DaemonSchedule,
     WatcherDaemon,
+    run_daemon_phase,
 )
 from proactive_mcp.delivery.evaluation import (
     EvaluationDependencies,
@@ -32,6 +36,7 @@ from proactive_mcp.delivery.notify import (
 )
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.scheduler import EventScheduler
+from proactive_mcp.server.status import DaemonDiagnosticResponse
 from proactive_mcp.situations import SituationRuntime
 from proactive_mcp.sources.lazy_sync import ScheduledSourceProvider, open_source_access
 from proactive_mcp.store import Store, UnsafeDatabasePathError
@@ -41,7 +46,7 @@ if TYPE_CHECKING:
 
     from proactive_mcp.clock import Clock
     from proactive_mcp.delivery.daemon import DaemonPass
-    from proactive_mcp.delivery.evaluation import SourceOutcome
+    from proactive_mcp.delivery.evaluation import SourceOutcome, SourceProvider
     from proactive_mcp.scheduler import Scheduler
 
 __all__ = [
@@ -91,6 +96,20 @@ def stopping_scheduler() -> Scheduler:
     return scheduler
 
 
+@dataclass(frozen=True, slots=True)
+class _DaemonSourceProvider:
+    """Attach source-sync phase identity to the shared source provider."""
+
+    provider: SourceProvider
+
+    def prepare_sources(self) -> SourceOutcome:
+        """Prepare sources or raise one redacted daemon failure."""
+        return run_daemon_phase(
+            DaemonFailureKind.SOURCE_SYNC_FAILED,
+            self.provider.prepare_sources,
+        )
+
+
 def open_watcher_daemon(store: Store, clock: Clock) -> WatcherDaemon:
     """Compose the library watcher from local paths, store, and config."""
     paths = resolve_paths(os.environ)
@@ -103,8 +122,10 @@ def open_watcher_daemon(store: Store, clock: Clock) -> WatcherDaemon:
             evaluation=EvaluationService(
                 EvaluationDependencies(
                     evaluator=runtime.engine,
-                    sources=ScheduledSourceProvider(
-                        open_source_access(paths, store, clock)
+                    sources=_DaemonSourceProvider(
+                        ScheduledSourceProvider(
+                            open_source_access(paths, store, clock)
+                        )
                     ),
                 )
             ),
@@ -132,18 +153,36 @@ def run_daemon(*, once: bool, poll_interval_minutes: float | None) -> int:
             daemon = open_watcher_daemon(store, clock)
             # Persist the effective CLI/config cadence before the library start
             # so a later same-owner claim keeps this interval on the liveness row.
-            store.daemon.record_start(os.getpid(), poll_interval=interval)
+            run_daemon_phase(
+                DaemonFailureKind.HEARTBEAT_FAILED,
+                lambda: store.daemon.record_start(
+                    os.getpid(),
+                    poll_interval=interval,
+                ),
+            )
             if once:
                 _emit_once(daemon.run_once())
                 return 0
             _ = daemon.run_forever(DaemonSchedule(stopping_scheduler(), interval))
-    except (ConfigError, UnsafeDatabasePathError) as error:
-        _ = sys.stderr.write(f"error: {error}\n")
-        return 2
+    except ConfigError:
+        return _emit_failure(DaemonFailureKind.CONFIG_INVALID)
+    except UnsafeDatabasePathError:
+        return _emit_failure(DaemonFailureKind.DATABASE_UNSAFE_PATH)
     except (OSError, sqlite3.Error):
-        _ = sys.stderr.write("error: daemon infrastructure failure\n")
-        return 1
+        return _emit_failure(DaemonFailureKind.DATABASE_OPEN_FAILED)
+    except DaemonFailureError as failure:
+        return _emit_diagnostic(failure)
     return 0
+
+
+def _emit_failure(kind: DaemonFailureKind) -> int:
+    return _emit_diagnostic(DaemonFailureError(kind))
+
+
+def _emit_diagnostic(failure: DaemonFailureError) -> int:
+    payload = DaemonDiagnosticResponse(phase=failure.phase, code=failure.code)
+    _ = sys.stderr.write(f"{payload.model_dump_json()}\n")
+    return 2
 
 
 def _poll_override(value: float | None) -> timedelta | None:
@@ -172,7 +211,7 @@ def _emit_once(completed: DaemonPass) -> None:
 
 
 def _source_token(outcome: SourceOutcome) -> str:
-    match outcome:
+    match outcome:  # noqa: MATCH_OK - pyright proves the union exhaustive.
         case PreparedSources():
             return "prepared"
         case SkippedSources(reason=reason):
