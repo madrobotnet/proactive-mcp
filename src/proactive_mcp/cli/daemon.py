@@ -211,7 +211,8 @@ def _emit_once(completed: DaemonPass) -> None:
 
 
 def _source_token(outcome: SourceOutcome) -> str:
-    match outcome:  # noqa: MATCH_OK - pyright proves the union exhaustive.
+    # Exhaustive: basedpyright proves every SourceOutcome variant is handled.
+    match outcome:
         case PreparedSources():
             return "prepared"
         case SkippedSources(reason=reason):

@@ -223,7 +223,7 @@ def _daemon_warnings(liveness: DaemonLiveness) -> tuple[str, ...]:
     # Exhaustive over DaemonLiveness: a new value leaves ``warning`` unbound,
     # breaking this match at type-check time rather than silently reporting a
     # healthy installation.
-    match liveness:  # noqa: MATCH_OK - pyright proves the literal exhaustive.
+    match liveness:
         case "running":
             warning = ""
         case "never_started":
