@@ -126,6 +126,7 @@ class GmailAdapter:
         profile = self.read_profile()
         listed = self.list_threads()
         snapshots: list[InboxThreadSnapshot] = []
+        detail_request_count = 0
         reasons: list[GmailDegradationReason] = list(listed.degradation_reasons)
         source_is_complete = listed.is_complete
         excluded_thread_ids: set[str] = set()
@@ -140,6 +141,7 @@ class GmailAdapter:
                 thread.id for thread in listed.threads[len(projected_threads) :]
             )
         for thread in projected_threads:
+            detail_request_count += 1
             try:
                 response_body = _get(
                     self._transport,
@@ -189,6 +191,9 @@ class GmailAdapter:
             provider_history_cursor=profile.history_id,
             page_count=listed.page_count,
             is_complete=source_is_complete,
+            request_count=1 + listed.page_count + detail_request_count,
+            projected_thread_count=len(snapshots),
+            excluded_thread_count=len(excluded_thread_ids),
             degradation_reasons=unique_reasons,
             allows_absent_resolution=(
                 listed.is_complete

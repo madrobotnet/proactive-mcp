@@ -130,6 +130,9 @@ class GmailInboxReadResult:
     page_count: int
     is_complete: bool
     degradation_reasons: tuple[GmailDegradationReason, ...]
+    request_count: int = 0
+    projected_thread_count: int = 0
+    excluded_thread_count: int = 0
     allows_absent_resolution: bool = False
     resolution_safe_thread_ids: frozenset[str] = frozenset()
     resolution_excluded_thread_ids: frozenset[str] = frozenset()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     import pytest
 
     from proactive_mcp.clock import Clock
+    from proactive_mcp.situations.inputs import InboxThreadSnapshot, SourceSnapshot
     from proactive_mcp.sources.credentials import GoogleCredential
 
 _NOW: Final = datetime(2026, 8, 21, 9, 0, tzinfo=UTC)
@@ -48,6 +50,8 @@ class _FakeCredential:
 
 @dataclass(frozen=True, slots=True)
 class _RecordingGoogleTransport:
+    thread_count: int = 0
+    page_size: int = 100
     calls: list[tuple[str, dict[str, str]]] = field(default_factory=list)
 
     def get(
@@ -65,7 +69,20 @@ class _RecordingGoogleTransport:
                 b'"threadsTotal":0,"historyId":"1"}'
             )
         elif url == GMAIL_THREADS_URL:
-            body = b'{"threads":[]}'
+            offset = int(query.get("pageToken", "0"))
+            end = min(offset + self.page_size, self.thread_count)
+            payload: dict[str, list[dict[str, str]] | str] = {
+                "threads": [{"id": f"thread-{index}"} for index in range(offset, end)]
+            }
+            if end < self.thread_count:
+                payload["nextPageToken"] = str(end)
+            body = json.dumps(payload).encode()
+        elif url.startswith(f"{GMAIL_THREADS_URL}/"):
+            body = (
+                b'{"messages":[{"id":"message","labelIds":["INBOX"],'
+                b'"internalDate":"1787302800000","payload":{"mimeType":'
+                b'"text/plain","body":{"data":"Ym91bmRlZA"}}}]}'
+            )
         else:
             body = b'{"items":[]}'
         return GoogleHttpResponse(status_code=200, body=body)
@@ -77,6 +94,12 @@ class _TransportFactory:
 
     def __call__(self, _credential: GoogleCredential) -> _RecordingGoogleTransport:
         return self.transport
+
+
+@dataclass(frozen=True, slots=True)
+class _CapacityScenario:
+    thread_count: int
+    page_size: int
 
 
 def _configured_paths(root: Path) -> ProactivePaths:
@@ -102,6 +125,89 @@ def _patch_transport(
         "GoogleAuthenticatedGetTransport",
         _TransportFactory(transport),
     )
+
+
+def _read_gmail_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: _CapacityScenario,
+) -> tuple[SourceSnapshot[InboxThreadSnapshot], _RecordingGoogleTransport]:
+    transport = _RecordingGoogleTransport(
+        thread_count=scenario.thread_count,
+        page_size=scenario.page_size,
+    )
+    _patch_transport(monkeypatch, transport)
+    clock: Clock = _FixedClock()
+    with Store(tmp_path / "proactive.db", clock=clock) as store:
+        service = sources.GoogleReadServiceFactory(
+            store=store,
+            clock=clock,
+            credentials=CredentialStore(tmp_path),
+            gmail_lookback=_LOOKBACK,
+        ).open(_FakeCredential())
+        snapshot = service.prepare_evaluation().gmail_threads
+    assert snapshot is not None
+    return snapshot, transport
+
+
+def test_factory_reads_more_than_64_threads_with_configured_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: 97 compact in-range threads returned through the production factory.
+    scenario = _CapacityScenario(thread_count=97, page_size=97)
+
+    # When: the composed Gmail adapter projects every listed thread.
+    snapshot, transport = _read_gmail_capacity(tmp_path, monkeypatch, scenario)
+
+    # Then: the old 64-request ceiling does not truncate the healthy read.
+    gmail_calls = [
+        call for call in transport.calls if "gmail.googleapis.com" in call[0]
+    ]
+    assert len(snapshot.items) == 97
+    assert len(gmail_calls) == 99
+    assert snapshot.complete is True
+    assert "sync_budget_exhausted" not in snapshot.warning_codes
+
+
+def test_factory_capacity_reaches_200_threads_at_request_budget_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: exactly 200 threads spread over all 20 permitted list pages.
+    scenario = _CapacityScenario(thread_count=200, page_size=10)
+
+    # When: the factory-created adapter performs the bounded read.
+    snapshot, transport = _read_gmail_capacity(tmp_path, monkeypatch, scenario)
+
+    # Then: profile + pages + details exactly consumes the 221-request budget.
+    gmail_calls = [
+        call for call in transport.calls if "gmail.googleapis.com" in call[0]
+    ]
+    assert len(snapshot.items) == 200
+    assert len(gmail_calls) == 221
+    assert snapshot.complete is True
+
+
+def test_factory_marks_201st_listed_thread_as_explicitly_partial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: 201 listed in-range threads fit within the page boundary.
+    scenario = _CapacityScenario(thread_count=201, page_size=11)
+
+    # When: the factory-created adapter applies the 200-thread projection cap.
+    snapshot, transport = _read_gmail_capacity(tmp_path, monkeypatch, scenario)
+
+    # Then: one exclusion and its reason are explicit instead of false healthy output.
+    gmail_calls = [
+        call for call in transport.calls if "gmail.googleapis.com" in call[0]
+    ]
+    assert len(snapshot.items) == 200
+    assert len(gmail_calls) == 220
+    assert snapshot.complete is False
+    assert len(snapshot.resolution_excluded_ids) == 1
+    assert "thread_projection_limit" in snapshot.warning_codes
 
 
 def test_google_smoke_uses_configured_lookback_in_generated_query(
