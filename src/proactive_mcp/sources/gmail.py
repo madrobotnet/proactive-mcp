@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Final, TypeVar
+from datetime import timedelta
+from typing import TYPE_CHECKING, Final
 from urllib.parse import quote
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
-
+from ._gmail_list_wire import parse_json, parse_profile, parse_thread_list_page
 from ._gmail_models import (
     GmailAuthError,
     GmailBodyLimitError,
@@ -15,6 +15,7 @@ from ._gmail_models import (
     GmailErrorCode,
     GmailHttpResponse,
     GmailInboxReadResult,
+    GmailLookbackError,
     GmailParseError,
     GmailProfile,
     GmailReadResult,
@@ -35,38 +36,12 @@ GMAIL_THREADS_URL: Final[str] = "https://gmail.googleapis.com/gmail/v1/users/me/
 DEFAULT_MAX_PAGES: Final[int] = 20
 DEFAULT_MAX_RESULTS: Final[int] = 100
 DEFAULT_MAX_PROJECTED_THREADS: Final[int] = 200
+DEFAULT_LOOKBACK: Final[timedelta] = timedelta(days=7)
 THREAD_FIELDS: Final[str] = "nextPageToken,threads(id,historyId)"
 _HTTP_OK: Final[int] = 200
 _HTTP_SERVER_ERROR_MIN: Final[int] = 500
 _HTTP_SERVER_ERROR_MAX: Final[int] = 600
 _MAX_THREAD_RESPONSE_BYTES: Final[int] = 1_000_000
-
-_T = TypeVar("_T")
-
-
-class _Wire(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="ignore")
-
-
-class _WireProfile(_Wire):
-    email_address: str = Field(alias="emailAddress")
-    messages_total: int = Field(alias="messagesTotal")
-    threads_total: int = Field(alias="threadsTotal")
-    history_id: str = Field(alias="historyId")
-
-
-class _WireThread(_Wire):
-    id: str | None = None
-    history_id: str | None = Field(default=None, alias="historyId")
-
-
-class _WireThreadsPage(_Wire):
-    threads: tuple[_WireThread, ...] = ()
-    next_page_token: str | None = Field(default=None, alias="nextPageToken")
-
-
-_PROFILE_ADAPTER: Final[TypeAdapter[_WireProfile]] = TypeAdapter(_WireProfile)
-_PAGE_ADAPTER: Final[TypeAdapter[_WireThreadsPage]] = TypeAdapter(_WireThreadsPage)
 
 
 class GmailAdapter:
@@ -75,6 +50,7 @@ class GmailAdapter:
     _transport: GmailTransport
     _clock: Clock
     _max_projected_threads: int
+    _lookback: timedelta
 
     def __init__(
         self,
@@ -82,26 +58,24 @@ class GmailAdapter:
         clock: Clock,
         *,
         max_projected_threads: int = DEFAULT_MAX_PROJECTED_THREADS,
+        lookback: timedelta = DEFAULT_LOOKBACK,
     ) -> None:
-        """Bind a GET-only transport and a UTC clock."""
+        """Bind a GET-only transport, a UTC clock, and a positive inbox lookback."""
+        if lookback <= timedelta(0):
+            raise GmailLookbackError(lookback=lookback)
         self._transport = transport
         self._clock = clock
         self._max_projected_threads = max_projected_threads
+        self._lookback = lookback
 
     def read_profile(self) -> GmailProfile:
         """Return the authenticated user's typed Gmail profile."""
-        body = _get(self._transport, GMAIL_PROFILE_URL, {})
-        wire = _parse_json(_PROFILE_ADAPTER, body)
-        return GmailProfile(
-            email_address=wire.email_address,
-            messages_total=wire.messages_total,
-            threads_total=wire.threads_total,
-            history_id=wire.history_id,
-        )
+        return parse_profile(_get(self._transport, GMAIL_PROFILE_URL, {}))
 
     def list_threads(self) -> GmailReadResult:
         """Return typed inbox threads, discarding list snippets."""
         now = self._clock.now()
+        after_query = f"after:{int((now - self._lookback).timestamp())}"
         threads: list[GmailThread] = []
         skipped_count = 0
         page_count = 0
@@ -112,15 +86,15 @@ class GmailAdapter:
                 "maxResults": str(DEFAULT_MAX_RESULTS),
                 "labelIds": "INBOX",
                 "fields": THREAD_FIELDS,
+                "q": after_query,
             }
             if page_token is not None:
                 query["pageToken"] = page_token
-            page = _parse_json(
-                _PAGE_ADAPTER, _get(self._transport, GMAIL_THREADS_URL, query)
+            page = parse_thread_list_page(
+                _get(self._transport, GMAIL_THREADS_URL, query)
             )
             page_count += 1
-            for item in page.threads:
-                thread = _parse_thread(item)
+            for thread in page.threads:
                 if thread is None:
                     skipped_count += 1
                 else:
@@ -189,7 +163,7 @@ class GmailAdapter:
                 source_is_complete = False
                 excluded_thread_ids.add(thread.id)
                 continue
-            detail = _parse_json(
+            detail = parse_json(
                 THREAD_DETAIL_ADAPTER,
                 response_body,
             )
@@ -248,21 +222,8 @@ def _get(
     raise GmailParseError(error_code="unknown", http_status=response.status_code)
 
 
-def _parse_json(adapter: TypeAdapter[_T], body: bytes) -> _T:
-    try:
-        return adapter.validate_json(body)
-    except ValidationError:
-        raise GmailParseError(error_code="unknown") from None
-
-
-def _parse_thread(wire: _WireThread) -> GmailThread | None:
-    thread_id = wire.id
-    if thread_id is None or thread_id == "":
-        return None
-    return GmailThread(id=thread_id, history_id=wire.history_id)
-
-
 __all__ = [
+    "DEFAULT_LOOKBACK",
     "DEFAULT_MAX_PAGES",
     "GMAIL_PROFILE_URL",
     "GMAIL_THREADS_URL",
@@ -273,6 +234,7 @@ __all__ = [
     "GmailErrorCode",
     "GmailHttpResponse",
     "GmailInboxReadResult",
+    "GmailLookbackError",
     "GmailParseError",
     "GmailProfile",
     "GmailReadResult",

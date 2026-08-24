@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias, final
 
 from typing_extensions import override
 
 from proactive_mcp.clock import UtcClock
+from proactive_mcp.config import load_config
+from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.store import Store
 
 from .calendar import CalendarAdapter, CalendarHttpResponse
@@ -36,6 +38,7 @@ from .oauth import (
 from .transport import GoogleAuthenticatedGetTransport
 
 if TYPE_CHECKING:
+    from datetime import timedelta
     from pathlib import Path
 
     from proactive_mcp.clock import Clock
@@ -70,12 +73,18 @@ _MAX_SOURCE_SYNC_BYTES = 8_000_000
 _MAX_SOURCE_SYNC_REQUESTS = 64
 
 
-@dataclass(slots=True)
+@final
 class _SourceReadBudget:
     """Bound cumulative allocation and request work for one source pass."""
 
-    bytes_remaining: int = _MAX_SOURCE_SYNC_BYTES
-    requests_remaining: int = _MAX_SOURCE_SYNC_REQUESTS
+    __slots__ = ("bytes_remaining", "requests_remaining")
+
+    bytes_remaining: int
+    requests_remaining: int
+
+    def __init__(self) -> None:
+        self.bytes_remaining = _MAX_SOURCE_SYNC_BYTES
+        self.requests_remaining = _MAX_SOURCE_SYNC_REQUESTS
 
     def request_limit(self, endpoint_limit: int) -> int:
         if self.requests_remaining <= 0 or self.bytes_remaining <= 0:
@@ -180,6 +189,7 @@ class GoogleReadServiceFactory:
     store: Store
     clock: Clock
     credentials: CredentialStore
+    gmail_lookback: timedelta
 
     def open(self, credential: GoogleCredential) -> GoogleSyncService:
         """Bind the read adapters of both sources to one credential."""
@@ -187,7 +197,11 @@ class GoogleReadServiceFactory:
         return GoogleSyncService(
             GoogleReadDependencies(
                 store=self.store,
-                gmail=GmailAdapter(_GmailReadTransport(transport), self.clock),
+                gmail=GmailAdapter(
+                    _GmailReadTransport(transport),
+                    self.clock,
+                    lookback=self.gmail_lookback,
+                ),
                 calendar=CalendarAdapter(_CalendarReadTransport(transport), self.clock),
                 credentials=self.credentials,
             )
@@ -202,17 +216,23 @@ def run_google_read_smoke(
     """Read Gmail and Calendar only after explicit real-account confirmation."""
     if not enabled:
         raise GoogleReadSmokeDisabledError
-    credential_store = CredentialStore(database_path.parent)
+    paths = ProactivePaths.for_database(database_path)
+    config = load_config(paths.config)
+    credential_store = CredentialStore(paths.state_directory)
     credentials = credential_store.load()
     if credentials is None:
         raise MissingGoogleCredentialsError
     transport = GoogleAuthenticatedGetTransport(credentials)
     clock = UtcClock()
-    with Store(database_path) as store:
+    with Store(paths.database) as store:
         return GoogleSyncService(
             GoogleReadDependencies(
                 store=store,
-                gmail=GmailAdapter(_GmailReadTransport(transport), clock),
+                gmail=GmailAdapter(
+                    _GmailReadTransport(transport),
+                    clock,
+                    lookback=config.sources.gmail_lookback,
+                ),
                 calendar=CalendarAdapter(_CalendarReadTransport(transport), clock),
                 credentials=credential_store,
             )

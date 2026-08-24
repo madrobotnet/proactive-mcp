@@ -10,6 +10,7 @@ from proactive_mcp.config import (
     DaemonSettings,
     DetectorSettings,
     FallbackSettings,
+    SourceSettings,
     load_config,
 )
 
@@ -35,6 +36,16 @@ def test_daemon_settings_default_poll_interval_is_five_minutes() -> None:
 
     # Then: the watcher polls every five minutes.
     assert settings.poll_interval == timedelta(minutes=5)
+
+
+def test_source_settings_default_gmail_lookback_is_seven_days() -> None:
+    # Given: no source overrides.
+
+    # When: source settings use product defaults.
+    settings = SourceSettings()
+
+    # Then: Gmail reads the last seven days.
+    assert settings.gmail_lookback == timedelta(days=7)
 
 
 def test_fallback_settings_default_to_critical_after_thirty_minutes() -> None:
@@ -70,10 +81,11 @@ def test_load_config_uses_m4_defaults_when_file_is_missing(tmp_path: Path) -> No
     # When: configuration is loaded through the TOML boundary.
     settings = load_config(missing)
 
-    # Then: daemon and fallback product defaults are used.
+    # Then: daemon, fallback, and Gmail lookback product defaults are used.
     assert settings.daemon.poll_interval == timedelta(minutes=5)
     assert settings.fallback.priorities == ("critical",)
     assert settings.fallback.wait == timedelta(minutes=30)
+    assert settings.sources.gmail_lookback == timedelta(days=7)
 
 
 def test_load_config_reads_daemon_and_fallback_overrides(tmp_path: Path) -> None:
@@ -97,6 +109,21 @@ wait_minutes = 12
     assert settings.daemon.poll_interval == timedelta(minutes=7)
     assert settings.fallback.priorities == ("high", "routine")
     assert settings.fallback.wait == timedelta(minutes=12)
+
+
+def test_load_config_reads_gmail_lookback_days(tmp_path: Path) -> None:
+    # Given: TOML overrides the Gmail provider lookback away from seven days.
+    config_path = tmp_path / "config.toml"
+    _ = config_path.write_text(
+        "[sources]\ngmail_lookback_days = 3\n",
+        encoding="utf-8",
+    )
+
+    # When: configuration is loaded through the TOML boundary.
+    settings = load_config(config_path).sources
+
+    # Then: the typed source settings expose the override as days.
+    assert settings.gmail_lookback == timedelta(days=3)
 
 
 def test_load_config_keeps_existing_overrides_when_m4_tables_are_set(
@@ -225,3 +252,29 @@ def test_load_config_rejects_non_positive_durations(
     # Then: non-positive durations cannot cross the config boundary.
     assert raised.value.field == field
     assert raised.value.reason == "must be a positive number of minutes"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "[sources]\ngmail_lookback_days = 0\n",
+        "[sources]\ngmail_lookback_days = -1\n",
+        '[sources]\ngmail_lookback_days = "seven"\n',
+        "[sources]\ngmail_lookback_days = true\n",
+    ],
+)
+def test_load_config_rejects_invalid_gmail_lookback_days(
+    tmp_path: Path,
+    body: str,
+) -> None:
+    # Given: a Gmail lookback is zero, negative, or non-numeric.
+    config_path = tmp_path / "config.toml"
+    _ = config_path.write_text(body, encoding="utf-8")
+
+    # When: configuration is loaded through the TOML boundary.
+    with pytest.raises(ConfigError) as raised:
+        _ = load_config(config_path)
+
+    # Then: invalid lookbacks cannot cross the config boundary.
+    assert raised.value.field == "gmail_lookback_days"
+    assert raised.value.reason == "must be a positive number of days"

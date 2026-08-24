@@ -5,9 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias
 
+from typing_extensions import override
+
 from ._gmail_projection import ProjectionDegradationReason
 
 if TYPE_CHECKING:
+    from datetime import timedelta
+
     from proactive_mcp.situations.inputs import InboxThreadSnapshot
 
 GmailErrorCode: TypeAlias = Literal["http_4xx", "http_5xx", "resource_limit", "unknown"]
@@ -51,6 +55,17 @@ class GmailAuthError(GmailError):
 @dataclass(frozen=True, slots=True)
 class GmailParseError(GmailError):
     """Raised when a Gmail response cannot be parsed."""
+
+
+@dataclass(frozen=True, slots=True)
+class GmailLookbackError(Exception):
+    """Raised when inbox lookback is not a positive duration."""
+
+    lookback: timedelta
+
+    @override
+    def __str__(self) -> str:
+        return "lookback must be positive"
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +142,7 @@ __all__ = [
     "GmailErrorCode",
     "GmailHttpResponse",
     "GmailInboxReadResult",
+    "GmailLookbackError",
     "GmailParseError",
     "GmailProfile",
     "GmailReadResult",

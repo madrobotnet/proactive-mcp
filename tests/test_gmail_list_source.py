@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlparse
@@ -16,6 +16,7 @@ from proactive_mcp.sources.gmail import (
     GmailAdapter,
     GmailAuthError,
     GmailHttpResponse,
+    GmailLookbackError,
     GmailParseError,
     GmailThread,
 )
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 
 FIXTURES = Path(__file__).parent / "fixtures" / "google" / "gmail"
 NOW = datetime(2026, 7, 11, 9, 0, tzinfo=UTC)
+SEVEN_DAY_LOOKBACK = timedelta(days=7)
+SEVEN_DAY_Q = f"after:{int((NOW - SEVEN_DAY_LOOKBACK).timestamp())}"
 
 
 class FixedClock:
@@ -119,8 +122,14 @@ def test_pagination_follows_next_page_token() -> None:
     )
     assert result.page_count == 2
     assert len(transport.calls) == 2
-    assert "pageToken" not in transport.calls[0][2]
-    assert transport.calls[1][2]["pageToken"] == "page-2"
+    first_query = transport.calls[0][2]
+    second_query = transport.calls[1][2]
+    assert "pageToken" not in first_query
+    assert second_query["pageToken"] == "page-2"
+    assert first_query["labelIds"] == "INBOX"
+    assert second_query["labelIds"] == "INBOX"
+    assert first_query["q"] == SEVEN_DAY_Q
+    assert second_query["q"] == first_query["q"]
 
 
 def test_malformed_json_raises_parse_error() -> None:
@@ -176,9 +185,50 @@ def test_requests_are_get_only_profile_and_threads() -> None:
     assert profile_query == {}
     assert thread_query["maxResults"] == "100"
     assert thread_query["labelIds"] == "INBOX"
+    assert thread_query["q"] == SEVEN_DAY_Q
+    assert "newer_than" not in thread_query["q"]
     assert "threads(id,historyId)" in thread_query["fields"]
     assert "snippet" not in thread_query["fields"]
     assert "format" not in thread_query
+
+
+def test_list_threads_sends_seven_day_after_epoch() -> None:
+    transport = _threads("threads_empty.json")
+
+    _ = _adapter(transport).list_threads()
+
+    query = transport.calls[0][2]
+    assert query["labelIds"] == "INBOX"
+    assert query["q"] == SEVEN_DAY_Q
+    assert query["q"] == "after:1783155600"
+    assert "newer_than" not in query["q"]
+
+
+@pytest.mark.parametrize("lookback", [timedelta(0), timedelta(days=-3)])
+def test_non_positive_lookback_is_rejected_at_construction(
+    lookback: timedelta,
+) -> None:
+    transport = FakeGmailTransport()
+
+    with pytest.raises(GmailLookbackError) as caught:
+        _ = GmailAdapter(transport, FixedClock(), lookback=lookback)
+
+    assert caught.value.lookback == lookback
+    assert transport.calls == []
+
+
+def test_list_threads_sends_injected_lookback_after_epoch() -> None:
+    transport = _threads("threads_empty.json")
+    lookback = timedelta(days=3)
+    clock: Clock = FixedClock()
+
+    _ = GmailAdapter(transport, clock, lookback=lookback).list_threads()
+
+    query = transport.calls[0][2]
+    assert query["labelIds"] == "INBOX"
+    assert query["q"] == f"after:{int((NOW - lookback).timestamp())}"
+    assert query["q"] != SEVEN_DAY_Q
+    assert "newer_than" not in query["q"]
 
 
 def test_skips_thread_missing_id() -> None:
