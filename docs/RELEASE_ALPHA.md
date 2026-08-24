@@ -183,20 +183,32 @@ not need a repository, `git`, a package index, `mcp add`, or manual MCP JSON.
 The agent carries out the OS-specific handoff: checksum verification, Python and
 uv checks, virtual environment creation, wheel installation, OAuth JSON
 placement and permissions, MCP registration, setup, smoke checks,
-`daemon --once`, and status verification.
+`daemon --once`, and status verification. It then installs and verifies the
+host-specific session-start rule, a scheduled agent invocation through
+`serve-scheduled`, and the platform-appropriate continuous watcher: Windows
+Task Scheduler, a Linux user service, or a macOS LaunchAgent. A scheduler must
+launch the agent so it can call `proactive_check` and conditionally
+`confirm_delivery`; invoking the proactive-mcp CLI alone does not deliver a
+situation.
 
 If the checksum differs, the agent stops before installation and reports the
 mismatch. The expected pre-setup status is `"overall":"degraded"` with sources
 `not_configured`. The sheet directs the agent to use headless setup where the
-machine has no browser.
+machine has no browser. On Linux and macOS it also creates
+`~/.proactive-mcp` with mode `0700`, installs `client_secret.json` with mode
+`0600`, and verifies both permissions before setup.
 
 ## 7. Tester report
 
 Within the fifteen-minute onboarding window, report success or failure, elapsed
-onboarding time, and the blocked step, if any. Include only the redacted status
-fields named in section 9 before and after setup. Do not send complete status
-JSON, OAuth JSON, tokens, database paths, PIDs, or timestamps. The agent must
-report a checksum mismatch without installing the wheel.
+onboarding time, and the blocked step, if any. Success includes a verified
+session-start call, one scheduled agent delivery invocation, and a running
+continuous watcher. If the watcher cannot be registered, the tester must first
+receive an explanation that periodic sync and OS-notification fallback will be
+unavailable and explicitly consent to degraded mode. Include only the redacted
+status fields named in section 9 before and after setup. Do not send complete
+status JSON, OAuth JSON, tokens, database paths, PIDs, or timestamps. The agent
+must report a checksum mismatch without installing the wheel.
 
 ## 8. Rollback
 
@@ -238,8 +250,11 @@ against the fifteen-minute bar from §12, and the blocked step, if any. Retain
 only these redacted status fields before and after setup: `overall`,
 `database.status`, `database.migration_version`, each Google source `status`
 and `error_code`, and warning strings. Do not retain or ask for
-`database.path`, PID, or timestamps. The blocked steps are the valuable part;
-they're what the onboarding docs get fixed from.
+`database.path`, PID, or timestamps. Record whether the session-start call,
+scheduled agent invocation, and continuous watcher verification succeeded, or
+whether the tester explicitly consented to degraded mode after the missing
+periodic sync and OS-notification fallback were explained. The blocked steps
+are the valuable part; they're what the onboarding docs get fixed from.
 
 ## Owner checklist
 
@@ -254,5 +269,8 @@ they're what the onboarding docs get fixed from.
 - [ ] OAuth client JSON sent as its own message, with placement, permissions, and no-commit warning
 - [ ] `git status` clean, no OAuth JSON anywhere in the tree
 - [ ] No PyPI publication, and no `uv publish` in the build history
+- [ ] POSIX OAuth directory/file permissions verified as `0700`/`0600`
+- [ ] Session-start call and scheduled agent delivery invocation verified
+- [ ] Continuous watcher verified, or degraded mode limitations explained and explicitly accepted
 - [ ] Tester report records success or failure, elapsed onboarding time, and any blocked step
 - [ ] Rollback steps delivered with the install steps, not after the tester asks
