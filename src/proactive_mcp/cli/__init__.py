@@ -6,11 +6,20 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Final, Literal, NoReturn, TypeAlias
+from typing import (
+    TYPE_CHECKING,
+    ClassVar,
+    Final,
+    Literal,
+    NoReturn,
+    TypeAlias,
+    assert_never,
+)
 
 from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp.cli.daemon import run_daemon
+from proactive_mcp.config import ConfigError
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server import build_status, create_server, server
 from proactive_mcp.sources import (
@@ -36,6 +45,7 @@ Command: TypeAlias = Literal[
 ]
 _CLIENT_SECRETS_ENV: Final = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
 _GOOGLE_ERRORS: Final = (
+    ConfigError,
     CredentialScopeError,
     CredentialStorageError,
     GoogleOAuthAuthorizationTimeoutError,
@@ -223,6 +233,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_setup(arguments)
             case "google-smoke":
                 run_google_smoke(arguments)
+            case _:
+                assert_never(arguments.command)
     except _GOOGLE_ERRORS as error:
         _ = sys.stderr.write(f"error: {error}\n")
         return 2

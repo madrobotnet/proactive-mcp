@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Protocol, Self
+from typing import TYPE_CHECKING, Final, Protocol, Self, assert_never
 
+from proactive_mcp.config import load_config
 from proactive_mcp.delivery.evaluation import PreparedSources, SkippedSources
 from proactive_mcp.sources import GoogleReadServiceFactory
-from proactive_mcp.sources.credentials import CredentialStore
+from proactive_mcp.sources.credentials import CredentialStorageError, CredentialStore
 from proactive_mcp.store import DEFAULT_STALE_AFTER, evaluate_source_freshness
 
 if TYPE_CHECKING:
@@ -190,8 +191,9 @@ def open_source_access(
     store: Store,
     clock: Clock,
 ) -> SourceAccess:
-    """Bind source state, credential storage, and authenticated readers."""
+    """Bind source state, credential storage, and configured readers."""
     credentials = CredentialStore(paths.state_directory)
+    gmail_lookback = load_config(paths.config).sources.gmail_lookback
     return SourceAccess(
         sync_state=store,
         credentials=credentials,
@@ -199,6 +201,7 @@ def open_source_access(
             store=store,
             clock=clock,
             credentials=credentials,
+            gmail_lookback=gmail_lookback,
         ),
     )
 
@@ -218,7 +221,12 @@ def _read_with_lease(
 
 def _read(access: SourceAccess) -> SourceOutcome:
     """Read both sources with the stored credential, if one exists."""
-    credential = access.credentials.load()
+    try:
+        credential = access.credentials.load()
+    except CredentialStorageError:
+        # Unreachable secure storage degrades this pass to local truth only; no
+        # credential is re-derived or written to a weaker backend to recover.
+        return SkippedSources("credential_storage_unavailable")
     if credential is None:
         return SkippedSources("missing_credentials")
     return PreparedSources(access.readers.open(credential).prepare_evaluation())
@@ -237,6 +245,8 @@ def _authorization_skip(states: _SourceStates) -> SourceSkipReason | None:
                 blocked = "needs_reauth"
             case "configured":
                 blocked = None
+            case _:
+                assert_never(state.auth_state)
         if blocked is not None:
             return blocked
     return None
@@ -252,6 +262,8 @@ def _daemon_owns_reads(liveness: DaemonLiveness) -> bool:
             watching = True
         case "never_started" | "stale" | "stopped":
             watching = False
+        case _:
+            assert_never(liveness)
     return watching
 
 

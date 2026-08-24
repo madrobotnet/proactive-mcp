@@ -263,14 +263,21 @@ def test_new_fallback_epoch_supersedes_stale_keyring_after_recovery(
     assert loaded.refresh_token == _EPOCH_B
 
 
-def test_tombstone_prevents_keyring_credential_resurrection(tmp_path: Path) -> None:
+def test_unavailable_keyring_deletion_fails_with_tombstone_preserved(
+    tmp_path: Path,
+) -> None:
     keyring = FakeKeyring()
     state = tmp_path / "state"
     store = CredentialStore(state, keyring=keyring)
     store.save(_credentials(refresh_token=_TOMBSTONED))
 
     object.__setattr__(keyring, "unavailable", True)
-    store.delete()
+    with pytest.raises(CredentialStorageError):
+        store.delete()
+
+    assert store.state_path.exists()
+    assert keyring.passwords
+
     object.__setattr__(keyring, "unavailable", False)
 
     assert CredentialStore(state, keyring=keyring).load() is None

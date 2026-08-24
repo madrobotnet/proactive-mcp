@@ -7,62 +7,22 @@ import binascii
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parseaddr
-from html.parser import HTMLParser
 from typing import ClassVar, Final, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
-from typing_extensions import override
 
 from proactive_mcp.situations.inputs import (
     InboxThreadDegradationReason,
     InboxThreadSnapshot,
 )
 
+from ._gmail_html import extract_html_text
+
 ProjectionDegradationReason: TypeAlias = InboxThreadDegradationReason
 _MILLISECONDS_PER_SECOND: Final[int] = 1000
 _MAX_BODY_CHARS: Final[int] = 4_000
 _MAX_MIME_DEPTH: Final[int] = 8
 _MAX_MIME_PARTS: Final[int] = 64
-_HTML_BREAK_TAGS: Final[frozenset[str]] = frozenset(
-    {
-        "address",
-        "article",
-        "aside",
-        "blockquote",
-        "br",
-        "dd",
-        "div",
-        "dl",
-        "dt",
-        "figcaption",
-        "figure",
-        "footer",
-        "form",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "header",
-        "hr",
-        "li",
-        "main",
-        "nav",
-        "ol",
-        "p",
-        "pre",
-        "section",
-        "table",
-        "tbody",
-        "td",
-        "tfoot",
-        "th",
-        "thead",
-        "tr",
-        "ul",
-    }
-)
 
 
 class _Wire(BaseModel):
@@ -168,7 +128,7 @@ def _trusted_direction(
         reasons: tuple[ProjectionDegradationReason, ...] = (
             "direction_metadata_missing",
         )
-    elif sent and inbox:
+    elif (sent and inbox) or not (sent or inbox):
         reasons = ("direction_metadata_ambiguous",)
     else:
         reasons = ()
@@ -194,37 +154,6 @@ class _BodyProjection:
     text: str | None
     truncated: bool
     structure_truncated: bool
-
-
-class _HtmlTextExtractor(HTMLParser):
-    pieces: list[str]
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.pieces = []
-
-    @override
-    def handle_data(self, data: str) -> None:
-        self.pieces.append(data)
-
-    @override
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        del attrs
-        if tag in _HTML_BREAK_TAGS:
-            self._append_break()
-
-    @override
-    def handle_endtag(self, tag: str) -> None:
-        if tag in _HTML_BREAK_TAGS:
-            self._append_break()
-
-    def _append_break(self) -> None:
-        if self.pieces and not self.pieces[-1].endswith((" ", "\t", "\n", "\r")):
-            self.pieces.append(" ")
 
 
 def _project_body(part: _WirePart | None) -> _BodyProjection:
@@ -255,12 +184,11 @@ def _project_body(part: _WirePart | None) -> _BodyProjection:
                 structure_truncated,
             )
         if decoded is not None and mime_type == "text/html" and html_text is None:
-            extractor = _HtmlTextExtractor()
-            extractor.feed(decoded)
-            extracted = "".join(extractor.pieces).strip()
-            if len(extracted) > _MAX_BODY_CHARS:
-                body_truncated = True
-            html_text = extracted[:_MAX_BODY_CHARS]
+            html_text, html_truncated = extract_html_text(
+                decoded,
+                max_chars=_MAX_BODY_CHARS,
+            )
+            body_truncated = body_truncated or html_truncated
         stack.extend((child, depth + 1) for child in reversed(current.parts))
     return _BodyProjection(html_text, body_truncated, structure_truncated)
 

@@ -68,3 +68,28 @@ SELECT_FALLBACK_RECORD: Final = """
             )))
             FROM situation_fallbacks WHERE situation_id = ?
             """
+SELECT_FALLBACK_SUMMARY: Final = """
+            SELECT _proactive_capture_fallback_summary(json_object(
+                'claimed', (
+                    SELECT COUNT(*) FROM situation_fallbacks
+                    WHERE outcome = 'claimed'
+                ),
+                'sent', (
+                    SELECT COUNT(*) FROM situation_fallbacks
+                    WHERE outcome = 'sent'
+                ),
+                'failed', (
+                    SELECT COUNT(*) FROM situation_fallbacks
+                    WHERE outcome = 'failed'
+                ),
+                'failure_codes', json((
+                    SELECT COALESCE(json_group_array(code), json_array())
+                    FROM (
+                        SELECT DISTINCT failure_code AS code
+                        FROM situation_fallbacks
+                        WHERE failure_code IS NOT NULL
+                        ORDER BY failure_code ASC
+                    )
+                ))
+            ))
+            """

@@ -47,8 +47,21 @@ class FallbackRecord:
     completed_at: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class FallbackSummary:
+    """Redacted outcome counts across every persisted fallback record."""
+
+    claimed: int
+    sent: int
+    failed: int
+    failure_codes: tuple[FallbackFailureCode, ...]
+
+
 FALLBACK_RECORD_ADAPTER: Final[TypeAdapter[FallbackRecord]] = TypeAdapter(
     FallbackRecord
+)
+FALLBACK_SUMMARY_ADAPTER: Final[TypeAdapter[FallbackSummary]] = TypeAdapter(
+    FallbackSummary
 )
 
 

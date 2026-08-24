@@ -8,14 +8,17 @@ from typing import TYPE_CHECKING
 
 from ._fallback_models import (
     FALLBACK_RECORD_ADAPTER,
+    FALLBACK_SUMMARY_ADAPTER,
     FallbackNotClaimedError,
     FallbackRecord,
+    FallbackSummary,
 )
 from ._fallback_sql import (
     INSERT_FALLBACK_CLAIM,
     RECORD_FALLBACK_OUTCOME,
     SELECT_FALLBACK_CANDIDATES,
     SELECT_FALLBACK_RECORD,
+    SELECT_FALLBACK_SUMMARY,
 )
 from ._sqlite_transaction import ImmediateTransaction
 
@@ -46,6 +49,7 @@ class FallbackStore:
     _clock: Clock
     _situations: SituationReader
     _records: list[FallbackRecord]
+    _summaries: list[FallbackSummary]
 
     def __init__(
         self,
@@ -58,10 +62,16 @@ class FallbackStore:
         self._clock = clock
         self._situations = situations
         self._records = []
+        self._summaries = []
         connection.create_function(
             "_proactive_capture_fallback_record",
             1,
             self._capture_record,
+        )
+        connection.create_function(
+            "_proactive_capture_fallback_summary",
+            1,
+            self._capture_summary,
         )
 
     def candidates(self, claim: FallbackClaim) -> tuple[Situation, ...]:
@@ -106,6 +116,12 @@ class FallbackStore:
         _ = self._connection.execute(SELECT_FALLBACK_RECORD, (situation_id,))
         return self._records[0] if self._records else None
 
+    def summary(self) -> FallbackSummary:
+        """Return redacted outcome counts for every persisted fallback."""
+        self._summaries.clear()
+        _ = self._connection.execute(SELECT_FALLBACK_SUMMARY)
+        return self._summaries[0]
+
     def _complete(
         self,
         situation_id: int,
@@ -124,6 +140,11 @@ class FallbackStore:
         record = FALLBACK_RECORD_ADAPTER.validate_json(payload)
         self._records.append(record)
         return record.situation_id
+
+    def _capture_summary(self, payload: str) -> int:
+        summary = FALLBACK_SUMMARY_ADAPTER.validate_json(payload)
+        self._summaries.append(summary)
+        return summary.claimed + summary.sent + summary.failed
 
     def _now_iso(self) -> str:
         return self._clock.now().astimezone(UTC).isoformat()
