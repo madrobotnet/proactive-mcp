@@ -1,17 +1,35 @@
 # Windows Owner smoke test
 
 Run the current M5 smoke on Windows with PowerShell, Grok CLI, and Codex CLI.
-The M1.5 through M4 sections below preserve historical acceptance evidence from
-the client used at the time; Cursor was removed from the supported platform set
-by Owner decision [#20](https://github.com/madrobotnet/proactive-mcp/issues/20).
-For current support validation, start at [M5 연동 레시피 실증](#m5-연동-레시피-실증-issue-6).
-Don't install from PyPI: this repo is private and `proactive-mcp` is not
-published. `uvx proactive-mcp` and `pip install proactive-mcp` are the wrong
-path.
+Those two CLIs are the supported platform set for this milestone
+(`docs/PRODUCT_PLAN.md` §5.3). Cursor was removed from that set by Owner
+decision [#20](https://github.com/madrobotnet/proactive-mcp/issues/20): its
+Automations run as cloud agents, and a cloud agent can't spawn the local stdio
+server or read the local SQLite file. Every remaining mention of Cursor in this
+document sits inside a section marked historical, and those sections record what
+already happened rather than telling you what to run.
+
+Two ways in:
+
+- **Owner smoke, from the checkout.** Start with [준비 절차](#준비-절차) and work
+  forward. The M1.5 through M4 sections preserve acceptance evidence exactly as
+  it was captured; for current support validation, jump to
+  [M5 연동 레시피 실증](#m5-연동-레시피-실증-issue-6).
+- **Closed-alpha tester, from a wheel.** Skip the checkout entirely and go to
+  [부록: 클로즈드 알파 테스터 경로](#부록-클로즈드-알파-테스터-경로-m6). That
+  appendix installs a wheel, runs `setup`, checks `status`, and validates both
+  CLIs.
+
+Don't install from PyPI: the repo is private and `proactive-mcp` is not
+published (`docs/PRODUCT_PLAN.md` §12). `uvx proactive-mcp` and
+`pip install proactive-mcp` are the wrong path. The wheel the Owner hands you
+is not the same thing as a PyPI release.
 
 macOS is CI-only (`macos-latest` green). There is no Owner Mac, so don't run these steps on macOS. Real-device Mac coverage waits for a closed-alpha tester who has one.
 
-Do not set `PROACTIVE_DATABASE`. The point of this smoke is the default file under `%USERPROFILE%\.proactive-mcp\proactive.db`.
+Do not set `PROACTIVE_DATABASE`. The point of this smoke is the default file under `%USERPROFILE%\.proactive-mcp\proactive.db`. M5 is the one exception, and it says so where it starts.
+
+Every "don't run `setup`" instruction in the Owner sections is scoped to those sections, which deliberately test the unconfigured, degraded state. The tester appendix at the end is the opposite case: there, running `setup` is the job.
 
 Prep, default-path, and ACL checks still apply. The memory pass is **M2.5** (Issue #13). Do not paste the old `kind=person_fact` prompts. That kind is gone. Current kinds are `fact`, `commitment`, `preference`, and `note`. All smoke data must stay synthetic. Don't replace the copy-paste payloads with real names, dates, mail, or calendar facts.
 
@@ -22,7 +40,11 @@ Prep, default-path, and ACL checks still apply. The memory pass is **M2.5** (Iss
 - Windows 10 or 11
 - PowerShell 5.1 or 7
 - Git, and a GitHub account that can read private `madrobotnet/proactive-mcp`
-- Cursor, with Agent mode (Ask mode can't call MCP tools)
+- Grok CLI, signed in (`grok --version`, `grok login` if needed)
+- Codex CLI, signed in (`codex --version`)
+
+Both CLIs, not one. The M5 sign-off needs each of them separately, and the
+earlier steps are where you find out that a registration is broken.
 
 ### 1. Install uv
 
@@ -39,7 +61,7 @@ Success: a uv version string prints.
 
 Failure: `uv` is not recognized. Copy the installer output and your `$env:Path`.
 
-If this PowerShell window was already open before the install, the `Path` line above is required. Cursor may still miss `uv` until you use the full `uv.exe` path in `mcp.json` (step 6 does that).
+If this PowerShell window was already open before the install, the `Path` line above is required. A CLI that launched earlier, or a scheduled task with its own bare environment, can still miss `uv` entirely, so every registration below names the absolute `uv.exe` path instead of trusting `PATH`.
 
 ### 2. Clone or update the private repo
 
@@ -50,7 +72,9 @@ New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\src" | Out-Null
 Set-Location "$env:USERPROFILE\src"
 git clone https://github.com/madrobotnet/proactive-mcp.git
 Set-Location proactive-mcp
-git checkout feat/m2-5-memory-model-v2
+git checkout main
+git pull --ff-only
+git rev-parse --short HEAD
 ```
 
 If you already cloned for an older smoke:
@@ -58,12 +82,14 @@ If you already cloned for an older smoke:
 ```powershell
 Set-Location "$env:USERPROFILE\src\proactive-mcp"
 git fetch origin
-git checkout feat/m2-5-memory-model-v2
+git checkout main
+git pull --ff-only
+git rev-parse --short HEAD
 ```
 
-Use `feat/m2-5-memory-model-v2` while the M2.5 PR is open. After merge, check out `main` instead. If the review comment names another branch or SHA, use that.
+Use current `main`. If the review comment you're working from names a specific SHA or a release branch, check that out instead (`git checkout <sha>`) and record the short SHA in your report. Never run a current smoke from `feat/m2-5-memory-model-v2` or `m1-5-cross-platform-storage`. Both are historical, and their database schema is many migrations behind, so every expectation below would be wrong.
 
-Do not check out `m1-5-cross-platform-storage`. That branch is historical and does not have the M2.5 tools.
+Success: `git rev-parse --short HEAD` prints the SHA you meant to test.
 
 Success: `git status` shows the branch, and `pyproject.toml` is in the current directory.
 
@@ -94,7 +120,7 @@ Success, all of these:
 - JSON `database.status` is `"healthy"`
 - JSON `database.path` is your `%USERPROFILE%\.proactive-mcp\proactive.db` (backslashes are fine)
 - JSON `database.journal_mode` is `wal`
-- JSON `database.migration_version` is `4`
+- JSON `database.migration_version` is `9`
 - JSON `overall` is `"degraded"`
 - JSON `google.gmail.status` is `"not_configured"`
 - JSON `google.calendar.status` is `"not_configured"`
@@ -104,84 +130,108 @@ Success, all of these:
 
 - `"Google Gmail is not configured; run proactive-mcp setup."`
 - `"Google Calendar is not configured; run proactive-mcp setup."`
-- `"Daemon is not running; status is degraded."`
+- `"Daemon has never run; OS notification fallback is unavailable."`
+
+Retype the warnings you see rather than assuming these three. The daemon line reads `"Daemon is stopped; OS notification fallback is unavailable."` once a daemon has run and exited on this machine, and that's a pass too. `overall` has only two values, `ok` and `degraded`, so don't look for `healthy` there. Only `database.status` is `healthy`.
 
 Do not run `proactive-mcp setup` or `proactive-mcp google-smoke` here.
 
-Failure: non-zero exit, no JSON, `database.status` not `healthy`, `migration_version` not `4`, or `path` pointing somewhere else. Version `3` means you are not on M2.5 code.
+Failure: non-zero exit, no JSON, `database.status` not `healthy`, `migration_version` not `9`, or `path` pointing somewhere else. A lower `migration_version` means you're on older code, so redo step 2 and rerun `uv sync --locked`.
 
-### 5. Print the Cursor MCP snippet
+### 5. Note the two absolute paths
 
-```powershell
-$repo = (Join-Path $env:USERPROFILE "src\proactive-mcp") -replace '\\','/'
-$uv = ((Get-Command uv).Source) -replace '\\','/'
-Write-Output "uv: $uv"
-Write-Output "repo: $repo"
-Write-Output @"
-{
-  "mcpServers": {
-    "proactive": {
-      "command": "$uv",
-      "args": [
-        "run",
-        "--directory",
-        "$repo",
-        "proactive-mcp",
-        "serve"
-      ]
-    }
-  }
-}
-"@
-```
-
-Keep that JSON. You'll paste it next.
-
-### 6. Write Cursor `mcp.json`
-
-User-level config path: `%USERPROFILE%\.cursor\mcp.json`
+Every registration and every scheduled wrapper needs these verbatim:
 
 ```powershell
-$mcpDir = Join-Path $env:USERPROFILE ".cursor"
-$mcp = Join-Path $mcpDir "mcp.json"
-New-Item -ItemType Directory -Force -Path $mcpDir | Out-Null
-Write-Output $mcp
-if (Test-Path $mcp) {
-  Write-Output "File exists. Add the proactive entry inside mcpServers. Don't delete other servers."
-} else {
-  Write-Output "File does not exist. Save the JSON from step 5 as this file."
-}
-notepad $mcp
+$repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
+$uv = (Get-Command uv).Source
+$neutral = Join-Path $env:USERPROFILE ".proactive-mcp\agent-cwd"
+New-Item -ItemType Directory -Force -Path $neutral | Out-Null
+Write-Output "uv=$uv"
+Write-Output "repo=$repo"
+Write-Output "neutral=$neutral"
+Get-ChildItem $neutral
 ```
 
-If Notepad asks to create the file, say yes. Paste the JSON from step 5 when the file is new. When the file already has `mcpServers`, copy only the `"proactive": { ... }` object into that object.
+Success: both paths print as absolute paths, and the `neutral` listing prints nothing.
 
-Save and close Notepad.
+`neutral` is an empty folder that agent calls run from. Both CLIs load `AGENTS.md` from their working directory, so an agent started inside this checkout inherits the repository's development instructions and can wander off into a milestone briefing instead of doing the one thing you asked. Keep it empty: no `AGENTS.md`, no `.mcp.json`, no git repository. See [`docs/INTEGRATIONS.md`](INTEGRATIONS.md) for the longer version.
 
-### 7. Reload Cursor MCP
+### 6. Register the server with Grok CLI
 
-1. In Cursor, open the cloned folder: `%USERPROFILE%\src\proactive-mcp`
-2. Go to Cursor Settings, then MCP.
-3. Refresh the server list. `proactive` should appear.
-4. If it stays red, fully quit Cursor and reopen it (Windows GUI apps often miss a brand-new `uv` PATH).
+Grok takes the server command after `--`, per `grok mcp add --help`. User scope writes `%USERPROFILE%\.grok\config.toml` and applies in every folder:
 
-Success: `proactive` is enabled and lists `get_status`, `remember`, `recall`, `update`, `list_entities`, `forget`.
-
-Failure: red server, zero tools, or spawn error. Copy the MCP error text. Confirm `command` in `mcp.json` is the `uv.exe` path from step 5. If `update` or `list_entities` is missing, you are still on pre-M2.5 code. Recheck the branch in step 2, run `uv sync --locked` again, then refresh MCP.
-
-### 8. Agent mode connectivity check
-
-Start a **new** Agent chat (not Ask). Paste:
-
-```
-Call the get_status tool from the proactive MCP server. Don't guess the result.
+```powershell
+grok mcp add --scope user proactive -- $uv run --directory $repo proactive-mcp serve
+grok mcp list
+grok mcp doctor proactive
 ```
 
-Success: you see a `get_status` tool call, `database.status` is `"healthy"`, `database.migration_version` is `4`, and `path` ends with `.proactive-mcp\proactive.db`.
+Success: `grok mcp list` shows `proactive`, and `grok mcp doctor proactive` reports the server reachable with its tools listed.
 
-Failure: the model answers without a tool call, the tool errors, or tools are missing. Stop here. Don't continue the memory scenarios until this passes.
+Failure: the server won't spawn. Confirm the `uv.exe` path in the entry is absolute. `uv` on your shell's `PATH` says nothing about what a GUI app or a scheduled task can find. Grok writes MCP stderr under `%USERPROFILE%\.grok\logs\mcp\`; read those yourself and retype one sanitized line if you need to report it.
 
-## M2.5 메모리 모델 v2 (Issue #13)
+Already have a `proactive` entry from your own day to day setup? `grok mcp add` overwrites it, and there's no way to read the old one back afterwards. Write down the command that recreates it, keep that note private to your machine, and restore it when you're done.
+
+### 7. Register the server with Codex CLI
+
+Codex uses the same `--` form. Remove any old entry first so this one is unambiguous:
+
+```powershell
+codex mcp remove proactive 2>$null
+codex mcp add proactive -- $uv run --directory $repo proactive-mcp serve
+codex mcp list --json
+codex mcp get proactive
+```
+
+Success: the listing has a `proactive` entry whose command is your absolute `uv.exe` path.
+
+Codex needs one more thing. `codex exec` runs with approval policy `never`, and on codex-cli 0.149.0 an MCP tool call under that policy fails outright with `MCP tool call requires approval, but approval policy is never`. Every non-interactive Codex command in this document carries a per-server override ([openai/codex#24135](https://github.com/openai/codex/issues/24135)):
+
+```
+-c 'mcp_servers.proactive.default_tools_approval_mode="approve"'
+```
+
+Drop it from one command and that command fails in a way that looks like a broken registration. The scope is this one server; other servers and shell commands keep their usual approval behavior. Interactive `codex` sessions don't need it, because you're there to approve.
+
+Failure: `codex mcp list --json` has no `proactive` entry, or config load dies with `unknown variant`. Only `auto`, `prompt`, `writes`, and `approve` are accepted for the approval mode. Check whether `CODEX_HOME` is set, since it overrides `%USERPROFILE%\.codex`.
+
+Record both version strings with any report you file:
+
+```powershell
+grok --version
+codex --version
+```
+
+Both CLIs move fast. Run `grok mcp add --help`, `codex mcp add --help`, and `codex exec --help` on your own machine and use your installed spelling if a flag differs.
+
+### 8. Connectivity check, one CLI at a time
+
+Ask each CLI for `get_status` from the empty folder. Neither may stand in for the other:
+
+```powershell
+grok --cwd $neutral -p "Call the get_status tool from the proactive MCP server and report database.status, database.migration_version, and database.path. Don't guess."
+codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call the get_status tool from the proactive MCP server and report database.status, database.migration_version, and database.path. Don't guess."
+```
+
+Success, from both CLIs: a visible `get_status` tool call, `database.status` is `"healthy"`, `database.migration_version` is `9`, and `path` ends with `.proactive-mcp\proactive.db`.
+
+Failure: a CLI answers without calling the tool, the tool errors, the tool list is short, or the reported path is somewhere else. A `migration_version` under 9, or a missing `update` or `list_entities` in the tool list, means the CLI is spawning older code, so recheck the checkout in step 2 and run `uv sync --locked` again. Stop here either way. Don't start the scenarios until both CLIs pass.
+
+`--skip-git-repo-check` is required because `neutral` isn't a git repository, and `--sandbox read-only` blocks the agent's own shell without stopping the MCP server from writing its own database.
+
+## M2.5 메모리 모델 v2 (Issue #13), historical record
+
+> **Historical, Cursor-era. Do not use as instructions.** This section is kept
+> verbatim as the acceptance evidence for M2.5, captured when Cursor was still a
+> supported client. Cursor left the supported set on 2026-08-22
+> ([#20](https://github.com/madrobotnet/proactive-mcp/issues/20)), so its
+> Agent-mode wording, `mcp.json` steps, and "Cursor shows a ... tool call" checks
+> describe what was run then, not what to run now. The tool names, argument
+> names, JSON fields, and expected values are all still current; if you're
+> re-running these scenarios, drive them through Grok CLI or Codex CLI as
+> registered in steps 6 and 7 and read "Cursor shows" as "the CLI transcript
+> shows".
 
 Use Agent mode every time. A reply with no tool call is a fail, even if the text sounds right. Write down the numeric memory `id` values the tools return. Later scenarios compare those ids.
 
@@ -586,13 +636,22 @@ git -C "$env:USERPROFILE\src\proactive-mcp" rev-parse HEAD
 
 8. From `get_status` or `uv run proactive-mcp status`: exit code, `database.status`, `database.migration_version`, `database.journal_mode`, `overall`. Redact `database.path` to `.proactive-mcp\proactive.db`. Skip the rest of that JSON.
 9. ACL failures only: `AreAccessRulesProtected` (`True`/`False`), whether extra principals showed up, and `icacls` with the account name replaced by `<you>`
-10. Cursor Settings > MCP error text, with usernames in paths replaced by `<you>` and with no tool result payloads
+10. One sanitized MCP error line from the CLI that failed, from `grok mcp doctor proactive` or `codex mcp get proactive`, with usernames in paths replaced by `<you>` and no tool result payloads. Grok's raw stderr logs under `%USERPROFILE%\.grok\logs\mcp\` are for your eyes only: read them, retype one line, attach nothing.
 
 Screenshots of the Agent chat are not helpful here. They usually show memory content.
 
 If every scenario passed, comment that M2.5 scenarios 1 to 6 passed (alias, duplicate id, path-prefix, update, list_entities, forget/re-recall) plus the storage path and ACL checks. Give `migration_version` and a redacted `icacls` line such as `HOST\<you>:(F)`. Leave the DB and the memory JSON off the comment. That is enough success evidence.
 
-## M4 전달
+## M4 전달, historical record
+
+> **Historical, Cursor-era. Do not use as instructions.** Same standing as the
+> M2.5 section above: this is the M4 delivery evidence as captured, before the
+> 2026-08-22 platform decision ([#20](https://github.com/madrobotnet/proactive-mcp/issues/20))
+> removed Cursor. Wherever it says Cursor, the current equivalent is a Grok CLI
+> or Codex CLI session from steps 6 through 8, and `mcp.json` becomes the
+> `grok mcp add` or `codex mcp add` registration. Migration version 7, the tool
+> list, and every checkpoint value stand as written. Current platform validation
+> lives in [M5 연동 레시피 실증](#m5-연동-레시피-실증-issue-6).
 
 Watcher daemon, Cursor situation tools, degraded no-daemon check, shared SQLite, and one-shot WinRT fallback. Finish the opening 준비 절차 (uv, clone, `mcp.json`) first. Keep the default DB. Do not set `PROACTIVE_DATABASE`. Do not run `setup` or `google-smoke`. All memories stay synthetic. Do not paste real names, dates, mail, credentials, DB files, or `evidence`.
 
@@ -876,16 +935,16 @@ Close any running daemon first.
 ```powershell
 Set-Location "$env:USERPROFILE\src\proactive-mcp"
 git fetch origin
-git checkout feat/m5-integration-recipes
+git checkout main
 git pull --ff-only
 uv sync --locked
 git rev-parse --abbrev-ref HEAD
-git rev-parse HEAD
+git rev-parse --short HEAD
 ```
 
-Use `feat/m5-integration-recipes` while the M5 PR is open. After the PR merges, use `main` instead. If a review comment names a different branch or SHA, that comment wins.
+Use current `main`. M5 is merged, so there's no feature branch to chase. If a review comment names a specific SHA or a release branch, that comment wins: check it out and record the short SHA with your results.
 
-Checkpoint: `uv sync --locked` exits 0 and the branch line prints `feat/m5-integration-recipes`.
+Checkpoint: `uv sync --locked` exits 0, and the branch and SHA lines match what you meant to test.
 
 #### M5-P2. Isolated smoke database and test-only cadence config
 
@@ -949,7 +1008,7 @@ Checkpoint, and the isolation gate. All of these have to hold before you go on:
 - **`database.path` ends with `m5-smoke\proactive.db`.** If it ends with `.proactive-mcp\proactive.db`, the variable didn't take and you are one command away from pointing an agent at your real data. Stop and set it again.
 - **`google.gmail.status` is `not_configured` and `google.calendar.status` is `not_configured`.** Anything else means credentials are reachable from the smoke directory, so stop and check what you copied in there.
 - `database.status` is `healthy`, `database.journal_mode` is `wal`
-- **`database.migration_version` is `9`.** Version `8` lacks the security-hardening migration, so update the checkout and rerun setup.
+- **`database.migration_version` is `9`.** Anything lower means the checkout predates the security-hardening migration, so redo M5-P1 and run this command again.
 - `overall` is `degraded`, `daemon.status` is `not_running`, `budget.daily_budget` is `20`
 
 `degraded` is expected. M5 never runs Google setup, and the smoke directory has no credentials by design.
@@ -1768,7 +1827,7 @@ Fail:
 
 Go through this before you write the sign-off comment. Counts and states only, no content.
 
-1. Branch is the intended test branch (or `main` after merge), and `migration_version` is `9`
+1. Branch is current `main`, or the SHA a review comment named, and `migration_version` is `9`
 2. **Every scenario ran against `m5-smoke\proactive.db`,** with `google.gmail.status` and `google.calendar.status` both `not_configured`, and your real database was never opened
 3. The test-only config is the one from M5-P2, it sits in `m5-smoke`, and you know it isn't production behavior
 4. Every claim used a fresh `TAG` and its own `daemon --once` pass
@@ -1957,3 +2016,356 @@ Never attach or paste any of the following, on any issue, in any form:
 - Screenshots of any kind, including terminal windows and Task Scheduler windows
 
 If you think a failure can't be explained without one of those, say so in the comment and stop. Someone will work out a safe way to get the detail. Guessing on your own is how private data ends up in a public thread.
+
+## 부록: 클로즈드 알파 테스터 경로 (M6)
+
+This appendix is for a designated closed-alpha tester on Windows. You don't need
+repository access, a checkout, or `uv sync`. The Owner hands you a `.whl` and an
+OAuth client JSON, and everything below runs from the installed console script.
+`docs/PRODUCT_PLAN.md` §12 makes the wheel the preferred tester path precisely
+because it needs no repository access.
+
+Two differences from the Owner sections above, and they matter:
+
+- **There is no `uv run` and no `--directory`.** Every command is the absolute
+  path to `proactive-mcp.exe` inside your own virtualenv.
+- **You do run `setup`.** The Owner sections forbid it because they test the
+  unconfigured, degraded state on purpose. Your job is the opposite: prove a
+  fresh Windows machine gets from wheel to working Google sources, and time it.
+  The M6 target is clean install to finished onboarding in under 15 minutes
+  (`docs/PRODUCT_PLAN.md` §10).
+
+Use the default database at `%USERPROFILE%\.proactive-mcp\proactive.db`. Don't
+set `PROACTIVE_DATABASE`.
+
+### A1. Install the wheel
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+irm https://astral.sh/uv/install.ps1 | iex
+$env:Path = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:Path"
+uv --version
+```
+
+Then create a virtualenv of your own and install the file you were given.
+Substitute the real filename; the version in it is whatever the Owner sent:
+
+```powershell
+$wheel = Join-Path $env:USERPROFILE "Downloads\proactive_mcp-0.1.0-py3-none-any.whl"
+$venv = Join-Path $env:USERPROFILE "venvs\proactive"
+uv venv $venv --python 3.11
+uv pip install --python (Join-Path $venv "Scripts\python.exe") $wheel
+$pm = Join-Path $venv "Scripts\proactive-mcp.exe"
+Write-Output "pm=$pm"
+& $pm --help
+```
+
+Success: `--help` prints the subcommand list, which is
+`{serve,serve-scheduled,status,setup,google-smoke,daemon}`.
+
+Failure: `uv pip install` rejects the file, or `proactive-mcp.exe` never appears.
+Paste the full stderr and the exact wheel filename. Don't fall back to
+`pip install proactive-mcp`; the package isn't published, so that command
+installs nothing of ours.
+
+Keep `$pm` handy. Every command below starts with it, and a new PowerShell
+window needs it set again.
+
+### A2. Put the client secret where `setup` looks
+
+`setup` runs the Google OAuth flow and can't start without an installed-app
+client secret file. During the closed alpha that's the JSON the Owner delivered
+alongside the wheel. Copy it to the default location:
+
+```powershell
+$dir = Join-Path $env:USERPROFILE ".proactive-mcp"
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Copy-Item (Join-Path $env:USERPROFILE "Downloads\client_secret.json") (Join-Path $dir "client_secret.json")
+Get-Item (Join-Path $dir "client_secret.json") | Format-List FullName, Length
+```
+
+Resolution order is `--client-secrets PATH` first, then the
+`PROACTIVE_GOOGLE_CLIENT_SECRETS` variable, then `client_secret.json` beside the
+database. Taking the default is simplest. Prefer to keep the file somewhere
+else? Pass `--client-secrets` on the next command instead.
+
+Testers assigned to validate the bring-your-own path create their own OAuth
+client of type **Desktop app** in their own Google Cloud project and use that
+download here. Everyone else uses the delivered file.
+
+Never commit either file, and never paste one into an issue.
+
+### A3. Run `setup`
+
+```powershell
+& $pm setup
+Write-Output "exit=$LASTEXITCODE"
+```
+
+A browser opens on a loopback authorization page. The Owner's OAuth client is
+published but unverified, so Google shows a warning screen: choose Advanced,
+then continue. Grant both read-only scopes. Tokens and data stay on your machine
+and are never sent to the client owner.
+
+Add `--headless` when the machine has no browser to open that page. Use
+`--reauth` to replace an existing authorization after revoking access or
+changing scopes.
+
+Success: exit 0, and stdout is exactly this one line, nothing more:
+
+```
+Google read-only sources configured.
+```
+
+That line is the whole success signal. `setup` stores the authorization; it
+doesn't read your mail or your calendar, so it can't and doesn't report per
+source counts or freshness. If you see anything else on stdout, treat the run as
+a failure.
+
+Failure: paste the exit code and one sanitized error line. `invalid_client` or
+`redirect_uri_mismatch` almost always means the wrong JSON landed in A2.
+
+### A4. Confirm state with `status`
+
+```powershell
+& $pm status
+Write-Output "exit=$LASTEXITCODE"
+```
+
+Success, all of these:
+
+- Exit code 0
+- `database.status` is `"healthy"`, and `database.path` ends with
+  `.proactive-mcp\proactive.db`
+- `database.journal_mode` is `wal`
+- `database.migration_version` is `9`
+- `google.gmail.status` and `google.calendar.status` are both `"never_synced"`
+- `overall` is `"degraded"`
+- `warnings` contains `"Google Gmail has not completed a read sync."` and
+  `"Google Calendar has not completed a read sync."`
+
+This is the confusing part of onboarding, so read it twice. There is no
+`configured` source status. The values are `ok`, `stale`, `never_synced`,
+`not_configured`, `needs_reauth`, and `error`. Authorization alone gets you to
+`never_synced`, because `status` reports persisted state and reads nothing, and
+nothing has read your account yet. `overall` is likewise only `ok` or
+`degraded`, and any warning at all forces `degraded`, so a freshly set up
+install with no daemon is `degraded` by design. You reach `ok` in A4b below.
+
+Failure: a source still reading `not_configured` after A3 printed its success
+line, a database path somewhere unexpected, a `migration_version` under 9, or a
+non-zero exit. A `daemon.status` of `not_running` on its own is fine. The daemon
+is recommended, not required, and skipping it costs you only the OS notification
+fallback.
+
+### A4b. First real read, then `ok`
+
+Confirm the read path reaches your real account. The confirmation flag isn't
+optional; without it the command refuses to touch the account and exits 2:
+
+```powershell
+& $pm google-smoke --confirm-real-account-read
+Write-Output "exit=$LASTEXITCODE"
+```
+
+Success: exit 0 and one JSON line holding `gmail`, `calendar`, and
+`credential_cleanup_failed`. Each source carries a `count` and an `error_code`
+that should be `null`. That output is redacted by construction, so there are no
+subjects, addresses, or event titles in it, and the counts are safe to report as
+is.
+
+Failure: exit 2 with `error:` on stderr. `GoogleReadSmokeDisabledError` means
+you left the flag off. A missing-credentials error means A3 never finished on
+this database.
+
+Don't treat `google-smoke` as the thing that makes your sources `ok`. It records
+success only for a source whose read came back complete, and a partial read
+stores the `degraded` error code instead, which shows up as status `error`. Use
+the watcher for a clean, repeatable pass:
+
+```powershell
+& $pm daemon --once
+Write-Output "exit=$LASTEXITCODE"
+& $pm status
+```
+
+Success: `daemon --once` exits 0, and `status` now reports
+`google.gmail.status` and `google.calendar.status` as `"ok"` with a numeric
+`age_seconds` on each. `overall` stays `"degraded"` while the only remaining
+warning is the daemon one, since `--once` runs a single pass and exits rather
+than staying live. That single daemon warning is the expected end state for A4b.
+
+Failure: a source still `never_synced` after a clean pass, or a status of
+`error` with an `error_code`. Report the exit code and the `error_code` string.
+A `needs_reauth` here means the authorization was revoked, so rerun A3 with
+`--reauth`.
+
+Now run the ACL checks in the [Explorer](#explorer) and
+[PowerShell ACL](#powershell-acl) sections against
+`%USERPROFILE%\.proactive-mcp`. Same expectations as the Owner smoke: protected
+DACL, no inherited entries, your account as the only Allow principal.
+
+### A5. Register the wheel with both CLIs
+
+The registration names the console script directly, so there's no `uv run` layer
+and the argument list shrinks to `serve`:
+
+```powershell
+$pm = Join-Path $env:USERPROFILE "venvs\proactive\Scripts\proactive-mcp.exe"
+$neutral = Join-Path $env:USERPROFILE ".proactive-mcp\agent-cwd"
+New-Item -ItemType Directory -Force -Path $neutral | Out-Null
+
+grok mcp add --scope user proactive -- $pm serve
+grok mcp list
+grok mcp doctor proactive
+
+codex mcp remove proactive 2>$null
+codex mcp add proactive -- $pm serve
+codex mcp get proactive
+```
+
+Success: Grok's doctor reports the server reachable with its tools listed, and
+the Codex entry shows that absolute `.exe` as its command.
+
+Failure: a CLI can't spawn the server. The path has to be absolute. A CLI
+started from a shortcut, and a scheduled task later on, sees almost nothing of
+your console's `PATH`.
+
+`neutral` is an empty working directory for agent calls, for the reason given in
+[step 5](#5-note-the-two-absolute-paths): both CLIs load `AGENTS.md` from
+wherever they start, and stray project instructions can quietly divert a
+one-shot run. Keep it empty.
+
+Already had a `proactive` entry from your own setup? Write down the command that
+recreates it before running these, and keep that note private to your machine.
+`grok mcp add` overwrites silently, and the old value isn't recoverable.
+
+### A6. Two-agent validation
+
+This is the tester version of the M5 sign-off: both CLIs, each on its own,
+first proving the server answers and then proving one speaks first. Keep the
+memory synthetic even though your Google sources are real now.
+
+```powershell
+$anchor = (Get-Date).Date.AddDays(3).ToString('--MM-dd')
+$tag = "ALPHA-" + (Get-Date).ToString('HHmmss')
+Write-Output "ANCHOR=$anchor"
+Write-Output "TAG=$tag"
+```
+
+Reachability first, one CLI at a time:
+
+```powershell
+grok --cwd $neutral -p "Call get_status and report only database.path, google.gmail.status, and google.calendar.status."
+codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call get_status and report only database.path, google.gmail.status, and google.calendar.status."
+```
+
+Both must report the same `.proactive-mcp\proactive.db` path, and both sources
+as whatever A4b left behind: `ok` if you ran the daemon pass, `never_synced` if
+you stopped after `setup`. Neither CLI may report `configured`, which isn't a
+value this server produces. The Codex `-c` override is required: without it, `codex exec` runs
+with approval policy `never` and the MCP call fails before it starts.
+`--skip-git-repo-check` is required because `neutral` isn't a git repository.
+
+Now plant an occasion and let the engine find it. Substitute the printed `TAG`
+and `ANCHOR`:
+
+```powershell
+grok --cwd $neutral -p "Use the remember tool with kind=fact entity=스모크TAG entity_kind=person entity_path=테스트/스모크TAG attribute=birthday content=스모크 기념일 date_anchor=ANCHOR recurrence=yearly lead_days=7. Do not call proactive_check."
+& $pm daemon --once
+Write-Output "exit=$LASTEXITCODE"
+```
+
+`daemon --once` detects and stores; it never delivers. The situation waits in
+`pending` until an agent claims it through `proactive_check`, which is exactly
+what the next command tests.
+
+Give the CLI the session-start rule from
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md) and open a fresh session with an
+unrelated greeting:
+
+```powershell
+$sessionRule = "At the start of every new session, call the MCP tool proactive_check exactly once, before you answer the user. Call it once per session and no more, unless the user explicitly asks for a fresh proactive check. If it returns a receipt_token, call confirm_delivery with that token exactly once before presenting the situations. If it returns situations, lead your reply with a short, natural summary of them. If it returns freshness warnings, say the result may be incomplete. Never report that there is nothing to report while a source is stale or failed. If it returns nothing and freshness is healthy, say nothing about it and answer the user's actual request."
+$codexSessionRule = 'developer_instructions="' + ($sessionRule -replace '"', '\"') + '"'
+
+grok --cwd $neutral --rules $sessionRule -p "안녕. 오늘 뭐부터 할까?"
+```
+
+Then repeat the plant with a **new** `TAG`, run `& $pm daemon --once` again, and
+hand Codex its own unclaimed situation:
+
+```powershell
+codex exec -c $codexSessionRule -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "안녕. 오늘 뭐부터 할까?"
+```
+
+Each CLI needs its own fresh situation. A delivered one isn't handed out again
+by design, so reusing it would prove nothing about the second CLI.
+
+Success, for each CLI separately:
+
+- The transcript shows exactly one `proactive_check` call, before the answer
+- The reply leads with the upcoming occasion you never asked about
+- A follow-up `list_situations` with `state=delivered` counts that situation as
+  delivered
+
+Failure: no tool call, the situation still `pending`, a server spawn error, or
+`MCP tool call requires approval, but approval policy is never` from Codex,
+which means the override didn't reach that command.
+
+Want the unattended half as well? The Windows Task Scheduler recipe in
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md) is the same wrapper the Owner smoke
+uses, with your `proactive-mcp.exe` in place of `uv run --directory`. It's
+optional for alpha sign-off, and worth doing if you have the time.
+
+### A7. What to report, and what to leave out
+
+Time the run from A1 to the end of A6, A4b included, and report that number. Fifteen minutes is
+the target; a slower run is useful information, not a failure.
+
+Send the Owner:
+
+1. Which step failed, if any, and its exit code
+2. Windows edition and build, plus `$PSVersionTable.PSVersion`
+3. `uv --version`, `grok --version`, `codex --version`, and the wheel filename
+4. Redacted `status` fields: `overall`, `database.status`,
+   `database.journal_mode`, `database.migration_version`, `google.gmail.status`,
+   `google.calendar.status`, `daemon.status`, and the `warnings` strings
+   verbatim. Cut `database.path` down to `.proactive-mcp\proactive.db`
+5. The `google-smoke` line from A4b: both counts, both `error_code` values, and
+   `credential_cleanup_failed`
+6. Tool names and counts only, plus `items` length wherever a tool returns
+   `items`
+7. One sanitized error line per failure, with paths shortened to
+   `%USERPROFILE%\...` and any identifier or token replaced by `<redacted>`
+8. Which onboarding step confused you, and where you had to guess. That part
+   only a tester can tell us
+
+Leave all of this out, every time: the database and its `-wal`, `-shm`, and
+`.init.lock` sidecars, `config.toml`, `client_secret.json`, tokens or anything
+else from a credentials directory, mail and calendar content of any kind, memory
+`content`, entity names, dates, situation `title` / `why_now` / `evidence`, raw
+CLI logs, your CLI MCP config files, and screenshots.
+
+If a problem seems impossible to describe without one of those, say exactly that
+and stop. Someone will work out a safe way to get the detail.
+
+### A8. Putting the machine back
+
+None of this is destructive on its own, but do undo what you changed:
+
+```powershell
+grok mcp remove --scope user proactive 2>$null
+codex mcp remove proactive 2>$null
+grok mcp list
+codex mcp list --json
+```
+
+If a CLI had no `proactive` entry before you started, an empty listing now is
+the correct end state. Don't add a default entry just to have one. If it did
+have one, run the private restore command you saved in A5, then check that the
+listing points at your own path again.
+
+Keeping the alpha install is fine and expected. To remove it, delete the
+virtualenv at `%USERPROFILE%\venvs\proactive`. Deleting
+`%USERPROFILE%\.proactive-mcp` also wipes your database, your config, and your
+Google authorization, so do that only when you mean to start over.
