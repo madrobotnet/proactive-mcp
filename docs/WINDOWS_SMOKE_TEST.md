@@ -2209,16 +2209,16 @@ Add `--headless` when the machine has no browser to open that page. Use
 `--reauth` to replace an existing authorization after revoking access or
 changing scopes.
 
-Success: exit 0, and stdout is exactly this one line, nothing more:
+Success: exit 0, and the final success line is:
 
 ```
 Google read-only sources configured.
 ```
 
-That line is the whole success signal. `setup` stores the authorization; it
-doesn't read your mail or your calendar, so it can't and doesn't report per
-source counts or freshness. If you see anything else on stdout, treat the run as
-a failure.
+In headless mode, the expected authorization URL and prompt may appear before
+that final line. `setup` stores the authorization; it doesn't read your mail or
+your calendar, so it can't and doesn't report per-source counts or freshness.
+The final success line is required.
 
 Failure: paste the exit code and one sanitized error line. `invalid_client` or
 `redirect_uri_mismatch` almost always means the wrong JSON landed in A2.
