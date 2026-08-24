@@ -53,6 +53,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | Gmail reply_deadline 읽기 창 | 기본 최근 7일. `[sources]`의 `gmail_lookback_days`로 조정 가능. 7일보다 오래된 미회신·날짜성 마감 백로그는 V1 범위 밖이며, 설정된 창 안의 불완전 읽기는 §9에 따라 계속 degraded (2026-08-24 Owner 결정 #25 C(7d configurable)) |
 | 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 — 구체 기준은 §7 폴백 항목 (critical만·30분, 2026-08-21 확정 #14) |
 | 배포 | 개발~1차 클로즈드 테스트 동안 저장소 private 유지. Owner가 지정한 테스터의 1차 검증에서 문제가 없으면 공개 전환 + 홍보 (Owner 결정). 공개 후 최종 배포 형태는 PyPI + uvx |
+| 사람 온보딩 | 알파 wheel 또는 공개 artifact를 OS-sheet의 단일 paste block으로 사용자의 기존 에이전트에 전달한다. 에이전트가 설치·MCP 등록·`setup`·검증을 맡고, 사람은 Google 동의와 blocker 보고만 한다. 기본 경로에는 wizard, 수동 `mcp add`, JSON 편집이 없다 (2026-08-24 Owner 결정 #26) |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
 
 ## 4. 아키텍처
@@ -305,9 +306,11 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 
 ## 12. 배포·온보딩
 
-- **클로즈드 알파 단계:** 저장소는 private. 지정 테스터에게는 wheel 파일을 직접 전달하거나(권장, 저장소 접근 불필요) collaborator(Read) 초대 후 인증된 git 설치를 안내한다. PyPI에는 게시하지 않는다.
-- **알파 Google 연동:** Owner의 OAuth 클라이언트 JSON(프로덕션 게시, 미검증 — 인증 시 경고 화면에서 고급→계속)을 알파 패키지와 함께 전달한다. 토큰과 데이터는 테스터 본인 머신에만 저장되며 클라이언트 소유자에게 전송되지 않는다. 테스터 중 1~2명은 BYO 경로(`docs/SETUP_GOOGLE.md`)로 온보딩해 온보딩 문서를 검증한다. 공개 후 일반 사용자는 BYO가 기본이다.
-- **공개 전환 후:** PyPI 패키지 `proactive-mcp`. 에이전트 설정 예시:
+- **배포 artifact:** 클로즈드 알파에서는 저장소를 private로 유지하고, 지정 테스터에게 wheel 파일을 직접 전달한다. 테스터 온보딩에 collaborator 초대나 git clone은 쓰지 않는다. 소스 checkout은 개발 또는 collaborator 작업 맥락에서만 쓴다. PyPI에는 게시하지 않는다. Owner가 지정한 테스터의 1차 검증을 승인한 공개 전환 후에는 PyPI 패키지 `proactive-mcp`를 게시하고 `uvx`로 제공한다.
+- **기존 에이전트가 MCP 등록 후 setup 실행:** 테스터는 이미 쓰는 에이전트에게 wheel 설치, MCP 등록, `proactive-mcp setup` 실행을 맡긴다. 공개 후에도 에이전트가 `uvx proactive-mcp`를 사용해 같은 절차를 수행한다. 알파에서는 Owner의 OAuth 클라이언트 JSON(프로덕션 게시, 미검증, 인증 시 경고 화면에서 고급→계속)을 패키지와 함께 전달한다. 토큰과 데이터는 테스터 본인 머신에만 저장되며 클라이언트 소유자에게 전송되지 않는다. 테스터 중 1~2명은 BYO 경로(`docs/SETUP_GOOGLE.md`)로 온보딩해 문서를 검증하며, 공개 후 일반 사용자는 BYO를 기본으로 한다.
+- **권장 데몬:** 에이전트가 MCP 등록과 setup을 마친 뒤 `proactive-mcp daemon`을 등록한다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, 폴백 알림은 동작하지 않는다.
+- **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고, 반환값에 `receipt_token`이 있을 때만 결과를 수령한 뒤 `confirm_delivery(receipt_token)`를 한 번 호출한다. 토큰이 없으면 호출하지 않는다.
+- **에이전트용 JSON·host 레시피 참조 부록:** 기본 경로에서 사람은 JSON을 직접 편집하거나 `mcp add`를 실행하지 않는다. 아래 JSON 예시와 플랫폼별 host 레시피는 에이전트가 MCP 등록에 적용할 때만 참고한다. 공개 전환 후 `uvx` 등록 예시는 다음과 같다.
 
 ```json
 {
@@ -319,8 +322,6 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
   }
 }
 ```
-
-- 온보딩 순서: `uvx proactive-mcp setup` (GCP OAuth 안내 포함) → 에이전트 mcp.json 등록 → (권장) 데몬 등록 → 에이전트 룰에 `proactive_check` 후 `confirm_delivery` 관례 추가.
 - GCP OAuth 클라이언트 생성 가이드는 `docs/SETUP_GOOGLE.md`로 M6에서 작성한다.
 
 ## 13. 미결 사항

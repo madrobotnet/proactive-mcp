@@ -16,6 +16,9 @@ file. This guide covers the other way, **BYO**: you create the OAuth client
 yourself. BYO is what every user will do after public release, and one or two
 alpha testers run it now precisely to prove this document works.
 
+Alpha recipients should give their OAuth JSON location to their agent and use
+the matching [OS tester sheet](testers/README.md); BYO testers should follow this guide.
+
 ## Contents
 
 - [What you're about to create](#what-youre-about-to-create)

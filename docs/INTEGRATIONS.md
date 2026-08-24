@@ -1,25 +1,29 @@
 # Integration recipes (M5)
 
-How to wire `proactive-mcp` into a local agent so the agent speaks first: Grok CLI, Codex CLI, Hermes, and Claude Code Desktop, plus OS scheduler handoff for the CLIs that have no scheduler of their own.
+Named closed-alpha testers start by pasting the OS-specific block from [docs/testers/README.md](testers/README.md) into their existing local agent. Supply the wheel, SHA-256, and OAuth JSON locations when the sheet asks for them. The agent installs the wheel, completes Google setup, registers MCP, and verifies the result. Don't run setup commands before that paste.
 
-Everything here targets the **private alpha**, which means the source tree. The package is not on PyPI, so every command runs the checkout through `uv run --directory <absolute path>`. If you see `uvx proactive-mcp` in older notes or in `docs/PRODUCT_PLAN.md` §12, that's the post-publication path, not today's.
+The closed alpha ships as a private wheel, not through PyPI. `uvx proactive-mcp` in older notes or `docs/PRODUCT_PLAN.md` §12 is the post-publication path, not today's tester path. Source-tree commands remain below only as agent and developer reference.
+
+The detailed Grok, Codex, Hermes, and Claude Desktop material is retained as an [agent reference and appendix](#agent-reference-and-appendices). It records the exact commands, configuration shapes, safety boundaries, and troubleshooting facts an agent needs when carrying out the tester sheet.
 
 **Verified on:** uv 0.11.29, grok 0.2.112, codex-cli 0.149.0, Hermes Agent v0.20.0, Linux (aarch64). Claude Code Desktop was not installed in the verification environment, so that section is marked and sourced accordingly.
 
 ## Contents
 
 - [Scope](#scope)
-- [What every platform needs](#what-every-platform-needs)
-- [Step 0: prerequisites, once per machine](#step-0-prerequisites-once-per-machine)
-  - [Getting the code during the private alpha](#getting-the-code-during-the-private-alpha)
-  - [Google OAuth client secret, before you run setup](#google-oauth-client-secret-before-you-run-setup)
+- [OS tester sheet: one paste for your agent](#os-tester-sheet-one-paste-for-your-agent)
+- [Agent and developer setup reference](#agent-and-developer-setup-reference)
+  - [What every platform needs](#what-every-platform-needs)
+  - [Source checkout and wheel facts](#source-checkout-and-wheel-facts)
+  - [Google OAuth client secret](#google-oauth-client-secret)
 - [The session-start rule](#the-session-start-rule)
 - [The neutral agent directory](#the-neutral-agent-directory)
-- [Grok CLI](#grok-cli)
-- [Codex CLI](#codex-cli)
-- [Hermes (Native Cron)](#hermes-native-cron)
-- [Claude Code Desktop (documentation only)](#claude-code-desktop-documentation-only)
-- [OS scheduler handoff](#os-scheduler-handoff)
+- [Agent reference and appendices](#agent-reference-and-appendices)
+  - [Grok CLI](#appendix-a-grok-cli)
+  - [Codex CLI](#appendix-b-codex-cli)
+  - [Hermes (Native Cron)](#appendix-c-hermes-native-cron)
+  - [Claude Code Desktop (documentation only)](#appendix-d-claude-code-desktop-documentation-only)
+  - [OS scheduler handoff](#appendix-e-os-scheduler-handoff)
   - [Linux and macOS: cron](#linux-and-macos-cron)
   - [Windows: Task Scheduler](#windows-task-scheduler)
 - [Log privacy rules](#log-privacy-rules)
@@ -41,14 +45,24 @@ A platform can deliver proactive messages when two things are true, per `docs/PR
 Don't try these; the blocker is the platform, not our code.
 
 - **ChatGPT web and desktop.** Web supports remote HTTPS connectors only. Desktop advertises stdio but the tools don't surface in the chat session ([openai/codex#38162](https://github.com/openai/codex/issues/38162)). Blocked until V2 HTTP transport.
-- **Claude cloud Routines.** They run in Anthropic's cloud, so they have no path to a local process or the local SQLite file. A Routine can fire on schedule and still never reach this server. This is *not* the same thing as a Claude Code Desktop local scheduled task, which does work. See the contrast table in the [Claude section](#claude-code-desktop-documentation-only).
+- **Claude cloud Routines.** They run in Anthropic's cloud, so they have no path to a local process or the local SQLite file. A Routine can fire on schedule and still never reach this server. This is *not* the same thing as a Claude Code Desktop local scheduled task, which does work. See the contrast table in the [Claude section](#appendix-d-claude-code-desktop-documentation-only).
 - **Cursor.** Removed from the supported set by Owner decision on 2026-08-22 ([#20](https://github.com/madrobotnet/proactive-mcp/issues/20)). Its Automations run as cloud agents, and a cloud agent can't spawn the local stdio process or read the local SQLite database, so there is no scheduled path to this server. Use Grok CLI or Codex CLI with the OS scheduler instead.
 - **HTTP transport.** V1 speaks stdio only. Any recipe that points an agent at a URL is wrong for this version.
 - **External write actions.** V1 holds `gmail.readonly` and `calendar.readonly`, nothing else, so it can't change anything in your Google account or anywhere else outside this machine. No recipe here should ask an agent to send mail or create events. External write actions arrive in V2 behind an approval-first contract. Read-only stops at the network boundary: the server still writes to its own local SQLite database, since `remember` stores a memory, `proactive_check` creates a short lease, and `confirm_delivery` and `snooze_situation` change situation state.
 
+## OS tester sheet: one paste for your agent
+
+Paste first. Open [docs/testers/README.md](testers/README.md), choose Windows, Linux, or macOS, and paste that sheet's complete block into the local agent you already use. Give the agent the artifact locations it requests, including the private wheel, its separately supplied SHA-256, and the OAuth JSON when supplied. The agent performs installation, MCP registration, `setup`, Google consent handoff, smoke checks, and verification.
+
+For named testers, the private-wheel OS sheet is the only human path. Don't clone the repository, install the wheel, place the OAuth file, run `setup`, type `mcp add`, or edit JSON or TOML before pasting. Pick one scheduled collector, not both Grok and Codex. The OS sheet keeps `serve` and `serve-scheduled` distinct: `serve` is interactive, while Codex scheduled runs use the restricted `serve-scheduled` profile with only `get_status`, `proactive_check`, and `confirm_delivery`.
+
+## Agent and developer setup reference
+
+The sections through the appendices preserve implementation facts for the agent handling a tester-sheet request and for developers. They are not named-tester instructions.
+
 ## What every platform needs
 
-Each recipe below follows the same four steps, in this order:
+The agent-reference recipes below follow the same four steps, in this order:
 
 1. **Prerequisites and local stdio MCP registration.** Point the agent at the checkout.
 2. **Watcher daemon, or the degraded-mode alternative.** The daemon is recommended, not required. Without it you lose OS notification fallback.
@@ -57,20 +71,22 @@ Each recipe below follows the same four steps, in this order:
 
 Then verification and troubleshooting, which differ per platform.
 
-## Step 0: prerequisites, once per machine
+## Source checkout and wheel facts
 
-You need Python ≥3.11, [uv](https://docs.astral.sh/uv/), and a copy of this project. Pick a stable absolute path and use it everywhere; schedulers and agent config files can't expand `~` reliably.
+**Agent and developer reference, not named-tester instructions.** The source-checkout commands in this section document the verified environment and give an agent implementation detail when it needs one. Named closed-alpha testers use the private-wheel OS sheet above instead.
+
+A source checkout needs Python ≥3.11, [uv](https://docs.astral.sh/uv/), and a stable absolute path, because schedulers and agent config files can't expand `~` reliably.
 
 Throughout this document:
 
 - Linux/macOS checkout: `/home/you/src/proactive-mcp`
 - Windows checkout: `C:\Users\you\src\proactive-mcp`
 
-### Getting the code during the private alpha
+### Source checkout, agent and developer reference
 
-The repository stays private for the whole closed-alpha period, and the package is not on PyPI (`docs/PRODUCT_PLAN.md` §12). Two supported ways to get it, and they change the commands you'll type later, so pick one now.
+The repository stays private for the whole closed-alpha period, and the package is not on PyPI (`docs/PRODUCT_PLAN.md` §12). The following checkout path is for agents and developers with repository access. It is not a named-tester route.
 
-**Option A, git checkout.** You need collaborator access with at least Read permission on `madrobotnet/proactive-mcp`. Ask the Owner for the invitation and accept it before you clone. An unauthenticated clone of a private repository fails with `Repository not found` or a `403`, which reads like a typo but is really an access problem.
+**Source checkout.** The agent or developer needs collaborator access with at least Read permission on `madrobotnet/proactive-mcp`. An unauthenticated clone of a private repository fails with `Repository not found` or a `403`, which reads like a typo but is really an access problem.
 
 ```bash
 gh auth login
@@ -82,9 +98,9 @@ uv sync --locked
 uv run proactive-mcp --help
 ```
 
-If `gh auth status` says you're logged out, or the token is missing the `repo` scope, fix it with `gh auth login --scopes repo` and try again. Plain `git clone https://github.com/madrobotnet/proactive-mcp.git` works too, once `gh auth setup-git` has installed the credential helper.
+If `gh auth status` says the agent or developer is logged out, or the token is missing the `repo` scope, `gh auth login --scopes repo` fixes it. Plain `git clone https://github.com/madrobotnet/proactive-mcp.git` works too, once `gh auth setup-git` has installed the credential helper.
 
-**Option B, wheel file.** `docs/PRODUCT_PLAN.md` §12 makes this the preferred tester path, precisely because it needs no repository access. The Owner hands you a `.whl`, you install it into a virtualenv you control, and no checkout ever lands on your disk.
+**Private wheel, agent reference.** `docs/PRODUCT_PLAN.md` §12 makes this the named-tester artifact because it needs no repository access. The agent receives the `.whl` location from the tester, installs it into a controlled virtualenv, and no checkout lands on the tester's disk. The human path is the [OS tester sheet](#os-tester-sheet-one-paste-for-your-agent), before installation or Google setup.
 
 ```bash
 uv venv /home/you/venvs/proactive
@@ -104,11 +120,11 @@ the wheel equivalent is the absolute path to the installed console script:
 /home/you/venvs/proactive/bin/proactive-mcp serve
 ```
 
-In an MCP registration that means `"command"` becomes that absolute path and `"args"` shrinks to `["serve"]`. For `codex mcp add` and `grok mcp add`, the part after `--` becomes that path plus `serve`. On Windows the script is `C:\Users\you\venvs\proactive\Scripts\proactive-mcp.exe`. Everything else here, rules, daemon, schedulers, verification, is unchanged. The rest of this guide is written for Option A because that's what the verification environment ran; translate as above if you're on a wheel.
+For agent reference, an MCP registration changes so `"command"` becomes that absolute path and `"args"` shrinks to `["serve"]`. For `codex mcp add` and `grok mcp add`, the part after `--` becomes that path plus `serve`. On Windows the script is `C:\Users\you\venvs\proactive\Scripts\proactive-mcp.exe`. Everything else here, rules, daemon, schedulers, verification, is unchanged. The reference appendices are written for Option A because that's what the verification environment ran; the agent translates commands as above for a wheel.
 
-### Google OAuth client secret, before you run setup
+### Google OAuth client secret
 
-`setup` runs the Google OAuth flow, and it can't start without an installed-app OAuth client secret file. During the closed alpha, the default path is the Owner-provided client JSON delivered alongside the wheel or checkout instructions (`docs/PRODUCT_PLAN.md` §12). Keep that file local and put it where `setup` will look. Testers explicitly assigned to validate the BYO path instead create an OAuth client of type **Desktop app** in their own Google Cloud project and use that downloaded JSON.
+**Agent and developer reference.** `setup` runs the Google OAuth flow, and it can't start without an installed-app OAuth client secret file. During the closed alpha, the agent receives the Owner-provided client JSON location alongside the wheel location (`docs/PRODUCT_PLAN.md` §12) and places the file where `setup` will look. Testers explicitly assigned to validate the BYO path instead create an OAuth client of type **Desktop app** in their own Google Cloud project and supply that downloaded JSON location to the agent.
 
 `setup --help` on this build:
 
@@ -118,11 +134,11 @@ proactive-mcp setup [-h] [--reauth] [--headless] [--client-secrets PATH]
 
 Resolution order for the secret file:
 
-1. `--client-secrets PATH`, when you pass it.
+1. `--client-secrets PATH`, when the agent passes it.
 2. The `PROACTIVE_GOOGLE_CLIENT_SECRETS` environment variable.
 3. Default: `client_secret.json` beside the state database, so `~/.proactive-mcp/client_secret.json` on Linux and macOS.
 
-Taking the default is simplest:
+An agent using the default path runs:
 
 ```bash
 mkdir -p ~/.proactive-mcp
@@ -131,20 +147,20 @@ cp ~/Downloads/client_secret_*.json ~/.proactive-mcp/client_secret.json
 chmod 600 ~/.proactive-mcp/client_secret.json
 ```
 
-On Windows, copy the delivered file to
-`%USERPROFILE%\.proactive-mcp\client_secret.json`. Do not commit either the
-Owner-provided file or a BYO file, and never paste one into an issue.
+On Windows, the agent copies the delivered file to
+`%USERPROFILE%\.proactive-mcp\client_secret.json`. It must not commit either the
+Owner-provided file or a BYO file, or paste one into an issue.
 
-Or keep it wherever you like and point at it:
+An agent can instead retain the file at its supplied location and pass it explicitly:
 
 ```bash
 uv run --directory /home/you/src/proactive-mcp proactive-mcp setup \
   --client-secrets /home/you/secrets/proactive-client.json
 ```
 
-Add `--headless` when the machine has no browser for the loopback authorization page, which is the usual case on a remote or server box. `--reauth` replaces an existing authorization, which is what you want after revoking access or changing scopes.
+The agent adds `--headless` when the machine has no browser for the loopback authorization page, which is the usual case on a remote or server box. `--reauth` replaces an existing authorization after revoking access or changing scopes.
 
-Now connect the read-only Google sources and confirm local state:
+The agent then connects the read-only Google sources and confirms local state:
 
 ```bash
 uv run --directory /home/you/src/proactive-mcp proactive-mcp setup
@@ -159,13 +175,13 @@ The stdio server command every agent will register is:
 uv run --directory /home/you/src/proactive-mcp proactive-mcp serve
 ```
 
-Note the absolute paths for `uv` and your agent binaries now, since schedulers get a minimal `PATH`:
+The agent records absolute paths for `uv` and the agent binaries, since schedulers get a minimal `PATH`:
 
 ```bash
 command -v uv grok codex hermes
 ```
 
-The CLI surface is small. Confirm it yourself with `uv run proactive-mcp --help`:
+The CLI surface is small. An agent or developer can confirm it with `uv run proactive-mcp --help`:
 
 ```text
 proactive-mcp {serve,serve-scheduled,status,setup,google-smoke,daemon}
@@ -210,7 +226,11 @@ chmod 700 ~/.proactive-mcp/agent-cwd
 
 On Windows that's `%USERPROFILE%\.proactive-mcp\agent-cwd`. Keep it empty. No `AGENTS.md`, no `CLAUDE.md`, no `.mcp.json`, no git repository. The MCP registration is user scope, so the server still starts; only the project instructions disappear. Because the directory isn't a repository, Codex needs `--skip-git-repo-check`.
 
-## Grok CLI
+## Agent reference and appendices
+
+These appendices are the implementation reference for the agent handling the tester-sheet request, and for maintainers auditing the resulting setup. They are not the primary human setup path.
+
+## Appendix A: Grok CLI
 
 Verified against grok 0.2.112.
 
@@ -265,7 +285,7 @@ chmod 700 ~/.proactive-mcp/agent-cwd
 grok --cwd ~/.proactive-mcp/agent-cwd --no-alt-screen --single 'Call the proactive_check MCP tool exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Then report any returned situations and freshness warnings; otherwise state that there are no actionable situations.'
 ```
 
-For machine-readable output add `--output-format json` (values: `plain`, `json`, `streaming-json`). Full scheduler wiring is in [OS scheduler handoff](#os-scheduler-handoff).
+For machine-readable output add `--output-format json` (values: `plain`, `json`, `streaming-json`). Full scheduler wiring is in [OS scheduler handoff](#appendix-e-os-scheduler-handoff).
 
 ### Verification
 
@@ -289,7 +309,7 @@ Grok writes MCP stderr to `~/.grok/logs/mcp/`. Start there when a launch fails.
 | Doctor reports auth expired | `grok login`. Config-source diagnostics still work without it. |
 | Headless run produces no tool call | Make the prompt itself name the tool. Rules may not load in every headless context; the prompt always does. |
 
-## Codex CLI
+## Appendix B: Codex CLI
 
 Verified against codex-cli 0.149.0.
 
@@ -395,7 +415,7 @@ Flags, all from `codex exec --help`: `--ephemeral` skips persisting session file
 
 The sandbox and the approval mode govern two different things, and it's worth keeping them straight. `--sandbox read-only` constrains the *agent's own shell*: no editing files, no `git commit`, no scribbling in your checkout. It says nothing about MCP tools. The proactive server runs as its own process and updates its local database through its own code path, so a claim or a `remember` still lands with the sandbox at `read-only`. That's intended. The agent needs no shell access at all for this job, which is why the tightest sandbox is the right choice.
 
-Scheduler wiring is in [OS scheduler handoff](#os-scheduler-handoff).
+Scheduler wiring is in [OS scheduler handoff](#appendix-e-os-scheduler-handoff).
 
 ### Verification
 
@@ -420,7 +440,7 @@ Then start an interactive `codex` session and confirm exactly one `proactive_che
 | `codex exec` fails outside a git repo | Add `--skip-git-repo-check`. |
 | Agent tries to run a shell command or edit a file | Keep `--sandbox read-only`. This job needs no shell at all, so an attempt means the prompt drifted. Local database writes by the MCP server itself are normal and aren't affected by the sandbox. |
 
-## Hermes (Native Cron)
+## Appendix C: Hermes (Native Cron)
 
 Verified against Hermes Agent v0.20.0. MCP registration was checked against `hermes mcp add --help`, the cron flags against `hermes cron create --help`.
 
@@ -488,7 +508,7 @@ hermes cron runs <JOB_ID> --limit 5
 | Tool never called | The prompt must be self-contained and name `proactive_check`. A cron job carries no conversation history. |
 | Duplicate notifications | Confirm the job calls `confirm_delivery` with the returned receipt. If it already does, you probably have two jobs or another agent is collecting. Check `hermes cron list`. |
 
-## Claude Code Desktop (documentation only)
+## Appendix D: Claude Code Desktop (documentation only)
 
 > **Not demonstrated.** Per `docs/PRODUCT_PLAN.md` §5.3 and [Issue #6](https://github.com/madrobotnet/proactive-mcp/issues/6), Claude Code Desktop is a documentation deliverable for M5. The Owner doesn't have it installed and neither did the verification environment, so nothing below was executed. File locations come from [Anthropic's local MCP guide](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop), and the trigger steps come from the official [Desktop scheduled tasks guide](https://code.claude.com/docs/en/desktop-scheduled-tasks).
 
@@ -574,7 +594,7 @@ A Routine will happily run on schedule and accomplish nothing here, because its 
 | Task runs but no MCP tools are available | The task is running in the cloud, not locally. Recreate it as a local task. |
 | Task can't be created below one minute | That's the documented floor. Use the daemon plus fallback for anything more urgent. |
 
-## OS scheduler handoff
+## Appendix E: OS scheduler handoff
 
 Grok CLI and Codex CLI have no scheduler, so the OS supplies one. A scheduled
 run must do more than lease a situation: it must confirm the receipt and make
