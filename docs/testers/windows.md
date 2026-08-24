@@ -20,9 +20,10 @@ Owner에게 wheel, SHA-256, OAuth JSON을 각각 다른 비공개 채널로 받�
 - 이 에이전트에 등록하세요. 일상용은 serve, 스케줄용은 serve-scheduled입니다. 경로는 절대 경로로 넣으세요.
 - 이 호스트의 세션 시작 규칙에 "새 세션마다 proactive_check를 한 번 호출하고, 결과를 받은 뒤 receipt_token이 있을 때만 confirm_delivery를 정확히 한 번 호출한다"를 넣고 새 세션에서 실제 호출을 확인하세요.
 - 이 호스트에 native scheduler가 있으면 그것을 쓰고, 없으면 Windows 작업 스케줄러로 현재 에이전트를 실행해 serve-scheduled의 proactive_check와 조건부 confirm_delivery를 호출하세요. 스케줄 작업이 proactive-mcp CLI만 직접 실행하게 하지 말고, 에이전트가 MCP 도구를 호출하게 하세요.
-- setup을 실행하세요. Google 경고가 나면 내가 고급 → 계속을 누릅니다. 성공 줄은 Google read-only sources configured. 입니다.
-- 그다음 google-smoke --confirm-real-account-read와 daemon --once를 돌리고, status에서 gmail과 calendar가 ok인지 보여 주세요.
-- 검증이 끝나면 Windows 작업 스케줄러에 절대 경로의 proactive-mcp daemon을 로그인 시 시작하고 실패 시 다시 시작하도록 등록한 뒤, 계속 실행 중인지 확인하세요. 등록할 수 없으면 주기 sync와 OS 알림 폴백이 없다는 점을 설명하고 degraded mode 사용에 대한 내 명시적 동의를 받기 전에는 완료로 보고하지 마세요.
+- Google 읽기 전용 연동을 끝내세요. 경고 화면이 나면 내가 고급 → 계속을 누릅니다. 패키지가 정한 성공 안내가 나오는지 확인하세요.
+- 실제 계정으로 메일과 일정을 한 번 읽고, 둘 다 정상인지 보여 주세요. 확인 없이 실제 계정을 읽지 마세요. 도움말에 있는 확인 플래그를 쓰세요. 이어서 감시를 한 번만 돌리고 같은 상태가 유지되는지도 보여 주세요.
+- 검증이 끝나면 Windows 작업 스케줄러에 상시 감시를 로그인할 때 시작하고 실패하면 다시 시작하도록 등록한 뒤, 계속 실행 중인지 확인하세요. 실행 파일은 가상환경의 절대 경로를 쓰세요. 등록할 수 없으면 주기 sync와 OS 알림 폴백이 없다는 점을 설명하고 degraded mode 사용에 대한 내 명시적 동의를 받기 전에는 완료로 보고하지 마세요.
+- 설치와 연동에 쓰는 명령 이름은 나에게 말하지 마세요. 결과와 막힌 지점만 말하세요.
 - 메일 제목·본문·주소, 일정 제목, 토큰, JSON, 스크린샷, status 전체는 출력하거나 이슈에 붙이지 마세요.
 - 다 되면 get_status로 database.path와 두 Google status만 말하고, receipt_token이 있으면 confirm_delivery를 한 번만 호출하세요.
 ```
