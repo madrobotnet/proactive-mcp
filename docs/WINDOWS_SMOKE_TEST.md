@@ -169,11 +169,15 @@ Grok takes the server command after `--`, per `grok mcp add --help`. User scope 
 
 ```powershell
 grok mcp add --scope user proactive -- $uv run --directory $repo proactive-mcp serve
+grok mcp add --scope user proactive_scheduled -- $uv run --directory $repo proactive-mcp serve-scheduled
 grok mcp list
 grok mcp doctor proactive
+grok mcp doctor proactive_scheduled
 ```
 
-Success: `grok mcp list` shows `proactive`, and `grok mcp doctor proactive` reports the server reachable with its tools listed.
+Success: `grok mcp list` shows both profiles. The full `proactive` doctor lists
+all interactive tools; `proactive_scheduled` lists only `get_status`,
+`proactive_check`, and `confirm_delivery`.
 
 Failure: the server won't spawn. Confirm the `uv.exe` path in the entry is absolute. `uv` on your shell's `PATH` says nothing about what a GUI app or a scheduled task can find. Grok writes MCP stderr under `%USERPROFILE%\.grok\logs\mcp\`; read those yourself and retype one sanitized line if you need to report it.
 
@@ -185,20 +189,29 @@ Codex uses the same `--` form. Remove any old entry first so this one is unambig
 
 ```powershell
 codex mcp remove proactive 2>$null
+codex mcp remove proactive_scheduled 2>$null
 codex mcp add proactive -- $uv run --directory $repo proactive-mcp serve
+codex mcp add proactive_scheduled -- $uv run --directory $repo proactive-mcp serve-scheduled
 codex mcp list --json
 codex mcp get proactive
+codex mcp get proactive_scheduled
 ```
 
-Success: the listing has a `proactive` entry whose command is your absolute `uv.exe` path.
+Success: the listing has both entries using your absolute `uv.exe` path, and
+`proactive_scheduled` launches `serve-scheduled`.
 
 Codex needs one more thing. `codex exec` runs with approval policy `never`, and on codex-cli 0.149.0 an MCP tool call under that policy fails outright with `MCP tool call requires approval, but approval policy is never`. Every non-interactive Codex command in this document carries a per-server override ([openai/codex#24135](https://github.com/openai/codex/issues/24135)):
 
 ```
--c 'mcp_servers.proactive.default_tools_approval_mode="approve"'
+-c 'mcp_servers.proactive.enabled=false'
+-c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"'
 ```
 
-Drop it from one command and that command fails in a way that looks like a broken registration. The scope is this one server; other servers and shell commands keep their usual approval behavior. Interactive `codex` sessions don't need it, because you're there to approve.
+The full profile stays disabled for that non-interactive command, and only the
+three-tool scheduled profile is approved. Drop the scheduled override and the
+command fails in a way that looks like a broken registration. Never put
+`approve` on the full `proactive` profile. Interactive `codex` sessions can
+keep prompt approval because you're there to review each call.
 
 Failure: `codex mcp list --json` has no `proactive` entry, or config load dies with `unknown variant`. Only `auto`, `prompt`, `writes`, and `approve` are accepted for the approval mode. Check whether `CODEX_HOME` is set, since it overrides `%USERPROFILE%\.codex`.
 
@@ -216,13 +229,19 @@ Both CLIs move fast. Run `grok mcp add --help`, `codex mcp add --help`, and `cod
 Ask each CLI for `get_status` from the empty folder. Neither may stand in for the other:
 
 ```powershell
-grok --cwd $neutral -p "Call the get_status tool from the proactive MCP server and report database.status, database.migration_version, and database.path. Don't guess."
-codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call the get_status tool from the proactive MCP server and report database.status, database.migration_version, and database.path. Don't guess."
+grok --cwd $neutral -p "Call get_status from proactive_scheduled and report database.status, database.migration_version, and database.path. Don't guess."
+codex exec -c 'mcp_servers.proactive.enabled=false' -c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call get_status from proactive_scheduled and report database.status, database.migration_version, and database.path. Don't guess."
 ```
 
 Success, from both CLIs: a visible `get_status` tool call, `database.status` is `"healthy"`, `database.migration_version` is `9`, and `path` ends with `.proactive-mcp\proactive.db`.
 
-Failure: a CLI answers without calling the tool, the tool errors, the tool list is short, or the reported path is somewhere else. A `migration_version` under 9, or a missing `update` or `list_entities` in the tool list, means the CLI is spawning older code, so recheck the checkout in step 2 and run `uv sync --locked` again. Stop here either way. Don't start the scenarios until both CLIs pass.
+Failure: a CLI answers without calling the tool, the tool errors, the
+scheduled tool list is anything other than the three named tools, or the
+reported path is somewhere else. A `migration_version` under 9 means the CLI
+is spawning older code. A missing `update` or `list_entities` from the full
+Grok doctor means the same. Recheck the checkout in step 2 and run
+`uv sync --locked` again. Stop here either way. Don't start the scenarios until
+both CLIs pass.
 
 `--skip-git-repo-check` is required because `neutral` isn't a git repository, and `--sandbox read-only` blocks the agent's own shell without stopping the MCP server from writing its own database.
 
@@ -1213,7 +1232,10 @@ uv run --directory $repo proactive-mcp daemon --once
 Write-Output "exit=$LASTEXITCODE"
 ```
 
-The daemon pass detects and stores the situation but never delivers it. Delivery is `proactive_check` only, so the situation sits in `pending` until an agent claims it. That gap is exactly what M5 measures.
+The daemon pass detects and stores the situation but never delivers it.
+`proactive_check` only leases the pending situation; `confirm_delivery` records
+delivery after the host receives that lease. Until both calls happen, the
+situation remains `pending`. That gap is exactly what M5 measures.
 
 Confirm the situation is waiting through the interactive Grok profile and
 `list_situations` only. Listing does not deliver:
@@ -1224,7 +1246,10 @@ grok --cwd $neutral -p "Call list_situations with state=pending and report only 
 
 Checkpoint: `daemon --once` exits 0 with `created` 1 and `notifications` 0. The pending list has one more `personal_occasion` than before, `priority=high`, `state=pending`. Report `items` length only, never the entries.
 
-Failure: `created` is 0 (the anchor or `lead_days` is wrong, or you reused a `TAG`), or the list shows the situation already `delivered` (something called `proactive_check` early, so start over with a new `TAG`).
+Failure: `created` is 0 (the anchor or `lead_days` is wrong, or you reused a
+`TAG`), or the list shows the situation already `delivered` (something called
+`proactive_check` and `confirm_delivery` early, so start over with a new
+`TAG`).
 
 ### M5 시나리오 목록
 
