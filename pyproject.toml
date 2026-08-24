@@ -45,7 +45,7 @@ filterwarnings = ["error"]
 [tool.ruff]
 target-version = "py311"
 line-length = 88
-src = ["src", "tests"]
+src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -63,6 +63,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"scripts/build_alpha_bundle.py" = ["D101", "D107"]
 "tests/**/*.py" = [
     "ARG",
     "D",
@@ -86,7 +87,7 @@ typeCheckingMode = "all"
 pythonVersion = "3.11"
 pythonPlatform = "All"
 stubPath = "typings"
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 exclude = ["**/__pycache__", "**/.venv", "**/build", "**/dist"]
 reportUnusedCallResult = "warning"
 reportUnnecessaryTypeIgnoreComment = "error"
