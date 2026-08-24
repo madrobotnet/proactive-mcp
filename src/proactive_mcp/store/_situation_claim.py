@@ -222,30 +222,30 @@ def confirm_delivery(
             "DELETE FROM situation_delivery_claims WHERE expires_at <= ?",
             (confirmed_at,),
         )
-        situation_ids = reader.delivery_claim_ids(claim_token)
-        if not situation_ids:
+        while situation_ids := reader.delivery_claim_ids(claim_token):
+            for situation_id in situation_ids:
+                cursor = connection.execute(
+                    """
+                    UPDATE situations
+                    SET state = 'delivered', delivered_at = ?, updated_at = ?,
+                        snoozed_until = NULL, snooze_cooldown_exempt = 0
+                    WHERE id = ? AND state = 'pending'
+                    """,
+                    (confirmed_at, confirmed_at, situation_id),
+                )
+                if cursor.rowcount == 0:
+                    raise DeliveryReceiptError
+                situation = reader.get_situation(situation_id)
+                if situation is None:
+                    raise SituationNotFoundError(situation_id)
+                record_delivery(connection, situation, confirmed_at)
+                delivered.append(situation)
+                _ = connection.execute(
+                    "DELETE FROM situation_delivery_claims WHERE situation_id = ?",
+                    (situation_id,),
+                )
+        if not delivered:
             raise DeliveryReceiptError
-        for situation_id in situation_ids:
-            cursor = connection.execute(
-                """
-                UPDATE situations
-                SET state = 'delivered', delivered_at = ?, updated_at = ?,
-                    snoozed_until = NULL, snooze_cooldown_exempt = 0
-                WHERE id = ? AND state = 'pending'
-                """,
-                (confirmed_at, confirmed_at, situation_id),
-            )
-            if cursor.rowcount == 0:
-                continue
-            situation = reader.get_situation(situation_id)
-            if situation is None:
-                raise SituationNotFoundError(situation_id)
-            record_delivery(connection, situation, confirmed_at)
-            delivered.append(situation)
-        _ = connection.execute(
-            "DELETE FROM situation_delivery_claims WHERE claim_token = ?",
-            (claim_token,),
-        )
     return tuple(delivered)
 
 
