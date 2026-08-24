@@ -27,12 +27,7 @@ from proactive_mcp.store import (
 if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
     from proactive_mcp.paths import ProactivePaths
-    from proactive_mcp.store import (
-        DaemonStatus,
-        FallbackOutcome,
-        FallbackRecord,
-        SourceFreshnessStatus,
-    )
+    from proactive_mcp.store import DaemonStatus, SourceFreshnessStatus
 
 __all__ = [
     "DaemonStatusResponse",
@@ -185,30 +180,13 @@ def _daemon_response(daemon: DaemonStatus) -> DaemonStatusResponse:
 
 def _fallback_status(store: Store) -> FallbackStatusResponse:
     """Count OS notification outcomes without reading their content."""
-    records = tuple(
-        record
-        for situation in store.situations.list_situations()
-        if (record := store.fallbacks.history(situation.id)) is not None
-    )
+    summary = store.fallbacks.summary()
     return FallbackStatusResponse(
-        claimed=_count(records, "claimed"),
-        sent=_count(records, "sent"),
-        failed=_count(records, "failed"),
-        failure_codes=tuple(
-            sorted(
-                {
-                    record.failure_code
-                    for record in records
-                    if record.failure_code is not None
-                }
-            )
-        ),
+        claimed=summary.claimed,
+        sent=summary.sent,
+        failed=summary.failed,
+        failure_codes=summary.failure_codes,
     )
-
-
-def _count(records: tuple[FallbackRecord, ...], outcome: FallbackOutcome) -> int:
-    """Count the fallback records that reached one outcome."""
-    return sum(1 for record in records if record.outcome == outcome)
 
 
 def _source_warnings(google: GoogleFreshnessResponse) -> tuple[str, ...]:
