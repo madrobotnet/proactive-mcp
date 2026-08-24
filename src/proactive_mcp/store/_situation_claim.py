@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
+from ._delivery_eligibility import (
+    reserved_non_reply_slots_for_claim,
+    reserved_non_reply_slots_for_reservation,
+)
 from ._situation_models import (
     DeliveryReceiptError,
     DeliveryReservation,
@@ -19,7 +23,6 @@ if TYPE_CHECKING:
     from ._situation_reader import SituationReader
 
 _MAX_DELIVERY_CANDIDATES: Final[int] = 100
-_RESERVED_NON_REPLY_SLOTS: Final[int] = 1
 
 
 def claim_for_delivery(
@@ -33,7 +36,11 @@ def claim_for_delivery(
         candidates = reader.pending_for_delivery(
             limit=_MAX_DELIVERY_CANDIDATES,
         )
-        reserved_non_reply_slots = _reserved_non_reply_slots(candidates, claim)
+        reserved_non_reply_slots = reserved_non_reply_slots_for_claim(
+            reader,
+            candidates,
+            claim,
+        )
         for candidate in candidates:
             if not claim.allow_noncritical and candidate.priority != "critical":
                 continue
@@ -112,7 +119,11 @@ def reserve_for_delivery(
             (claim.delivered_at,),
         )
         candidates = reader.pending_for_delivery(limit=_MAX_DELIVERY_CANDIDATES)
-        reserved_non_reply_slots = _reserved_non_reply_slots(candidates, claim)
+        reserved_non_reply_slots = reserved_non_reply_slots_for_reservation(
+            reader,
+            candidates,
+            claim,
+        )
         for candidate in candidates:
             if not claim.allow_noncritical and candidate.priority != "critical":
                 continue
@@ -236,21 +247,6 @@ def confirm_delivery(
             (claim_token,),
         )
     return tuple(delivered)
-
-
-def _reserved_non_reply_slots(
-    candidates: tuple[Situation, ...],
-    claim: DeliveryClaim,
-) -> int:
-    """Reserve capacity only while a non-reply candidate can use it."""
-    if not claim.allow_noncritical:
-        return 0
-    has_non_reply = any(
-        candidate.priority != "critical"
-        and candidate.situation_type != "reply_deadline"
-        for candidate in candidates
-    )
-    return _RESERVED_NON_REPLY_SLOTS if has_non_reply else 0
 
 
 def record_delivery(
