@@ -1332,11 +1332,13 @@ The isolated database is what makes an unattended run safe. The task talks to `m
 
 The wrapper below **never reads agent output.** It reads `deliveries.total` from
 `proactive-mcp status` before and after the agent runs, and that delta is the
-whole verdict. `status` is PII-free JSON: counts, states, and a database path,
-with no situation content anywhere in it. Grok's stdout and stderr go straight
-to `$null`, so no transcript, no token, and no model wording enters the decision
-or the disk. The task records fixed marker fields only, and delivery still
-requires the visible toast as well as the counter movement.
+whole verdict. The complete `status` JSON is situation-content-free but not
+PII-free because `database.path` can contain the Windows username. The wrapper
+parses it in memory, retains only `deliveries.total` and the warning count, and
+discards the JSON. Grok's stdout and stderr go straight to `$null`, so no
+transcript, path, token, or model wording enters the decision or the disk. The
+task records fixed marker fields only, and delivery still requires the visible
+toast as well as the counter movement.
 
 That design comes from a failed Owner run. The old wrapper asked the model to
 answer with one of two fixed words and matched on them. One scheduled run

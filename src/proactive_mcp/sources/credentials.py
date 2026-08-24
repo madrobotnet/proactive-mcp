@@ -298,9 +298,9 @@ class CredentialStore:
         object.__setattr__(self, "_loaded_version", (epoch, revision))
         try:
             self.keyring.delete_password(_KEYRING_SERVICE, self.keyring_username)
-        except (InitError, NoKeyringError):
+        except (InitError, NoKeyringError) as error:
             _delete_fallback(self.file_path)
-            return
+            raise CredentialStorageError from error
         except PasswordDeleteError as error:
             _delete_fallback(self.file_path)
             raise CredentialStorageError from error
