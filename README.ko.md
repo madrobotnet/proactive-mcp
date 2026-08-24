@@ -187,7 +187,7 @@ Python 3.11 이상이 필요합니다. 테스트는 fake clock과 로컬 fixture
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Grok, Codex, Hermes, Claude Desktop, 스케줄러 |
 | [`docs/testers/README.md`](docs/testers/README.md) | 클로즈드 알파 운영체제 테스터 시트 |
 | [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) | 비공개 wheel 빌드, 핸드오프, 증거, 롤백 |
-| [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Windows Owner·알파 테스터 스모크 경로 |
+| [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Owner 전용 Windows 스모크와 저수준 진단 참고 |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | 메모리 모델과 도구 계약 |
 | [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) | 제품·릴리스 정본 기획서 |
 

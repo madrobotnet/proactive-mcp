@@ -15,10 +15,10 @@ Two ways in:
   forward. The M1.5 through M4 sections preserve acceptance evidence exactly as
   it was captured; for current support validation, jump to
   [M5 연동 레시피 실증](#m5-연동-레시피-실증-issue-6).
-- **Closed-alpha tester, from a wheel.** Skip the checkout entirely and go to
-  [부록: 클로즈드 알파 테스터 경로](#부록-클로즈드-알파-테스터-경로-m6). That
-  appendix installs a wheel, runs `setup`, checks `status`, and validates both
-  CLIs.
+- **Closed-alpha tester, from a wheel.** Do not follow this Owner runbook.
+  Open [`docs/testers/windows.md`](testers/windows.md) and paste its single
+  block into the local agent you already use. The appendix only explains this
+  boundary and retains the superseded manual workflow as Owner reference.
 
 Don't install from PyPI: the repo is private and `proactive-mcp` is not
 published (`docs/PRODUCT_PLAN.md` §12). `uvx proactive-mcp` and
@@ -2102,26 +2102,28 @@ If you think a failure can't be explained without one of those, say so in the co
 
 ## 부록: 클로즈드 알파 테스터 경로 (M6)
 
-This appendix is for a designated closed-alpha tester on Windows. You don't need
-repository access, a checkout, or `uv sync`. The Owner hands you a `.whl` and an
-OAuth client JSON, and everything below runs from the installed console script.
-`docs/PRODUCT_PLAN.md` §12 makes the wheel the preferred tester path precisely
-because it needs no repository access.
+> [!IMPORTANT]
+> **Windows testers use one path only:** open
+> [`docs/testers/windows.md`](testers/windows.md) and paste its complete
+> **에이전트에게 붙여 넣기** block into the local agent you already use. Do
+> not execute A1–A8 below, install the wheel yourself, run `setup` in
+> PowerShell, or edit MCP configuration. The agent performs installation,
+> registration, setup, session-start and scheduled delivery wiring, continuous
+> watcher setup, verification, and rollback. You only handle consent prompts
+> and report the sanitized fields named in the sheet.
 
-Two differences from the Owner sections above, and they matter:
+The sheet is the canonical tester procedure. Its success, reporting, and
+credential-first rollback sections replace the older appendix workflow.
+[`docs/RELEASE_ALPHA.md`](RELEASE_ALPHA.md) remains the Owner handoff record.
 
-- **There is no `uv run` and no `--directory`.** Every command is the absolute
-  path to `proactive-mcp.exe` inside your own virtualenv.
-- **You do run `setup`.** The Owner sections forbid it because they test the
-  unconfigured, degraded state on purpose. Your job is the opposite: prove a
-  fresh Windows machine gets from wheel to working Google sources, and time it.
-  The M6 target is clean install to finished onboarding in under 15 minutes
-  (`docs/PRODUCT_PLAN.md` §10).
+<details>
+<summary>Owner/maintainer reference: superseded manual A1–A8 workflow</summary>
 
-Use the default database at `%USERPROFILE%\.proactive-mcp\proactive.db`. Don't
-set `PROACTIVE_DATABASE`.
+The material below is retained only for diagnosing an agent-led onboarding
+failure or reconstructing earlier alpha evidence. It is not a tester entry
+point and must not be sent as installation instructions.
 
-### A1. Install the wheel
+### Owner reference A1. Install the wheel
 
 ```powershell
 winget show --id astral-sh.uv --exact --source winget
@@ -2160,7 +2162,7 @@ installs nothing of ours.
 Keep `$pm` handy. Every command below starts with it, and a new PowerShell
 window needs it set again.
 
-### A2. Put the client secret where `setup` looks
+### Owner reference A2. Put the client secret where `setup` looks
 
 `setup` runs the Google OAuth flow and can't start without an installed-app
 client secret file. During the closed alpha that's the JSON the Owner delivered
@@ -2193,7 +2195,7 @@ download here. Everyone else uses the delivered file.
 
 Never commit either file, and never paste one into an issue.
 
-### A3. Run `setup`
+### Owner reference A3. Run `setup`
 
 ```powershell
 & $pm setup
@@ -2223,7 +2225,7 @@ The final success line is required.
 Failure: paste the exit code and one sanitized error line. `invalid_client` or
 `redirect_uri_mismatch` almost always means the wrong JSON landed in A2.
 
-### A4. Confirm state with `status`
+### Owner reference A4. Confirm state with `status`
 
 ```powershell
 & $pm status
@@ -2256,7 +2258,7 @@ non-zero exit. A `daemon.status` of `not_running` on its own is fine. The daemon
 is recommended, not required, and skipping it costs you only the OS notification
 fallback.
 
-### A4b. First real read, then `ok`
+### Owner reference A4b. First real read, then `ok`
 
 Confirm the read path reaches your real account. The confirmation flag isn't
 optional; without it the command refuses to touch the account and exits 2:
@@ -2303,7 +2305,7 @@ Now run the ACL checks in the [Explorer](#explorer) and
 `%USERPROFILE%\.proactive-mcp`. Same expectations as the Owner smoke: protected
 DACL, no inherited entries, your account as the only Allow principal.
 
-### A5. Register the wheel with both CLIs
+### Owner reference A5. Register the wheel with both CLIs
 
 Follow the agent-led instructions in
 [`docs/testers/windows.md`](testers/windows.md). Copy its **에이전트에게 붙여
@@ -2324,7 +2326,7 @@ Failure: stop at the failed step and report the sanitized error and exit code.
 Don't work around a headless, credential, or server-spawn failure by editing
 the agent's config. The tester sheet covers the supported recovery path.
 
-### A6. Agent validation
+### Owner reference A6. Agent validation
 
 The agent-led sheet ends by asking the registered agent for `get_status`. Check
 that its reply names only the redacted `.proactive-mcp\proactive.db` path and
@@ -2344,7 +2346,7 @@ Failure: no tool call, a server-spawn error, a source other than `ok`, or any
 credential prompt that cannot be completed interactively. Report only the
 sanitized error and status fields listed in the tester sheet.
 
-### A7. What to report, and what to leave out
+### Owner reference A7. What to report, and what to leave out
 
 Time the run from A1 to the end of A6, A4b included, and report that number. Fifteen minutes is
 the target; a slower run is useful information, not a failure.
@@ -2376,7 +2378,7 @@ CLI logs, your CLI MCP config files, and screenshots.
 If a problem seems impossible to describe without one of those, say exactly that
 and stop. Someone will work out a safe way to get the detail.
 
-### A8. Putting the machine back
+### Owner reference A8. Putting the machine back
 
 None of this is destructive on its own, but do undo what you changed:
 
@@ -2414,3 +2416,5 @@ If credential deletion fails, leave the state directory and tombstone in
 place, revoke the app in Google Account permissions, and report the failure to
 the Owner. Do not remove the tombstone and expose a stale keyring entry to
 legacy migration.
+
+</details>
