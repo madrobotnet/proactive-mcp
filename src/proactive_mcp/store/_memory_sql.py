@@ -159,11 +159,29 @@ SELECT_ACTIVE_ENTITIES: Final = """
                 )
             ))
             FROM (
-                SELECT * FROM entities
-                WHERE status = 'active'
-                  AND (? IS NULL OR kind = ?)
-                  AND (? IS NULL OR path = ? OR path LIKE ? ESCAPE '\\')
-                ORDER BY kind ASC, path ASC, label ASC, id ASC
+                SELECT entity.*
+                FROM entities AS entity
+                LEFT JOIN entities AS cursor ON cursor.id = ?
+                WHERE entity.status = 'active'
+                  AND (? = 0 OR (
+                      cursor.id IS NOT NULL
+                      AND (
+                          entity.kind,
+                          COALESCE(entity.path, ''),
+                          entity.label,
+                          entity.id
+                      ) > (
+                          cursor.kind,
+                          COALESCE(cursor.path, ''),
+                          cursor.label,
+                          cursor.id
+                      )
+                  ))
+                  AND (? IS NULL OR entity.kind = ?)
+                  AND (? IS NULL OR entity.path = ?
+                       OR entity.path LIKE ? ESCAPE '\\')
+                ORDER BY entity.kind ASC, COALESCE(entity.path, '') ASC,
+                         entity.label ASC, entity.id ASC
                 LIMIT ?
             )
             """

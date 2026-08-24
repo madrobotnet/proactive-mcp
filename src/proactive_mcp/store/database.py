@@ -150,12 +150,14 @@ class Store:
         *,
         kind: EntityKind | None = None,
         path_prefix: str | None = None,
+        after_id: int = 0,
         limit: int = 20,
     ) -> tuple[Entity, ...]:
         """List active entities with optional kind and path-prefix filters."""
         return self._require().memory.list_entities(
             kind=kind,
             path_prefix=path_prefix,
+            after_id=after_id,
             limit=limit,
         )
 

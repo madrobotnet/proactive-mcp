@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
     from proactive_mcp.delivery import EvaluationRunner
     from proactive_mcp.delivery.evaluation import EvaluationPass
+    from proactive_mcp.store import SituationType
 
 _NOON = utc_datetime(2026, 8, 21, 12)
 _QUIET_NIGHT = utc_datetime(2026, 8, 21, 22)
@@ -152,6 +153,51 @@ def test_unconfirmed_delivery_lease_expires_back_to_pending(tmp_path: Path) -> N
     assert confirmation.delivered_count == 1
 
 
+@pytest.mark.parametrize(
+    "situation_type",
+    ["calendar_conflict", "reply_deadline"],
+)
+def test_unconfirmed_lease_does_not_consume_the_next_local_days_budget(
+    tmp_path: Path,
+    situation_type: SituationType,
+) -> None:
+    before_midnight = utc_datetime(2026, 8, 21, 23, 59)
+    write_config(
+        tmp_path,
+        daily_budget=1,
+        quiet_hours_start="00:00",
+        quiet_hours_end="00:00",
+    )
+    with open_harness(tmp_path, before_midnight) as harness:
+        _ = harness.store.situations.upsert_detections(
+            (
+                replace(
+                    pending_detection("before-midnight"),
+                    situation_type=situation_type,
+                ),
+            )
+        )
+        first = harness.service.proactive_check()
+        assert first.receipt_token is not None
+
+        harness.clock.advance(timedelta(minutes=1))
+        _ = harness.store.situations.upsert_detections(
+            (
+                replace(
+                    pending_detection("after-midnight"),
+                    situation_type=situation_type,
+                ),
+            )
+        )
+        second = harness.service.proactive_check()
+
+    assert tuple(item.evidence.facts["event_a_id"] for item in second.situations) == (
+        "after-midnight",
+    )
+    assert second.budget.used == 1
+    assert second.budget.remaining == 0
+
+
 def test_reply_flood_cannot_starve_non_reply_budget_capacity(tmp_path: Path) -> None:
     write_config(tmp_path, daily_budget=4)
     with open_harness(tmp_path, _NOON) as harness:
@@ -212,6 +258,28 @@ def test_proactive_check_reports_all_clear_only_when_no_source_warns(
     assert response.warnings == ()
     assert response.all_clear is True
     assert response.held_count == 0
+
+
+def test_proactive_check_warns_when_situation_capacity_rejects_a_detection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(consistency_module, "_MAX_SITUATION_ROWS", 0)
+    with open_harness(tmp_path, _BIRTHDAY_MORNING, "already_fresh") as harness:
+        harness.store.set_google_auth_state("configured")
+        harness.store.record_sync_success("gmail")
+        harness.store.record_sync_success("calendar")
+        _ = harness.store.remember(birthday_memory())
+
+        response = harness.service.proactive_check()
+
+    assert response.situations == ()
+    assert response.held_count == 0
+    assert response.all_clear is False
+    assert any(
+        warning.startswith("situations: persistence capacity rejected 1 detection")
+        for warning in response.warnings
+    )
 
 
 def test_proactive_check_holds_situations_past_the_daily_budget(
@@ -310,6 +378,7 @@ def test_situation_row_quota_skips_new_remote_id_growth(
 
     assert summary.created == 1
     assert summary.skipped == 1
+    assert summary.capacity_skipped == 1
     assert count == 1
 
 
@@ -327,6 +396,7 @@ def test_situation_record_quota_skips_oversized_external_evidence(
 
     assert summary.created == 0
     assert summary.skipped == 1
+    assert summary.capacity_skipped == 1
     assert count == 0
 
 

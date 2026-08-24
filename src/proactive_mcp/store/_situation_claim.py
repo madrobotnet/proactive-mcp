@@ -146,7 +146,8 @@ def reserve_for_delivery(
                       +
                       (SELECT COUNT(*) FROM situation_delivery_claims claims
                        JOIN situations claimed ON claimed.id = claims.situation_id
-                       WHERE claims.expires_at > ?
+                       WHERE claims.claimed_at >= ? AND claims.claimed_at < ?
+                         AND claims.expires_at > ?
                          AND claimed.priority != 'critical')
                   ) < ?)
                   AND (priority = 'critical' OR situation_type != 'reply_deadline'
@@ -163,7 +164,8 @@ def reserve_for_delivery(
                            (SELECT COUNT(*) FROM situation_delivery_claims claims
                             JOIN situations claimed
                               ON claimed.id = claims.situation_id
-                            WHERE claims.expires_at > ?
+                            WHERE claims.claimed_at >= ? AND claims.claimed_at < ?
+                              AND claims.expires_at > ?
                               AND claimed.priority != 'critical'
                               AND claimed.situation_type = 'reply_deadline')
                        ) < MAX(0, ? - ?))
@@ -177,8 +179,12 @@ def reserve_for_delivery(
                     claim.cooldown_after,
                     claim.local_day_start,
                     claim.local_day_end,
+                    claim.local_day_start,
+                    claim.local_day_end,
                     claim.delivered_at,
                     claim.daily_budget,
+                    claim.local_day_start,
+                    claim.local_day_end,
                     claim.local_day_start,
                     claim.local_day_end,
                     claim.delivered_at,

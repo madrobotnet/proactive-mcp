@@ -76,6 +76,7 @@ class ListEntitiesResponse(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     items: tuple[EntityResponse, ...]
+    next_after_id: int | None = None
 
 
 class ForgetResponse(BaseModel):

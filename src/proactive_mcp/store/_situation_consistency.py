@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from ._situation_claim import (
     claim_for_delivery,
@@ -54,6 +54,13 @@ _RESOLVES_ABSENT: Final[dict[SourceGenerationStatus, bool]] = {
 }
 _MAX_SITUATION_ROWS: Final[int] = 10_000
 _MAX_SITUATION_RECORD_BYTES: Final[int] = 16 * 1024
+_UpsertOutcome = Literal[
+    "created",
+    "reactivated",
+    "refreshed",
+    "skipped",
+    "capacity_skipped",
+]
 
 
 class DetectionSourceMismatchError(Exception):
@@ -225,7 +232,7 @@ class SituationConsistencyStore:
         timestamp: str,
         expected_type: SituationType | None,
     ) -> DetectionUpsertSummary:
-        created = reactivated = refreshed = skipped = 0
+        created = reactivated = refreshed = skipped = capacity_skipped = 0
         for detection in detections:
             if expected_type is not None and detection.situation_type != expected_type:
                 raise DetectionSourceMismatchError(
@@ -235,8 +242,15 @@ class SituationConsistencyStore:
             created += outcome == "created"
             reactivated += outcome == "reactivated"
             refreshed += outcome == "refreshed"
-            skipped += outcome == "skipped"
-        return DetectionUpsertSummary(created, reactivated, refreshed, skipped)
+            skipped += outcome in {"skipped", "capacity_skipped"}
+            capacity_skipped += outcome == "capacity_skipped"
+        return DetectionUpsertSummary(
+            created,
+            reactivated,
+            refreshed,
+            skipped,
+            capacity_skipped,
+        )
 
     def _resolve(
         self,
@@ -307,7 +321,11 @@ class SituationConsistencyStore:
             resolved += cursor.rowcount
         return resolved
 
-    def _upsert_detection(self, detection: Detection, timestamp: str) -> str:
+    def _upsert_detection(
+        self,
+        detection: Detection,
+        timestamp: str,
+    ) -> _UpsertOutcome:
         evidence_bytes = SITUATION_EVIDENCE_ADAPTER.dump_json(detection.evidence)
         record_size = len(evidence_bytes) + sum(
             len(value.encode("utf-8"))
@@ -323,7 +341,7 @@ class SituationConsistencyStore:
         if record_size > _MAX_SITUATION_RECORD_BYTES or (
             existing is None and self._reader.count_situations() >= _MAX_SITUATION_ROWS
         ):
-            return "skipped"
+            return "capacity_skipped"
         expires_at = (
             _utc_iso(detection.expires_at) if detection.expires_at is not None else None
         )

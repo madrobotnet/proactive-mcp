@@ -194,7 +194,8 @@ def create_server(*, profile: ServerProfile = "full") -> MCPServer[None]:
         name="list_entities",
         description=(
             "List existing active entity classifications before assigning a new "
-            "entity path. Returned labels are marked as untrusted memory data."
+            "entity path. Continue a full listing with next_after_id as after_id. "
+            "Returned labels are marked as untrusted memory data."
         ),
     )
     _ = entities_tool(list_entities)

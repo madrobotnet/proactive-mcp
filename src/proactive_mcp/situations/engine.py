@@ -30,6 +30,9 @@ if TYPE_CHECKING:
 
 __all__ = ["EvaluationResult", "SituationEngine"]
 
+_CAPACITY_WARNING_PREFIX = "situations: persistence capacity rejected"
+_CAPACITY_WARNING_SUFFIX = "detection(s); results may be incomplete"
+
 
 @dataclass(frozen=True, slots=True)
 class EvaluationResult:
@@ -144,6 +147,17 @@ class SituationEngine:
             )
             source_warnings.extend(f"calendar: {code}" for code in run.warning_codes)
         gmail_freshness, calendar_freshness = self._freshness(now)
+        capacity_skipped = sum(item.upsert.capacity_skipped for item in applied)
+        if capacity_skipped:
+            source_warnings.append(
+                " ".join(
+                    (
+                        _CAPACITY_WARNING_PREFIX,
+                        str(capacity_skipped),
+                        _CAPACITY_WARNING_SUFFIX,
+                    )
+                )
+            )
         warnings = _warnings(
             inputs,
             gmail=gmail_freshness,

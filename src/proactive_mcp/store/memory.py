@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING
 
 from ._memory_entities import list_active_entities, resolve_entity
 from ._memory_models import (
+    INVALID_AFTER_ID as _INVALID_AFTER_ID,
+)
+from ._memory_models import (
     INVALID_DUPLICATE_DATE as _INVALID_DUPLICATE_DATE,
 )
 from ._memory_models import (
@@ -212,15 +215,19 @@ class MemoryStore:
         *,
         kind: EntityKind | None = None,
         path_prefix: str | None = None,
+        after_id: int = 0,
         limit: int = 20,
     ) -> tuple[Entity, ...]:
         """List active entities in stable kind, path, label, and id order."""
+        if after_id < 0:
+            raise MemoryValidationError(*_INVALID_AFTER_ID)
         if not 1 <= limit <= MAX_MEMORY_PAGE_SIZE:
             raise MemoryValidationError(*_INVALID_LIMIT)
         return list_active_entities(
             self._queries,
             kind=kind,
             path_prefix=path_prefix,
+            after_id=after_id,
             limit=limit,
         )
 

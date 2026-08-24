@@ -94,13 +94,21 @@ class BarrierClock:
         return self._clock.now()
 
 
-def write_config(state_directory: Path, *, daily_budget: int = 4) -> None:
+def write_config(
+    state_directory: Path,
+    *,
+    daily_budget: int = 4,
+    quiet_hours_start: str = "21:00",
+    quiet_hours_end: str = "07:00",
+) -> None:
     """Pin the timezone and budget the tool tests reason about."""
     _ = (state_directory / "config.toml").write_text(
         dedent(f"""\
             [attention]
             timezone = "UTC"
             daily_budget = {daily_budget}
+            quiet_hours_start = "{quiet_hours_start}"
+            quiet_hours_end = "{quiet_hours_end}"
             """),
         encoding="utf-8",
     )

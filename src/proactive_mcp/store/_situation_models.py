@@ -89,6 +89,7 @@ class DetectionUpsertSummary:
     reactivated: int
     refreshed: int
     skipped: int
+    capacity_skipped: int = 0
 
 
 @dataclass(frozen=True, slots=True)

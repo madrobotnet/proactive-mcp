@@ -12,6 +12,7 @@ class ListEntitiesResponse(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     items: tuple[EntityResponse, ...]
+    next_after_id: int | None = None
 
 
 @pytest.mark.anyio
@@ -205,3 +206,35 @@ async def test_update_and_list_entities_use_v2_fields(tmp_path: Path) -> None:
     assert [(entity.kind, entity.path, entity.label) for entity in listed.items] == [
         ("activity", "개발/proactive-mcp", "proactive"),
     ]
+
+
+@pytest.mark.anyio
+async def test_list_entities_cursor_reaches_later_sorted_entities(
+    tmp_path: Path,
+) -> None:
+    async with memory_session(tmp_path) as session:
+        for label in ("Zulu", "Alpha", "Mike"):
+            _ = await session.call_tool(
+                "remember",
+                {
+                    "kind": "note",
+                    "entity": label,
+                    "entity_kind": "thing",
+                    "content": f"{label} note",
+                },
+            )
+        first_result = await session.call_tool("list_entities", {"limit": 2})
+        first = ListEntitiesResponse.model_validate_json(json_text(first_result))
+        assert first.next_after_id is not None
+        second_result = await session.call_tool(
+            "list_entities",
+            {"after_id": first.next_after_id, "limit": 2},
+        )
+
+    second = ListEntitiesResponse.model_validate_json(json_text(second_result))
+    assert tuple(entity.label for entity in first.items) == ("Alpha", "Mike")
+    assert tuple(entity.label for entity in second.items) == ("Zulu",)
+    assert {entity.id for entity in first.items}.isdisjoint(
+        entity.id for entity in second.items
+    )
+    assert second.next_after_id is None

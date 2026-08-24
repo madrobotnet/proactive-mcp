@@ -142,7 +142,7 @@ CREATE UNIQUE INDEX uq_memory_dated_fact
 | `remember` | `entity`(이름), `entity_kind`, `entity_path`, `attribute` 인자 추가. 별칭 정확 일치로 기존 entity에 자동 연결하고, 없으면 생성하면서 그 이름을 별칭으로 등록 |
 | `recall` | `path_prefix`, `entity_kind`, `limit`(기본 20) 추가. 정렬을 **최신 우선**으로 변경. 모순 항목에 플래그 |
 | `update` | **신규.** 지금은 수정 경로가 없어 forget + remember를 반복하며 아카이브 행이 쌓인다 |
-| `list_entities` | **신규.** `kind`/`path_prefix`로 조회. 에이전트가 새 경로를 발명하기 전에 기존 분류를 보게 하는 장치 |
+| `list_entities` | **신규.** `kind`/`path_prefix`로 조회하고 `after_id`/`next_after_id` 커서로 전체 결과를 순회. 에이전트가 새 경로를 발명하기 전에 기존 분류를 보게 하는 장치 |
 | `forget` | 변경 없음 (소프트 아카이브 유지) |
 
 ### LLM 분류 드리프트 방지

@@ -79,7 +79,12 @@ async def test_memory_tool_schemas_expose_the_v2_contract(tmp_path: Path) -> Non
     entities_schema = ToolInputSchema.model_validate(
         tools["list_entities"].input_schema
     )
-    assert set(entities_schema.properties) >= {"kind", "path_prefix", "limit"}
+    assert set(entities_schema.properties) >= {
+        "kind",
+        "path_prefix",
+        "after_id",
+        "limit",
+    }
 
     forget_schema = ToolInputSchema.model_validate(tools["forget"].input_schema)
     assert set(forget_schema.required) >= {"id"}

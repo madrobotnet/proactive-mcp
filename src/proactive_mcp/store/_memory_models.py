@@ -80,6 +80,7 @@ INVALID_LIMIT: Final = (
     "limit",
     f"must be between 1 and {MAX_MEMORY_PAGE_SIZE}",
 )
+INVALID_AFTER_ID: Final = ("after_id", "must be non-negative")
 INVALID_RECORD_SIZE: Final = (
     "record",
     f"exceeds {MAX_MEMORY_RECORD_BYTES} UTF-8 bytes",

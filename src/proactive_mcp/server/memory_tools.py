@@ -194,6 +194,7 @@ async def list_entities(
     *,
     kind: EntityKind | None = None,
     path_prefix: str | None = None,
+    after_id: Annotated[int, Field(ge=0)] = 0,
     limit: Annotated[int, Field(ge=1, le=MAX_MEMORY_PAGE_SIZE)] = 20,
 ) -> str:
     """Return active entities as a JSON object."""
@@ -201,10 +202,12 @@ async def list_entities(
         entities = store.list_entities(
             kind=kind,
             path_prefix=path_prefix,
+            after_id=after_id,
             limit=limit,
         )
     return ListEntitiesResponse(
-        items=tuple(entity_response(entity) for entity in entities)
+        items=tuple(entity_response(entity) for entity in entities),
+        next_after_id=entities[-1].id if len(entities) == limit and entities else None,
     ).model_dump_json()
 
 
