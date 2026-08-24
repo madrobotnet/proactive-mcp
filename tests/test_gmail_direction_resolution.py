@@ -85,8 +85,8 @@ def test_neutral_labels_are_ambiguous_and_not_resolution_safe() -> None:
     assert snapshot.thread_id == THREAD_ID
     assert snapshot.latest_message_id == "message-z"
     assert snapshot.is_complete is False
-    assert any(
-        reason.startswith("direction_") for reason in snapshot.degradation_reasons
-    )
+    assert snapshot.latest_from_user is False
+    assert snapshot.user_is_recipient is False
+    assert snapshot.degradation_reasons == ("direction_metadata_ambiguous",)
     assert THREAD_ID in result.resolution_excluded_thread_ids
     assert THREAD_ID not in result.resolution_safe_thread_ids

@@ -43,7 +43,7 @@ proactive-mcp가 그 빠진 방향을 채운다. 승인된 읽기 전용 소스�
 | 상황 | 예시 |
 |:---|:---|
 | `reply_deadline` | 명시된 마감 전에 회신이 필요해 보이는 메일이 있다. |
-| `calendar_conflict` | 일정이 겹치거나 이동 시간이 현실적으로 부족하다. |
+| `calendar_conflict` | 수락했거나 내가 소유한 시간 지정 일정 두 개가 겹친다. |
 | `personal_occasion` | 저장해 둔 개인 기념일이 다가와 지금 알릴 만하다. |
 
 각 결과에는 제목, 지금 중요한 이유, 범위가 제한된 근거, 제안 행동, 우선순위,
@@ -64,8 +64,9 @@ flowchart LR
 
 1. Watcher가 읽기 전용 OAuth scope로 Gmail과 Calendar를 동기화한다.
 2. Situation 엔진이 소스 스냅숏과 로컬 메모리에 결정론적 규칙을 적용한다.
-3. 에이전트가 `proactive_check`를 호출하고 돌아온 상황을 사용자에게 전달한다.
-4. 전달이 성공한 뒤, 같은 세션이 영수증 토큰으로 `confirm_delivery`를 호출한다.
+3. 에이전트가 `proactive_check`를 호출해 돌아온 상황을 수신한다.
+4. 응답에 영수증 토큰이 있으면 같은 세션이 `confirm_delivery`를 정확히 한 번
+   호출한 뒤 상황을 사용자에게 전달한다.
 5. 확인, 스누즈, 음소거, 해소, cooldown, 일일 예산 규칙이 중복되거나 시끄러운
    전달을 막는다.
 
@@ -79,9 +80,10 @@ flowchart LR
 - 감지 파이프라인 안에는 LLM도, 외부 클라우드 서비스도 없다.
 - 소스가 오래되거나 불완전하면 degraded 상태를 드러낸다. 거짓 "알릴 것 없음"은
   절대 보고하지 않는다.
-- 로컬 상태는 모두 `~/.proactive-mcp/` 아래에 있다. SQLite 데이터베이스,
-  `config.toml`, 자격 증명 대체 파일까지. `PROACTIVE_DATABASE`로 다른 경로를
-  지정하면 상태 디렉터리 전체가 함께 옮겨진다.
+- SQLite 데이터베이스, `config.toml`, 자격 증명 권한 표식, 파일 기반 자격
+  증명 대체본은 `~/.proactive-mcp/` 아래에 있다. Keyring 자격 증명은 이
+  디렉터리 밖의 OS keyring에 남는다. `PROACTIVE_DATABASE`는 파일 기반
+  상태만 옮기며 keyring 항목은 옮기지 않는다.
 
 ## 시작하기
 
@@ -161,10 +163,10 @@ uv run proactive-mcp status
 에이전트가 `proactive_check`를 호출하면 이렇게 처리한다.
 
 1. `warnings`를 먼저 읽는다. stale 소스 경고는 이상 없음 신호가 아니다.
-2. 돌아온 상황을 전부 에이전트의 기존 채널로 전달한다.
-3. 전달이 성공한 뒤에만 해당 응답의 `receipt_token`으로 `confirm_delivery`를
-   호출한다.
-4. 빈 응답이나 실패한 전달을 확정하지 않는다.
+2. 응답에 `receipt_token`이 있으면 도구 결과를 수신한 뒤 그 토큰으로
+   `confirm_delivery`를 정확히 한 번 호출한다.
+3. 돌아온 상황을 전부 에이전트의 기존 채널로 전달한다.
+4. 영수증 토큰이 없는 응답은 확정하지 않는다.
 
 이 영수증 규칙이 크래시, 재시도, 여러 에이전트가 섞이는 상황에서도 전달 이력을
 정직하게 유지한다.
@@ -180,10 +182,12 @@ uv run proactive-mcp status
 
 ### 비공개 wheel 설치
 
-Owner가 서로 다른 비공개 채널로 두 가지를 보낸다.
+Owner가 무결성 또는 자격 증명과 관련된 항목을 각각 따로 보낸다.
 
-1. wheel 파일과 그 SHA-256 체크섬.
-2. OAuth 클라이언트 JSON. BYO 경로를 검증하는 테스터는 받지 않는다.
+1. 인증된 비공개 채널로 wheel 파일.
+2. 다른 인증된 채널로 그 SHA-256 체크섬.
+3. 별도의 비공개 메시지로 OAuth 클라이언트 JSON. BYO 경로를 검증하는
+   테스터는 받지 않는다.
 
 설치 전에 체크섬을 먼저 확인하고, 그다음에 진행한다.
 
@@ -223,13 +227,13 @@ Windows 테스터는
 
 ### 메모리
 
-`remember` · `recall` · `forget` · `link_entities` · `list_entities`
+`remember` · `recall` · `update` · `list_entities` · `forget`
 
 ### 상황과 전달
 
 `proactive_check` · `confirm_delivery` · `list_situations` ·
 `get_situation` · `acknowledge_situation` · `snooze_situation` ·
-`mute_situation` · `resolve_situation` · `get_status`
+`mute_situation` · `get_status`
 
 ### 커맨드 라인
 

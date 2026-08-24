@@ -195,9 +195,22 @@ chmod 600 ~/.proactive-mcp/client_secret.json
 ```
 
 On Windows the equivalent location is
-`%USERPROFILE%\.proactive-mcp\client_secret.json`. Files at that documented
-path get a restricted DACL that blocks inheritance and grants only your
-account, so there's no `chmod` step; just move the file in.
+`%USERPROFILE%\.proactive-mcp\client_secret.json`. `setup` reads this input
+file but does not harden it, so restrict it before setup. In PowerShell:
+
+```powershell
+$dir = Join-Path $env:USERPROFILE ".proactive-mcp"
+$client = Join-Path $dir "client_secret.json"
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Move-Item (Join-Path $env:USERPROFILE "Downloads\client_secret.json") $client
+icacls $client /inheritance:r /grant:r "*${sid}:(F)"
+Get-Acl $client | Format-List Owner, AreAccessRulesProtected, Access
+```
+
+`AreAccessRulesProtected` must be `True`, and the only Allow identity must be
+your current-user SID. Stop before setup if a broad identity such as
+`Everyone`, `Users`, or `Authenticated Users` remains.
 
 `0600` on the client secret and `0700` on the directory are the expectation
 this project holds you to, but `setup` doesn't verify the mode and won't
@@ -487,9 +500,11 @@ These hold for V1, and they're the reason this setup is narrow.
   credential contents. `Google installed-app client configuration is invalid`
   is all you get about a bad file, precisely so a stack trace never carries
   your client secret into a log.
-- **No PII on disk.** Logs and error reports carry redacted structure, IDs,
-  states, and counts. `google-smoke` reports counts and error codes and never
-  a subject line, address, or event title.
+- **No PII in logs or error reports.** The local SQLite database intentionally
+  stores the bounded situation evidence needed for deterministic detection.
+  Logs and error reports carry only redacted structure, IDs, states, and
+  counts. `google-smoke` reports counts and error codes and never a subject
+  line, address, or event title.
 - **Reads happen only when you ask.** `setup` authorizes and stores; it reads
   no mail. `google-smoke` reads your real account only with
   `--confirm-real-account-read`. Routine syncing is the watcher daemon's job,

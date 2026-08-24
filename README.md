@@ -44,7 +44,7 @@ detectors turn source data into a small set of grounded situations:
 | Situation | Example |
 |:---|:---|
 | `reply_deadline` | A message appears to need a reply before a stated deadline. |
-| `calendar_conflict` | Events overlap or leave an impractical transition window. |
+| `calendar_conflict` | Two accepted or owned timed events overlap. |
 | `personal_occasion` | A saved personal date is approaching and relevant now. |
 
 Each result carries a title, why it matters now, bounded evidence, suggested
@@ -66,9 +66,9 @@ flowchart LR
 1. A watcher synchronizes Gmail and Calendar with read-only OAuth scopes.
 2. The situation engine evaluates deterministic rules against source snapshots
    and local memory.
-3. The agent calls `proactive_check` and presents any returned situations.
-4. After successful presentation, the same session calls
-   `confirm_delivery` with the receipt token.
+3. The agent calls `proactive_check` and receives any returned situations.
+4. If the response has a receipt token, the same session calls
+   `confirm_delivery` exactly once, then presents the situations.
 5. Acknowledgement, snooze, mute, resolution, cooldown, and daily budget rules
    prevent repeated or noisy delivery.
 
@@ -82,9 +82,10 @@ flowchart LR
 - No LLM or third-party cloud service sits inside the detection pipeline.
 - Stale or incomplete sources produce visible degraded status, never a false
   "nothing to report."
-- Everything local lives under `~/.proactive-mcp/`: the SQLite database,
-  `config.toml`, and the credentials fallback. Point `PROACTIVE_DATABASE` at
-  another file to move the whole state directory with it.
+- The SQLite database, `config.toml`, credential authority marker, and any
+  file-backed credential fallback live under `~/.proactive-mcp/`. A keyring
+  credential stays in the operating-system keyring, outside that directory.
+  `PROACTIVE_DATABASE` moves the file-backed state, not the keyring entry.
 
 ## Get started
 
@@ -164,10 +165,10 @@ Recipes are available for:
 When an agent calls `proactive_check`:
 
 1. Read `warnings` first. Stale-source warnings are not an all-clear.
-2. Present every returned situation through the agent's existing channel.
-3. Only after presentation succeeds, call `confirm_delivery` with that
-   response's `receipt_token`.
-4. Never confirm an empty response or a failed presentation.
+2. If the response has a `receipt_token`, call `confirm_delivery` with it
+   exactly once after receiving the tool result.
+3. Present every returned situation through the agent's existing channel.
+4. Never confirm a response without a receipt token.
 
 That receipt rule keeps delivery history honest across crashes, retries, and
 multiple agents.
@@ -183,10 +184,12 @@ Thank you for helping validate the path before public release.
 
 ### Install the private wheel
 
-The Owner sends two items through separate private channels:
+The Owner sends each integrity- or credential-sensitive item separately:
 
-1. The wheel plus its SHA-256 checksum.
-2. The OAuth client JSON, unless you are validating the BYO flow.
+1. The wheel over an authenticated private channel.
+2. Its SHA-256 checksum through a different authenticated channel.
+3. The OAuth client JSON as a separate private message, unless you are
+   validating the BYO flow.
 
 Verify the checksum before installation, then:
 
@@ -225,13 +228,13 @@ Safe evidence and rollback instructions are in
 
 ### Memory
 
-`remember` · `recall` · `forget` · `link_entities` · `list_entities`
+`remember` · `recall` · `update` · `list_entities` · `forget`
 
 ### Situations and delivery
 
 `proactive_check` · `confirm_delivery` · `list_situations` ·
 `get_situation` · `acknowledge_situation` · `snooze_situation` ·
-`mute_situation` · `resolve_situation` · `get_status`
+`mute_situation` · `get_status`
 
 ### Command line
 

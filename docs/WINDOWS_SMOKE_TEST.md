@@ -51,11 +51,17 @@ earlier steps are where you find out that a registration is broken.
 In PowerShell:
 
 ```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-irm https://astral.sh/uv/install.ps1 | iex
+winget show --id astral-sh.uv --exact --source winget
+winget install --id astral-sh.uv --exact --source winget
 $env:Path = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:Path"
 uv --version
 ```
+
+The winget manifest pins and verifies the installer hash; do not pipe a mutable
+web response into PowerShell. Record the installed uv version with the alpha
+report. If the Owner named an approved version for this handoff, add
+`--version <that-version>` to both winget commands and stop if it is
+unavailable.
 
 Success: a uv version string prints.
 
@@ -904,9 +910,9 @@ handed out twice.
 
 The scheduled half judges delivery from the database, not from what the model
 said. `proactive-mcp status` carries `deliveries.total`, a cumulative count of
-immutable delivery events that only `proactive_check` can raise. The wrappers
-read that number before and after the agent runs and compare the two. Agent
-output is discarded unread.
+immutable delivery events that only `confirm_delivery` can raise after
+`proactive_check` creates a lease. The wrappers read that number before and
+after the agent runs and compare the two. Agent output is discarded unread.
 
 Not Owner smoke targets:
 
@@ -1033,13 +1039,15 @@ grok mcp list
 codex mcp list --json
 ```
 
-The documented Owner baseline is that neither CLI has a `proactive` entry.
-If that matches what you see, note "no entry in either CLI" and carry on.
+The documented Owner baseline is that neither CLI has a `proactive` or
+`proactive_scheduled` entry. If that matches what you see, note "no entry in
+either CLI" and carry on.
 
 If either CLI does have one, it belongs to your day to day setup and M5-P3 is
-about to replace it. Before you go any further, write the exact command that
-recreates it and keep that note private to your own machine. Your restore
-sequence will first remove the smoke entry, then run that saved command.
+about to replace it. Before you go any further, write the exact commands that
+recreate both profiles and keep that note private to your own machine. Your
+restore sequence will first remove the smoke entries, then run those saved
+commands.
 Confirm you have both steps before proceeding. Cleanup at the end branches on
 what you recorded here, so a missing note means you cannot put your machine
 back. Never paste that command, or any part of `~/.grok` or
@@ -1051,8 +1059,10 @@ Grok CLI takes `-e KEY=value` before the `--` separator. `grok mcp add` is docum
 $uv = (Get-Command uv).Source
 $repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
 grok mcp add --scope user proactive -e "PROACTIVE_DATABASE=$env:PROACTIVE_DATABASE" -- $uv run --directory $repo proactive-mcp serve
+grok mcp add --scope user proactive_scheduled -e "PROACTIVE_DATABASE=$env:PROACTIVE_DATABASE" -- $uv run --directory $repo proactive-mcp serve-scheduled
 grok mcp list
 grok mcp doctor proactive
+grok mcp doctor proactive_scheduled
 ```
 
 Codex CLI takes `--env KEY=VALUE` before the `--` separator. Remove the old
@@ -1063,7 +1073,9 @@ restore the normal registration unambiguously:
 $uv = (Get-Command uv).Source
 $repo = Join-Path $env:USERPROFILE "src\proactive-mcp"
 codex mcp remove proactive 2>$null
+codex mcp remove proactive_scheduled 2>$null
 codex mcp add proactive --env "PROACTIVE_DATABASE=$env:PROACTIVE_DATABASE" -- $uv run --directory $repo proactive-mcp serve
+codex mcp add proactive_scheduled --env "PROACTIVE_DATABASE=$env:PROACTIVE_DATABASE" -- $uv run --directory $repo proactive-mcp serve-scheduled
 codex mcp list --json
 ```
 
@@ -1080,29 +1092,49 @@ grok --version
 codex --version
 ```
 
-Checkpoint: `grok mcp doctor proactive` reports the server as reachable with tools listed, and `codex mcp list --json` contains a `proactive` entry pointing at your `uv` path. Both entries must show `PROACTIVE_DATABASE` set to the `m5-smoke` path.
+Checkpoint: both Grok doctors report reachable servers, and
+`codex mcp list --json` contains `proactive` and `proactive_scheduled` entries
+pointing at your `uv` path. All four entries must show `PROACTIVE_DATABASE`
+set to the `m5-smoke` path. The scheduled entries must launch
+`serve-scheduled`, not `serve`.
 
-Codex needs one more thing before any of this works. `codex exec` runs with approval policy `never`, and on codex-cli 0.149.0 an MCP tool call under that policy fails outright:
+Codex needs one more thing before non-interactive proactive checks work.
+`codex exec` runs with approval policy `never`, and on codex-cli 0.149.0 an
+MCP tool call under that policy fails outright:
 
 ```
 MCP tool call requires approval, but approval policy is never
 ```
 
-Both `remember` and `proactive_check` fail that way, so nothing downstream works. The fix is a per-server approval mode ([openai/codex#24135](https://github.com/openai/codex/issues/24135)), which every `codex exec` command in this document carries:
+The fix is a per-server approval mode
+([openai/codex#24135](https://github.com/openai/codex/issues/24135)), but it
+belongs only on the restricted scheduled profile. Every non-interactive Codex
+delivery command in this document disables the full profile and carries:
 
 ```
--c 'mcp_servers.proactive.default_tools_approval_mode="approve"'
+-c 'mcp_servers.proactive.enabled=false'
+-c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"'
 ```
 
-It's on the isolation check below, on the memory setup, on scenarios 2, 4, and 5, on every follow-up count, on the scheduled wrapper, and on cleanup. Drop it from one command and that command fails in a way that looks like a broken registration. The scope is this one server: shell commands and any other MCP server keep their usual approval behavior, What `approve` does cover is local writes: V1 tools can update the smoke database, so memory rows and delivery state change. None of them write to Google or any other external service.
+The full `proactive` profile keeps prompt approval and is never approved for an
+unattended run. The scheduled profile exposes exactly `get_status`,
+`proactive_check`, and `confirm_delivery`; it cannot call memory or situation
+mutation tools. Fixture creation and post-run situation listing remain
+interactive Grok steps in this synthetic database.
 
-Windows PowerShell 5.1 passes the inner quotes through to `codex` unescaped, so the CLI may see either `="approve"` or `=approve`. Both work, because `-c` parses the right side as TOML and falls back to the raw string. You can also set `default_tools_approval_mode = "approve"` under `[mcp_servers.proactive]` in `%USERPROFILE%\.codex\config.toml`, but keep the flag anyway so a tidied config file can't silently break a scheduled run.
+Windows PowerShell 5.1 passes the inner quotes through to `codex` unescaped, so
+the CLI may see either `="approve"` or `=approve`. Both work, because `-c`
+parses the right side as TOML and falls back to the raw string. You can instead
+set `default_tools_approval_mode = "approve"` under
+`[mcp_servers.proactive_scheduled]` in
+`%USERPROFILE%\.codex\config.toml`, but never put that value under the full
+`[mcp_servers.proactive]` profile.
 
 Confirm the isolation reached the servers, not just your shell. Ask each CLI, from the neutral folder, for the database path it actually sees:
 
 ```powershell
 grok --cwd $neutral -p "Call get_status and report only database.path and google.gmail.status."
-codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call get_status and report only database.path and google.gmail.status."
+codex exec -c 'mcp_servers.proactive.enabled=false' -c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call get_status from proactive_scheduled and report only database.path and google.gmail.status."
 ```
 
 Both must answer with a path ending in `m5-smoke\proactive.db` and `not_configured`. If either one reports the parent `.proactive-mcp\proactive.db`, its registration didn't carry the variable. Fix it before running a single scenario, because that CLI is looking at your real data.
@@ -1155,9 +1187,10 @@ Write-Output "NEUTRAL=$neutral"
 
 The variable lines are repeated here on purpose. M5-P4 runs many times across the section, often in a window you just opened, and a missing variable would silently write the synthetic memory into your real database.
 
-Save the memory with whichever CLI the scenario names. Substitute the printed
-`TAG` and `ANCHOR`. Each scenario repeats this payload in its own CLI form, so
-the plain version below is the reference wording:
+Save the synthetic memory through the interactive Grok profile. Fixture
+creation is not the behavior under test; using Grok here keeps Codex's
+non-interactive path restricted to `proactive_scheduled`. Substitute the
+printed `TAG` and `ANCHOR`:
 
 ```
 Use the remember tool now with these exact arguments:
@@ -1182,11 +1215,11 @@ Write-Output "exit=$LASTEXITCODE"
 
 The daemon pass detects and stores the situation but never delivers it. Delivery is `proactive_check` only, so the situation sits in `pending` until an agent claims it. That gap is exactly what M5 measures.
 
-Confirm the situation is waiting, using a CLI session and `list_situations` only. Listing does not deliver. Run it from the neutral folder, with whichever CLI the scenario names:
+Confirm the situation is waiting through the interactive Grok profile and
+`list_situations` only. Listing does not deliver:
 
 ```powershell
 grok --cwd $neutral -p "Call list_situations with state=pending and report only the items length. Do not call proactive_check. Do not paste any item content."
-codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call list_situations with state=pending and report only the items length. Do not call proactive_check. Do not paste any item content."
 ```
 
 Checkpoint: `daemon --once` exits 0 with `created` 1 and `notifications` 0. The pending list has one more `personal_occasion` than before, `priority=high`, `state=pending`. Report `items` length only, never the entries.
@@ -1231,11 +1264,12 @@ Fail:
 
 #### M5 Scenario 2: Codex CLI, fresh session
 
-Run M5-P4 first for a new `TAG`. Save the memory through Codex itself so the whole path is Codex's:
+Run M5-P4 first for a new `TAG`. Seed the synthetic input through Grok so the
+Codex run can expose only the restricted scheduled tool surface:
 
 ```powershell
 $env:PROACTIVE_DATABASE = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke\proactive.db"
-codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Use the proactive MCP remember tool with kind=fact entity=스모크TAG entity_kind=person entity_path=테스트/스모크TAG attribute=birthday content=스모크 기념일 date_anchor=ANCHOR recurrence=yearly lead_days=7. Do not call proactive_check."
+grok --cwd $neutral -p "Use the proactive MCP remember tool with kind=fact entity=스모크TAG entity_kind=person entity_path=테스트/스모크TAG attribute=birthday content=스모크 기념일 date_anchor=ANCHOR recurrence=yearly lead_days=7. Do not call proactive_check."
 uv run --directory $repo proactive-mcp daemon --once
 Write-Output "exit=$LASTEXITCODE"
 ```
@@ -1244,21 +1278,25 @@ Fresh session, using the session-scoped developer instruction prepared in
 M5-P3:
 
 ```powershell
-codex exec -c $codexSessionRule -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "안녕. 오늘 뭐부터 할까?"
+codex exec -c $codexSessionRule -c 'mcp_servers.proactive.enabled=false' -c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "안녕. 오늘 뭐부터 할까?"
 ```
 
-Each `codex exec` is its own session. Two `-c` overrides ride along: the session rule, and the approval mode without which the MCP call fails before it starts. `-C $neutral` with `--skip-git-repo-check` keeps the repository's `AGENTS.md` out of the session and lets Codex run outside a git repo. Check `codex exec --help` for the flag spellings your build has.
+Each `codex exec` is its own session. The overrides carry the session rule,
+disable the full profile, and approve only `proactive_scheduled`. `-C $neutral`
+with `--skip-git-repo-check` keeps the repository's `AGENTS.md` out of the
+session and lets Codex run outside a git repo. Check `codex exec --help` for
+the flag spellings your build has.
 
 Pass:
 
 - The transcript shows a `proactive_check` MCP call
 - Codex leads with the upcoming occasion unprompted, and notes that the sources aren't configured
-- `codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call list_situations with state=delivered and report only the items length."` counts it as `delivered`
+- `grok --cwd $neutral -p "Call list_situations with state=delivered and report only the items length."` counts it as `delivered`
 
 Fail:
 
 - No tool call, sandbox blocks the server spawn, or the situation stays `pending`
-- `codex mcp list --json` shows no `proactive` entry
+- `codex mcp list --json` shows no `proactive_scheduled` entry
 - `MCP tool call requires approval, but approval policy is never`, which means the approval override didn't reach this command
 
 #### M5 Scenario 3: Grok CLI, Windows Task Scheduler trigger
@@ -1313,7 +1351,7 @@ Set-Location "$neutral"
 `$env:PROACTIVE_DATABASE = "$smokeDb"
 `$stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
 `$marker = Join-Path "$logDir" "grok-`$stamp.marker"
-`$prompt = "Call the proactive_check MCP tool exactly once and call no other tool. Do not repeat any situation content, title, why_now, evidence, name, date, mail, or calendar text."
+`$prompt = "Call proactive_check from proactive_scheduled exactly once. If it returns a receipt_token, call confirm_delivery from proactive_scheduled with that token exactly once. Call no other tool. Do not repeat any situation content, title, why_now, evidence, name, date, mail, or calendar text."
 
 function Write-Marker {
   param([string] `$Fields)
@@ -1436,11 +1474,12 @@ How the wrapper decides:
 | No change, no warnings | `no_delivery` | none | 0 |
 
 Nothing in that table reads the agent's output. Any increase in the counter is
-attention, because only a successful `proactive_check` can move it. A decrease
-is impossible against an append-only table, so it means something is wrong with
-the database and the wrapper says so out loud. A run that delivered nothing and
-failed is never silent either. The one quiet outcome is the honest one: no
-delivery, no warnings, nothing to tell you.
+attention, because only a successful `confirm_delivery` after the
+`proactive_check` lease can move it. A decrease is impossible against an
+append-only table, so it means something is wrong with the database and the
+wrapper says so out loud. A run that delivered nothing and failed is never
+silent either. The one quiet outcome is the honest one: no delivery, no
+warnings, nothing to tell you.
 
 ```powershell
 Register-ScheduledTask -TaskName "proactive-m5-grok" -Force -Action (
@@ -1489,7 +1528,9 @@ Write-Output "DELIVERIES_AFTER=$($after.deliveries.total)"
 Write-Output "DELTA=$($after.deliveries.total - $before.deliveries.total)"
 ```
 
-A delta of exactly 1 means the unattended run claimed the situation, and only `proactive_check` can produce that. Your number and the marker's `delivered_delta` have to agree.
+A delta of exactly 1 means the unattended run leased and confirmed the
+situation. Only `confirm_delivery` can produce that delivery event. Your
+number and the marker's `delivered_delta` have to agree.
 
 Pass:
 
@@ -1571,7 +1612,7 @@ Set-Location "$neutral"
 `$env:PROACTIVE_DATABASE = "$smokeDb"
 `$stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
 `$marker = Join-Path "$logDir" "codex-`$stamp.marker"
-`$prompt = "Call the proactive_check MCP tool exactly once and call no other tool. Do not repeat any situation content, title, why_now, evidence, name, date, mail, or calendar text."
+`$prompt = "Call proactive_check from proactive_scheduled exactly once. If it returns a receipt_token, call confirm_delivery from proactive_scheduled with that token exactly once. Call no other tool. Do not repeat any situation content, title, why_now, evidence, name, date, mail, or calendar text."
 
 function Write-Marker {
   param([string] `$Fields)
@@ -1613,7 +1654,7 @@ if (`$null -eq `$before) {
   exit 3
 }
 
-& "$codex" exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C "$neutral" `$prompt *> `$null
+& "$codex" exec -c 'mcp_servers.proactive.enabled=false' -c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C "$neutral" `$prompt *> `$null
 `$code = `$LASTEXITCODE
 
 `$after = Read-Counters
@@ -1666,12 +1707,12 @@ exit 0
 "@, $utf8)
 ```
 
-The approval override is inside the wrapper for the same reason it's on every
-other Codex command here: without it the scheduled run ends with `MCP tool call
-requires approval, but approval policy is never`, the counter never moves, and
-the wrapper reports `agent_failed` with a failure toast. `-C "$neutral"` plus
-`--skip-git-repo-check` keeps the task out of any repository, so no project
-instructions ride along.
+The wrapper disables the full profile and approves only
+`proactive_scheduled`. Without that narrow override the scheduled run ends
+with `MCP tool call requires approval, but approval policy is never`, the
+counter never moves, and the wrapper reports `agent_failed` with a failure
+toast. `-C "$neutral"` plus `--skip-git-repo-check` keeps the task out of any
+repository, so no project instructions ride along.
 
 The decision table is the same one scenario 3 uses:
 
@@ -1685,11 +1726,12 @@ The decision table is the same one scenario 3 uses:
 | No change, no warnings | `no_delivery` | none | 0 |
 
 Nothing in that table reads the agent's output. Any increase in the counter is
-attention, because only a successful `proactive_check` can move it. A decrease
-is impossible against an append-only table, so it means something is wrong with
-the database and the wrapper says so out loud. A run that delivered nothing and
-failed is never silent either. The one quiet outcome is the honest one: no
-delivery, no warnings, nothing to tell you.
+attention, because only a successful `confirm_delivery` after the
+`proactive_check` lease can move it. A decrease is impossible against an
+append-only table, so it means something is wrong with the database and the
+wrapper says so out loud. A run that delivered nothing and failed is never
+silent either. The one quiet outcome is the honest one: no delivery, no
+warnings, nothing to tell you.
 
 ```powershell
 Register-ScheduledTask -TaskName "proactive-m5-codex" -Force -Action (
@@ -1770,7 +1812,11 @@ The second command must print nothing.
 
 #### M5 Scenario 5: delivered once, not twice
 
-This is the dedupe half of PRODUCT_PLAN §5.1, and it runs after scenarios 1 to 4. Pick either CLI and stay on it for all three commands. The Grok form is shown; for Codex, swap `grok --cwd $neutral -p` for `codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral`. Codex without that approval override can't call the tool at all, and either CLI without the neutral working directory can be diverted by this repository's `AGENTS.md`.
+This is the dedupe half of PRODUCT_PLAN §5.1, and it runs after scenarios 1 to
+4. Use the Grok form shown for fixture inspection and the two delivery
+attempts. The restricted Codex profile intentionally has no
+`list_situations`, so mixing it into this three-command assertion would require
+re-approving the unrestricted profile and defeat the permission boundary.
 
 Before planting the dedupe situation, defensively unregister both repeating
 tasks and verify that no scheduler can claim it:
@@ -1797,7 +1843,7 @@ grok --cwd $neutral -p "Call list_situations with state=pending and report only 
 Record those as `DELIVERIES_BEFORE` and `PENDING_BEFORE`. Then claim it, twice, in two separate invocations:
 
 ```powershell
-grok --cwd $neutral -p "Call proactive_check. Report situation_type, priority, state, held_count, and all_clear. Do not paste title, why_now, or evidence."
+grok --cwd $neutral -p "Call proactive_check exactly once. If it returns receipt_token, call confirm_delivery with that token exactly once. Report situation_type, priority, the state returned by proactive_check, held_count, all_clear, and delivered_count. Do not paste title, why_now, or evidence."
 grok --cwd $neutral -p "Call proactive_check. Report situation_type, priority, state, held_count, and all_clear. Do not paste title, why_now, or evidence."
 ```
 
@@ -1811,7 +1857,9 @@ Write-Output "DELTA=$($after.deliveries.total - $before.deliveries.total)"
 Pass:
 
 - `DELTA` is exactly `1` across both checks, not `2`
-- First `proactive_check`: the new situation is present with `state=delivered`
+- First `proactive_check`: the new situation is present with `state=pending`,
+  returns a receipt token, and `confirm_delivery` reports
+  `delivered_count=1`
 - Second `proactive_check`: that situation is **not** returned again
 - `list_situations state=pending` now counts `PENDING_BEFORE - 1`
 - No duplicate `personal_occasion` for the same synthetic entity anywhere in the delivered list
@@ -1820,7 +1868,7 @@ Fail:
 
 - `DELTA` is `2` for one situation, or `0` after a successful first check
 - The same situation comes back on the second check
-- It stays `pending` after a successful `proactive_check`
+- `confirm_delivery` is skipped or does not report `delivered_count=1`
 - Any M5 scheduler task is still registered before the situation is planted
 
 ### M5 확인 포인트
@@ -1837,7 +1885,8 @@ Go through this before you write the sign-off comment. Counts and states only, n
 8. **Codex CLI passed a scheduled trigger** (scenario 4), on the same three counts
 9. Scenario 5 passed: `pending` became `delivered`, once, with `deliveries.total` up by 1 and not 2
 10. `grok --version` and `codex --version` recorded, along with any flag that differed from this document
-11. Every agent call ran from `m5-smoke\neutral`, and every `codex exec` carried the approval override
+11. Every agent call ran from `m5-smoke\neutral`, and every Codex delivery run
+    disabled the full profile and approved only `proactive_scheduled`
 12. No other `proactive_check` ran inside any measurement window
 13. Artifacts sit where they're supposed to, the DACL still holds, and cleanup put both CLI registrations back where they started (below)
 
@@ -1927,19 +1976,23 @@ Now undo the registrations. Cleanup restores each CLI to the state it was in **b
 
 Go back to the baseline you recorded in M5-P3 and treat each CLI separately.
 
-**If that CLI had no `proactive` entry before the smoke**, which is the
-documented Owner baseline for both, remove the smoke entry:
+**If that CLI had no `proactive` or `proactive_scheduled` entry before the
+smoke**, which is the documented Owner baseline for both, remove both smoke
+entries:
 
 ```powershell
 grok mcp remove --scope user proactive 2>$null
+grok mcp remove --scope user proactive_scheduled 2>$null
 codex mcp remove proactive 2>$null
+codex mcp remove proactive_scheduled 2>$null
 
 grok mcp list
 codex mcp list --json
 ```
 
-For a CLI that started with no entry, its listing must not show `proactive`
-afterwards. Confirm the flag spellings with `grok mcp remove --help` and `codex mcp remove --help` first; both CLIs move fast.
+For a CLI that started with no entry, its listing must show neither profile
+afterwards. Confirm the flag spellings with `grok mcp remove --help` and
+`codex mcp remove --help` first; both CLIs move fast.
 
 **If that CLI did have an entry**, remove that CLI's smoke entry, then run the
 exact restore command you kept privately. Check the listing shows your own
@@ -1961,12 +2014,15 @@ the environment:
 ```powershell
 $neutral = Join-Path $env:USERPROFILE ".proactive-mcp\m5-smoke\neutral"
 grok --cwd $neutral -p "Call get_status and report only database.path."
-codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call get_status and report only database.path."
+codex mcp get proactive
+codex mcp get proactive_scheduled 2>$null
 ```
 
-Each restored entry must report the database path from your private baseline,
-with no `m5-smoke` anywhere in it. Whether the baseline was absent or restored,
-no CLI may still resolve to the smoke database.
+The Grok runtime path and every restored Codex command/environment listing must
+match your private baseline, with no `m5-smoke` anywhere in them. Do not
+temporarily auto-approve the full Codex profile just to perform this cleanup
+check. Whether the baseline was absent or restored, no CLI may still resolve
+to the smoke database.
 
 Only then delete the smoke directory. This removes the smoke database, the test-only config, the neutral folder, both wrappers, and every marker in one go:
 
@@ -2041,11 +2097,17 @@ set `PROACTIVE_DATABASE`.
 ### A1. Install the wheel
 
 ```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-irm https://astral.sh/uv/install.ps1 | iex
+winget show --id astral-sh.uv --exact --source winget
+winget install --id astral-sh.uv --exact --source winget
 $env:Path = "$env:USERPROFILE\.local\bin;$env:USERPROFILE\.cargo\bin;$env:Path"
 uv --version
 ```
+
+The winget manifest pins and verifies the installer hash; do not pipe a mutable
+web response into PowerShell. Record the installed uv version with the alpha
+report. If the Owner named an approved version for this handoff, add
+`--version <that-version>` to both winget commands and stop if it is
+unavailable.
 
 Then create a virtualenv of your own and install the file you were given.
 Substitute the real filename; the version in it is whatever the Owner sent:
@@ -2079,10 +2141,19 @@ alongside the wheel. Copy it to the default location:
 
 ```powershell
 $dir = Join-Path $env:USERPROFILE ".proactive-mcp"
+$client = Join-Path $dir "client_secret.json"
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-Copy-Item (Join-Path $env:USERPROFILE "Downloads\client_secret.json") (Join-Path $dir "client_secret.json")
-Get-Item (Join-Path $dir "client_secret.json") | Format-List FullName, Length
+Copy-Item (Join-Path $env:USERPROFILE "Downloads\client_secret.json") $client
+icacls $client /inheritance:r /grant:r "*${sid}:(F)"
+Get-Item $client | Format-List FullName, Length
+Get-Acl $client | Format-List Owner, AreAccessRulesProtected, Access
 ```
+
+`AreAccessRulesProtected` must be `True`, and the only Allow identity must be
+your current-user SID. `setup` reads this input file but does not harden it, so
+stop before A3 if a broad identity such as `Everyone`, `Users`, or
+`Authenticated Users` remains.
 
 Resolution order is `--client-secrets PATH` first, then the
 `PROACTIVE_GOOGLE_CLIENT_SECRETS` variable, then `client_secret.json` beside the
@@ -2216,16 +2287,23 @@ $neutral = Join-Path $env:USERPROFILE ".proactive-mcp\agent-cwd"
 New-Item -ItemType Directory -Force -Path $neutral | Out-Null
 
 grok mcp add --scope user proactive -- $pm serve
+grok mcp add --scope user proactive_scheduled -- $pm serve-scheduled
 grok mcp list
 grok mcp doctor proactive
+grok mcp doctor proactive_scheduled
 
 codex mcp remove proactive 2>$null
+codex mcp remove proactive_scheduled 2>$null
 codex mcp add proactive -- $pm serve
+codex mcp add proactive_scheduled -- $pm serve-scheduled
 codex mcp get proactive
+codex mcp get proactive_scheduled
 ```
 
-Success: Grok's doctor reports the server reachable with its tools listed, and
-the Codex entry shows that absolute `.exe` as its command.
+Success: both Grok profiles are reachable, both Codex entries show that
+absolute `.exe` as their command, and each scheduled entry uses
+`serve-scheduled`. Keep approval prompts on the full profile. Only the
+restricted `proactive_scheduled` profile may be auto-approved.
 
 Failure: a CLI can't spawn the server. The path has to be absolute. A CLI
 started from a shortcut, and a scheduled task later on, sees almost nothing of
@@ -2236,8 +2314,8 @@ your console's `PATH`.
 wherever they start, and stray project instructions can quietly divert a
 one-shot run. Keep it empty.
 
-Already had a `proactive` entry from your own setup? Write down the command that
-recreates it before running these, and keep that note private to your machine.
+Already had either profile from your own setup? Write down the commands that
+recreate them before running these, and keep that note private to your machine.
 `grok mcp add` overwrites silently, and the old value isn't recoverable.
 
 ### A6. Two-agent validation
@@ -2256,15 +2334,16 @@ Write-Output "TAG=$tag"
 Reachability first, one CLI at a time:
 
 ```powershell
-grok --cwd $neutral -p "Call get_status and report only database.path, google.gmail.status, and google.calendar.status."
-codex exec -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call get_status and report only database.path, google.gmail.status, and google.calendar.status."
+grok --cwd $neutral -p "Call get_status from proactive_scheduled and report only database.path, google.gmail.status, and google.calendar.status."
+codex exec -c 'mcp_servers.proactive.enabled=false' -c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "Call get_status from proactive_scheduled and report only database.path, google.gmail.status, and google.calendar.status."
 ```
 
 Both must report the same `.proactive-mcp\proactive.db` path, and both sources
 as whatever A4b left behind: `ok` if you ran the daemon pass, `never_synced` if
 you stopped after `setup`. Neither CLI may report `configured`, which isn't a
-value this server produces. The Codex `-c` override is required: without it, `codex exec` runs
-with approval policy `never` and the MCP call fails before it starts.
+value this server produces. The Codex overrides disable the full profile and
+approve only `proactive_scheduled`; without the narrow approval,
+`codex exec` fails before the MCP call starts.
 `--skip-git-repo-check` is required because `neutral` isn't a git repository.
 
 Now plant an occasion and let the engine find it. Substitute the printed `TAG`
@@ -2295,7 +2374,7 @@ Then repeat the plant with a **new** `TAG`, run `& $pm daemon --once` again, and
 hand Codex its own unclaimed situation:
 
 ```powershell
-codex exec -c $codexSessionRule -c 'mcp_servers.proactive.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "안녕. 오늘 뭐부터 할까?"
+codex exec -c $codexSessionRule -c 'mcp_servers.proactive.enabled=false' -c 'mcp_servers.proactive_scheduled.default_tools_approval_mode="approve"' --ephemeral --sandbox read-only --skip-git-repo-check -C $neutral "안녕. 오늘 뭐부터 할까?"
 ```
 
 Each CLI needs its own fresh situation. A delivered one isn't handed out again
@@ -2355,17 +2434,35 @@ None of this is destructive on its own, but do undo what you changed:
 
 ```powershell
 grok mcp remove --scope user proactive 2>$null
+grok mcp remove --scope user proactive_scheduled 2>$null
 codex mcp remove proactive 2>$null
+codex mcp remove proactive_scheduled 2>$null
 grok mcp list
 codex mcp list --json
 ```
 
-If a CLI had no `proactive` entry before you started, an empty listing now is
-the correct end state. Don't add a default entry just to have one. If it did
-have one, run the private restore command you saved in A5, then check that the
+If a CLI had neither profile before you started, an empty listing now is the
+correct end state. Don't add a default entry just to have one. If it did have
+one, run the private restore command you saved in A5, then check that the
 listing points at your own path again.
 
-Keeping the alpha install is fine and expected. To remove it, delete the
-virtualenv at `%USERPROFILE%\venvs\proactive`. Deleting
-`%USERPROFILE%\.proactive-mcp` also wipes your database, your config, and your
-Google authorization, so do that only when you mean to start over.
+Keeping the alpha install is fine and expected. To remove only the code, delete
+the virtualenv at `%USERPROFILE%\venvs\proactive`.
+
+For full removal, delete the stored credential before deleting its authority
+marker. A keyring credential lives outside `.proactive-mcp`; deleting the
+directory first can make a stale keyring value look like a legacy credential
+on reinstall.
+
+```powershell
+$python = Join-Path $env:USERPROFILE "venvs\proactive\Scripts\python.exe"
+& $python -c 'from pathlib import Path; from proactive_mcp.sources.credentials import CredentialStore; CredentialStore(Path.home() / ".proactive-mcp").delete()'
+if ($LASTEXITCODE -ne 0) { throw "Credential deletion failed; keep the state directory." }
+Remove-Item -Recurse -Force (Join-Path $env:USERPROFILE ".proactive-mcp")
+Remove-Item -Recurse -Force (Join-Path $env:USERPROFILE "venvs\proactive")
+```
+
+If credential deletion fails, leave the state directory and tombstone in
+place, revoke the app in Google Account permissions, and report the failure to
+the Owner. Do not remove the tombstone and expose a stale keyring entry to
+legacy migration.

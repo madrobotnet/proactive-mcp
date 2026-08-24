@@ -88,14 +88,30 @@ python3 -m zipfile -l "$WHEEL" | grep -c 'store/migrations/.*\.sql'
 
 You should see the migration set, the Windows toast script, and the macOS notification script. Note that `python3 -m zipfile -l` pads each row with a timestamp and size after the path, so don't anchor these patterns with `$`. Zero migrations means a broken install on first run, not a build warning.
 
-*No secrets and no local state.* This is the OAuth rule enforced mechanically:
+*No secrets and no local state.* Start with a filename scan:
 
 ```bash
 python3 -m zipfile -l "$WHEEL" | grep -Ei 'secret|token|credential|\.json|\.db|\.env' \
   | grep -v '\.py '
 ```
 
-Expect no output. The trailing filter drops source modules whose names legitimately contain those words, such as the credentials handling module, so what's left would be actual data files. Any hit here is a stop-the-line event: delete the artifact, remove the offending file from the source tree, and start over from section 1.
+Expect no output. The trailing filter drops source modules whose names
+legitimately contain those words, such as the credentials handling module.
+This is only a filename check; it cannot find a secret embedded in an ordinary
+source file. Extract the wheel and run the same approved secret scanner used
+for the release commit range:
+
+```bash
+rm -rf "$PMCP_RELEASE_DIR/wheel-unpacked"
+python3 -m zipfile -e "$WHEEL" "$PMCP_RELEASE_DIR/wheel-unpacked"
+gitleaks git --redact --log-opts="origin/main..HEAD"
+gitleaks dir "$PMCP_RELEASE_DIR/wheel-unpacked" --redact
+```
+
+Record the gitleaks version and configuration with the build evidence. Any
+unreviewed finding from either scan is a stop-the-line event: delete the
+artifact, remove the offending value from source, and start over from section
+1. Synthetic fixtures may be allowlisted only after inspecting the exact hit.
 
 *Metadata and entry point are intact.* The console script is what the tester actually runs.
 
@@ -120,11 +136,16 @@ On macOS use `shasum -a 256`; on Windows PowerShell, `Get-FileHash -Algorithm SH
 
 ## 5. Private handoff
 
-The delivery is two packages on two channels, and the tester needs both.
+The handoff has three separately delivered items when the Owner OAuth client is
+used, and two when the tester is validating BYO.
 
 **Package one, the wheel.** A single `.whl` file, sent over a private channel you both already use with real authentication behind it: a direct message, an encrypted chat, or a signed link that expires. No public link, no shared folder with guessable listing, no attachment on a GitHub issue.
 
-**Package two, the OAuth client JSON.** Per §12, alpha testers use the Owner's published-but-unverified OAuth client, so you deliver that installed-app client JSON as its own message on its own channel. Say plainly in that message:
+**Package two, the checksum.** Send the SHA-256 digest through a different
+authenticated channel from the wheel. A checksum that arrives beside the file
+does not provide an independent transit-integrity check.
+
+**Package three, the OAuth client JSON.** Per §12, alpha testers use the Owner's published-but-unverified OAuth client, so you deliver that installed-app client JSON as its own message, separate from the wheel and digest. Say plainly in that message:
 
 - the file goes to `~/.proactive-mcp/client_secret.json` on Linux and macOS, or `%USERPROFILE%\.proactive-mcp\client_secret.json` on Windows,
 - the directory should be mode `0700` and the file `0600` on POSIX,
@@ -132,9 +153,17 @@ The delivery is two packages on two channels, and the tester needs both.
 - the consent screen will show an unverified-app warning, and the way through it is Advanced, then Continue,
 - the file must not be committed, forwarded, or pasted anywhere.
 
-One or two testers should instead be told to bring their own OAuth client, following the BYO path in [`INTEGRATIONS.md`](INTEGRATIONS.md). That's how the onboarding docs get validated rather than bypassed. Those testers get the wheel and no JSON.
+One or two testers should instead be told to bring their own OAuth client,
+following [`SETUP_GOOGLE.md`](SETUP_GOOGLE.md) from Step 1. That's how the new
+OAuth onboarding guide gets validated rather than bypassed. Those testers get
+the wheel and digest, but no JSON.
 
-**The message itself.** Along with the two packages, send: the wheel filename, the SHA-256 digest, the commit you built from, the target Python version, a pointer to section 6 below, and the one thing you want them to report back. Keep it short. §12 sets the bar at clean install to finished onboarding in fifteen minutes, and a wall of text is the fastest way to miss it.
+**The message itself.** Tell the tester the wheel filename, the commit you
+built from, the target Python and uv versions, which separate channel carries
+the digest, a pointer to section 6 below, and the one thing you want them to
+report back. Do not repeat the digest on the wheel channel. Keep it short. §12
+sets the bar at clean install to finished onboarding in fifteen minutes, and a
+wall of text is the fastest way to miss it.
 
 ## 6. Tester: clean install
 
@@ -186,7 +215,9 @@ $BIN status
 
 On a fresh machine it reports `"overall":"degraded"` with sources `not_configured`. That's the expected starting state, not a failure. From here, place the OAuth client JSON as instructed, run `$BIN setup` (add `--headless` on a box with no browser), and register the server with your agent following [`INTEGRATIONS.md`](INTEGRATIONS.md). Wheel installs skip `uv run` and `--directory` entirely: wherever that guide says `uv run --directory <checkout> proactive-mcp serve`, you run `~/venvs/proactive/bin/proactive-mcp serve`.
 
-Report back: whether all five help commands exited `0`, the version string, the `status` output before and after `setup`, and how long the whole thing took.
+Report back: whether all five help commands exited `0`, the version string, the
+redacted status fields listed in section 9 before and after `setup`, and how
+long the whole thing took. Do not send the complete JSON document.
 
 ## 8. Rollback
 
@@ -200,14 +231,24 @@ uv pip uninstall --python ~/venvs/proactive/bin/python proactive-mcp
 
 If you registered a watcher daemon or a scheduled job, stop and remove that first, otherwise the scheduler keeps firing at a script that no longer exists. Also remove the `proactive` entry from your agent's MCP config.
 
-**Full removal.** Delete the whole virtual environment and, if you're done with the alpha, the state directory too. The state directory holds your synced data, your memory items, and the OAuth token, so this one is not reversible.
+**Full removal.** Remove the stored credential before deleting its authority
+marker. A keyring-backed credential lives outside the state directory, and
+deleting `~/.proactive-mcp/` first can make that stale keyring value look like a
+legacy credential on reinstall.
 
 ```bash
+~/venvs/proactive/bin/python -c \
+  'from pathlib import Path; from proactive_mcp.sources.credentials import CredentialStore; CredentialStore(Path.home() / ".proactive-mcp").delete()'
+rm -rf ~/.proactive-mcp
 rm -rf ~/venvs/proactive
-rm -rf ~/.proactive-mcp      # deletes local data and the stored token
 ```
 
-Revoke the app's access in your Google Account permissions page as well, so a stale grant doesn't linger after the local token is gone. Deleting the venv while leaving `~/.proactive-mcp/` in place is the useful middle ground when you want to reinstall a newer wheel against the same database.
+The credential-deletion command must exit `0` before you remove the state
+directory. If it reports unavailable storage, leave the state directory and
+its tombstone in place, revoke access in your Google Account permissions page,
+and report the failure to the Owner. Deleting the venv while leaving
+`~/.proactive-mcp/` in place is the useful middle ground when you want to
+reinstall a newer wheel against the same database.
 
 **Going back to a previous wheel.** Uninstall, then install the older `.whl` you kept. Migrations only move forward, so a database written by a newer build may not be readable by an older one. If you need to downgrade with data intact, copy `~/.proactive-mcp/` aside first and tell the Owner what you're doing.
 
@@ -230,7 +271,14 @@ mkdir -p ~/alpha-records
 
 For each handoff, record the tester's name, the date, the wheel digest they got, which channel carried the wheel and which carried the JSON, whether they're on the Owner-client path or BYO, and the date access was revoked when the alpha ends.
 
-For each tester report, record the five help exit codes, the version string, the `status` JSON before and after `setup`, elapsed onboarding time against the fifteen-minute bar from §12, and anything they got stuck on. The stuck points are the valuable part; they're what the onboarding docs get fixed from.
+For each tester report, record the five help exit codes, the version string,
+and only these redacted status fields before and after setup: `overall`,
+`database.status`, `database.migration_version`, each Google source `status`
+and `error_code`, `daemon.status`, and warning strings. Do not retain or ask
+for `database.path`, PID, or timestamps. Also record elapsed onboarding time
+against the fifteen-minute bar from §12 and anything they got stuck on. The
+stuck points are the valuable part; they're what the onboarding docs get fixed
+from.
 
 ## Owner checklist
 
@@ -238,7 +286,7 @@ For each tester report, record the five help exit codes, the version string, the
 - [ ] `uv sync --locked` clean, tests and linters green on Python 3.11
 - [ ] `uv build --out-dir` into a scratch directory outside the repo
 - [ ] Wheel listing shows only `proactive_mcp/` and `dist-info`, with migrations and platform scripts present
-- [ ] Secret and state scan over the wheel listing returns nothing
+- [ ] Filename scan, commit-range secret scan, and extracted-wheel content scan are clean
 - [ ] `entry_points.txt` and `METADATA` correct
 - [ ] `sha256sum` recorded in `SHA256SUMS` and in the delivery log
 - [ ] Wheel sent privately to a named tester; digest sent on a separate channel
