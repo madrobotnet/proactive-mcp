@@ -26,6 +26,7 @@ SourceSkipReason: TypeAlias = Literal[
     "not_configured",
     "needs_reauth",
     "missing_credentials",
+    "credential_storage_unavailable",
     "daemon_running",
     "already_fresh",
     "sync_in_flight",
@@ -132,6 +133,12 @@ def _skip_warnings(reason: SourceSkipReason) -> tuple[str, ...]:
             )
         case "missing_credentials":
             guidance = "google: stored credentials are missing; run proactive-mcp setup"
+        case "credential_storage_unavailable":
+            guidance = (
+                "google: credential storage is unavailable; "
+                "unlock this session's OS keyring, then run "
+                "proactive-mcp setup if reads stay skipped"
+            )
         case "sync_in_flight":
             guidance = "google: another read attempt is in flight; read skipped"
         case "daemon_running" | "already_fresh":

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Final, Protocol, Self
 
 from proactive_mcp.delivery.evaluation import PreparedSources, SkippedSources
 from proactive_mcp.sources import GoogleReadServiceFactory
-from proactive_mcp.sources.credentials import CredentialStore
+from proactive_mcp.sources.credentials import CredentialStorageError, CredentialStore
 from proactive_mcp.store import DEFAULT_STALE_AFTER, evaluate_source_freshness
 
 if TYPE_CHECKING:
@@ -218,7 +218,12 @@ def _read_with_lease(
 
 def _read(access: SourceAccess) -> SourceOutcome:
     """Read both sources with the stored credential, if one exists."""
-    credential = access.credentials.load()
+    try:
+        credential = access.credentials.load()
+    except CredentialStorageError:
+        # Unreachable secure storage degrades this pass to local truth only; no
+        # credential is re-derived or written to a weaker backend to recover.
+        return SkippedSources("credential_storage_unavailable")
     if credential is None:
         return SkippedSources("missing_credentials")
     return PreparedSources(access.readers.open(credential).prepare_evaluation())
