@@ -4,6 +4,7 @@ import hashlib
 import os
 import stat
 import tomllib
+from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from typing import Final, cast
 
@@ -31,6 +32,18 @@ from tests.test_google_sync import (
 )
 
 _PROJECT_ROOT: Final = Path(__file__).parents[1]
+_MIGRATION_FILES: Final = (
+    "001_foundation.sql",
+    "002_memory_items.sql",
+    "003_source_sync_state.sql",
+    "004_memory_model_v2.sql",
+    "005_situations.sql",
+    "006_sqlite_consistency.sql",
+    "007_delivery.sql",
+    "008_runtime_ownership.sql",
+    "009_security_hardening.sql",
+    "010_gmail_diagnostics_and_receipt_replay.sql",
+)
 _UNAVAILABLE: Final = "synthetic-keyring-unavailable"
 _DAILY_TOOL_COUNT: Final = 13
 _SCHEDULED_TOOL_COUNT: Final = 3
@@ -111,7 +124,17 @@ def test_python_floor_scopes_and_latest_migration_remain_exact(tmp_path: Path) -
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/calendar.readonly",
     )
-    assert tuple(number for number, _sql in load_migrations())[-1] == applied == 9
+    migrations = load_migrations()
+    migration_files = tuple(
+        sorted(
+            resource.name
+            for resource in files("proactive_mcp.store.migrations").iterdir()
+            if resource.name.endswith(".sql")
+        )
+    )
+    assert tuple(number for number, _sql in migrations) == tuple(range(1, 11))
+    assert migration_files == _MIGRATION_FILES
+    assert applied == 10
 
 
 def test_posix_store_and_oauth_fallback_remain_private(tmp_path: Path) -> None:
