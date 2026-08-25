@@ -270,6 +270,40 @@ def test_once_exits_zero_on_a_degraded_pass_without_google_credentials(
     assert status.poll_interval == timedelta(minutes=_CONFIG_MINUTES)
 
 
+def test_once_reuses_latest_persisted_diagnostics_after_reopen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "proactive.db"
+    diagnostics = SourceReadDiagnostics(
+        outcome="partial",
+        request_count=19,
+        page_count=4,
+        projected_count=6,
+        excluded_count=13,
+        byte_budget=8_000_000,
+        reason_counts=(SourceReadReasonCount("pagination_limit", 3),),
+    )
+    with Store(database, clock=FakeClock(_START)) as store:
+        store.record_gmail_sync(diagnostics, error_code="degraded")
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
+    monkeypatch.setattr(daemon_cli, "daemon_clock", lambda: FakeClock(_START))
+
+    assert cli.main(["daemon", "--once"]) == 0
+    payload = DaemonOnceResponse.model_validate_json(capsys.readouterr().out)
+
+    assert payload.gmail_diagnostics.model_dump() == {
+        "outcome": "partial",
+        "request_count": 19,
+        "page_count": 4,
+        "projected_count": 6,
+        "excluded_count": 13,
+        "byte_budget": 8_000_000,
+        "reason_counts": {"pagination_limit": 3},
+    }
+
+
 def test_once_exits_zero_on_an_ok_pass(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -9,6 +9,11 @@ from typing import TYPE_CHECKING, Final
 import pytest
 
 import proactive_mcp.store._situation_consistency as consistency_module
+from proactive_mcp.delivery import (
+    EvaluationDependencies,
+    EvaluationService,
+    PreparedSources,
+)
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server.situation_requests import SituationRequestError
 from proactive_mcp.server.situation_responses import (
@@ -19,6 +24,7 @@ from proactive_mcp.server.situation_tools import (
     SituationToolService,
     open_situation_service,
 )
+from proactive_mcp.situations.inputs import EngineInputs, SourceSnapshot
 from proactive_mcp.sources.lazy_sync import LazySyncPolicy, SourceAccess
 from proactive_mcp.store import (
     DaemonStatus,
@@ -30,6 +36,7 @@ from proactive_mcp.store import (
     SituationNotFoundError,
     Store,
 )
+from proactive_mcp.store.sync import SourceReadDiagnostics, SourceReadReasonCount
 from tests.daemon_test_support import (
     FakeCredential,
     FakeCredentialStore,
@@ -86,6 +93,14 @@ class _CountingEvaluation:
         return self.delegate.run_once()
 
 
+@dataclass(frozen=True, slots=True)
+class _FixedSources:
+    inputs: EngineInputs
+
+    def prepare_sources(self) -> PreparedSources:
+        return PreparedSources(self.inputs)
+
+
 @pytest.mark.anyio
 async def test_scheduled_server_exposes_only_unattended_read_tools(
     tmp_path: Path,
@@ -122,6 +137,98 @@ def test_proactive_check_delivers_the_detected_occasion_exactly_once(
     assert first.situations[0].priority == "high"
     assert second.situations == ()
     assert tuple(item.state for item in stored) == ("delivered",)
+
+
+@pytest.mark.parametrize("with_situation", [False, True])
+def test_proactive_check_characterizes_existing_application_payload(
+    tmp_path: Path,
+    *,
+    with_situation: bool,
+) -> None:
+    with open_harness(tmp_path, _NOON) as harness:
+        if with_situation:
+            _ = harness.store.situations.upsert_detections(
+                (pending_detection("payload-shape"),)
+            )
+
+        response = harness.service.proactive_check()
+
+    payload: dict[str, object] = response.model_dump()
+    diagnostics: dict[str, object] = response.freshness.gmail.diagnostics.model_dump()
+    assert bool(response.situations) is with_situation
+    assert (response.receipt_token is not None) is with_situation
+    assert set(payload) >= {
+        "all_clear",
+        "budget",
+        "freshness",
+        "held_count",
+        "receipt_token",
+        "situations",
+        "warnings",
+    }
+    assert set(diagnostics) == {
+        "byte_budget",
+        "excluded_count",
+        "outcome",
+        "page_count",
+        "projected_count",
+        "reason_counts",
+        "request_count",
+    }
+
+
+def test_proactive_check_uses_latest_accepted_diagnostics_live_coalesced_and_reopened(
+    tmp_path: Path,
+) -> None:
+    accepted = SourceReadDiagnostics(
+        outcome="partial",
+        request_count=17,
+        page_count=3,
+        projected_count=5,
+        excluded_count=12,
+        byte_budget=8_000_000,
+        reason_counts=(SourceReadReasonCount("pagination_limit", 2),),
+    )
+    with open_harness(tmp_path, _NOON) as harness:
+        generation = harness.store.reserve_source_generation("gmail")
+        inputs = EngineInputs(
+            gmail_threads=SourceSnapshot(
+                generation=generation,
+                items=(),
+                complete=False,
+            ),
+            gmail_diagnostics=accepted,
+        )
+        live_service = SituationToolService(
+            replace(
+                harness.dependencies,
+                evaluation=EvaluationService(
+                    EvaluationDependencies(
+                        evaluator=harness.dependencies.runtime.engine,
+                        sources=_FixedSources(inputs),
+                    )
+                ),
+            )
+        )
+
+        live = live_service.proactive_check()
+        persisted = harness.store.gmail_diagnostics()
+        coalesced = live_service.proactive_check()
+
+    with open_harness(tmp_path, _NOON, "already_fresh") as reopened_harness:
+        reopened = reopened_harness.service.proactive_check()
+
+    assert persisted == accepted
+    for response in (live, coalesced, reopened):
+        assert response.freshness.gmail.diagnostics.model_dump() == {
+            "outcome": "partial",
+            "request_count": 17,
+            "page_count": 3,
+            "projected_count": 5,
+            "excluded_count": 12,
+            "byte_budget": 8_000_000,
+            "reason_counts": {"pagination_limit": 2},
+        }
 
 
 def test_rapid_proactive_checks_coalesce_expensive_evaluation(tmp_path: Path) -> None:

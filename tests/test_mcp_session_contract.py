@@ -164,6 +164,31 @@ async def test_confirm_delivery_input_schema_requires_receipt_token(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("server_args", [_SERVE, _SCHEDULED])
+@pytest.mark.parametrize("with_situation", [False, True])
+async def test_every_proactive_check_exposes_fixed_delivery_protocol_fields(
+    tmp_path: Path,
+    server_args: tuple[str, ...],
+    *,
+    with_situation: bool,
+) -> None:
+    if with_situation:
+        _seed_critical_conflict(tmp_path)
+
+    async with _session(tmp_path, server_args) as session:
+        checked = await session.call_tool("proactive_check")
+
+    payload = ProactiveCheckResponse.model_validate_json(json_text(checked))
+    requires_confirmation = len(payload.situations) > 0 and (
+        payload.receipt_token is not None
+    )
+    assert payload.protocol_version == "1"
+    assert payload.confirmation.model_dump() == {"tool": "confirm_delivery"}
+    assert payload.requires_confirmation is requires_confirmation
+    assert requires_confirmation is with_situation
+
+
+@pytest.mark.anyio
 async def test_empty_scheduled_check_is_tokenless(tmp_path: Path) -> None:
     # Given: an empty scheduled installation.
     async with _session(tmp_path, _SCHEDULED) as session:

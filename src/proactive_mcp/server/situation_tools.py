@@ -111,12 +111,15 @@ class SituationToolService:
         reservation = attention.reserve_for_delivery(now)
         claimed = reservation.situations
         held_count = max(0, self._situations.count_situations("pending") - len(claimed))
+        receipt_token = reservation.claim_token if claimed else None
         return ProactiveCheckResponse(
+            requires_confirmation=bool(claimed) and receipt_token is not None,
             situations=tuple(situation_response(item) for item in claimed),
-            receipt_token=reservation.claim_token if claimed else None,
+            receipt_token=receipt_token,
             freshness=google_freshness_response(
                 gmail_freshness,
                 calendar_freshness,
+                self._dependencies.store.gmail_diagnostics(),
             ),
             budget=budget_response(attention.budget_usage(now)),
             held_count=held_count,
