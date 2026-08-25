@@ -430,10 +430,12 @@ def test_notify_service_ready_sends_systemd_readiness(
         family: socket.AddressFamily,
         kind: socket.SocketKind,
     ) -> _RecordingNotifySocket:
-        assert family is socket.AF_UNIX
-        assert kind is socket.SOCK_DGRAM
+        assert family == unix_family
+        assert kind == socket.SOCK_DGRAM
         return notifier
 
+    unix_family = getattr(socket, "AF_UNIX", 1)
+    monkeypatch.setattr(socket, "AF_UNIX", unix_family, raising=False)
     monkeypatch.setenv("NOTIFY_SOCKET", "/run/user/1000/notify")
     monkeypatch.setattr(socket, "socket", open_notifier)
 

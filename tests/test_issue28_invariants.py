@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -173,7 +174,16 @@ def test_service_layout_failure_serializes_only_closed_diagnostics(
 
     monkeypatch.setenv("OAUTH_VALUE", _CANARIES[4])
     monkeypatch.setenv("ACCESS_TOKEN", _CANARIES[5])
+
+    def current_uid() -> int:
+        return 0
+
     monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        "proactive_mcp.cli.service_systemd.os.getuid",
+        current_uid,
+        raising=False,
+    )
     monkeypatch.setattr("proactive_mcp.cli.service._layout", fail_layout)
     # When: service status crosses the public CLI adapter.
     result = cli.main(["service", "status"])
@@ -203,7 +213,7 @@ def test_legacy_database_path_is_the_only_absolute_status_path(tmp_path: Path) -
     assert status.database.path == str(database.absolute())
     assert Path(status.database.path).is_absolute()
     assert serialized.count('"path":') == 1
-    assert serialized.count(str(database.absolute())) == 1
+    assert json.loads(serialized)["database"]["path"] == str(database.absolute())
     assert "path" not in status.google.gmail.diagnostics.model_dump()
     assert set(status.google.gmail.diagnostics.model_dump()) == _SOURCE_FIELDS
     assert _CANARIES[5] not in serialized

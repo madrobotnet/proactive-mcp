@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import stat
 import tomllib
-from pathlib import Path
-from typing import Final
+from pathlib import Path, PurePosixPath
+from typing import Final, cast
 
 import anyio
 import pytest
@@ -130,6 +131,12 @@ def test_posix_store_and_oauth_fallback_remain_private(tmp_path: Path) -> None:
             )
         )
     # When/Then: state directories are 0700 and persisted private files are 0600.
+    if os.name == "nt":
+        assert state.is_dir()
+        assert database.is_file()
+        assert credential_store.file_path.parent.is_dir()
+        assert credential_store.file_path.is_file()
+        return
     assert stat.S_IMODE(state.stat().st_mode) == 0o700
     assert stat.S_IMODE(database.stat().st_mode) == 0o600
     assert stat.S_IMODE(credential_store.file_path.parent.stat().st_mode) == 0o700
@@ -155,11 +162,17 @@ def test_calendar_health_remains_independent_from_gmail_failure(tmp_path: Path) 
     assert calendar.last_success_at is not None
 
 
-def test_systemd_unit_keeps_restart_and_lifecycle_tokens(tmp_path: Path) -> None:
+def test_systemd_unit_keeps_restart_and_lifecycle_tokens() -> None:
     # Given: the shipped unit renderer with absolute executable and database paths.
     unit = render_user_unit(
-        Path("/opt/proactive/bin/proactive-mcp"),
-        tmp_path / "state" / "proactive.db",
+        cast(
+            "Path",
+            cast("object", PurePosixPath("/opt/proactive/bin/proactive-mcp")),
+        ),
+        cast(
+            "Path",
+            cast("object", PurePosixPath("/var/lib/proactive/proactive.db")),
+        ),
     )
     lines = set(unit.splitlines())
     # When/Then: readiness, restart, hardening, and lifecycle tokens remain exact.

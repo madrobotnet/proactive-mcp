@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from io import StringIO
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Literal
 from unittest.mock import patch
 
@@ -17,8 +19,6 @@ from proactive_mcp.cli import service as service_cli
 from proactive_mcp.store import Store
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
 
 _PID = os.getpid()
@@ -151,11 +151,15 @@ def _run_cli_in_process(
     def build_running_status() -> _FakeStatus:
         return _FakeStatus()
 
+    def find_executable(_name: str) -> str:
+        return sys.executable
+
     with (
         patch.dict(os.environ, harness.env, clear=True),
         patch.object(sys, "platform", "linux"),
         patch.object(service_cli, "_MANAGER", harness.manager),
         patch.object(service_cli, "build_status", build_running_status),
+        patch.object(shutil, "which", find_executable),
         redirect_stdout(stdout),
         redirect_stderr(stderr),
     ):
@@ -327,7 +331,13 @@ def test_install_writes_absolute_managed_restartable_unit(tmp_path: Path) -> Non
     assert response.heartbeat == "running"
     assert response.linger == "enabled"
     assert response.guidance == "none"
-    assert exec_start.startswith("ExecStart=/")
+    rendered_executable = (
+        exec_start.removeprefix("ExecStart=")
+        .removesuffix(" daemon")
+        .strip('"')
+        .replace("\\\\", "\\")
+    )
+    assert Path(rendered_executable).is_absolute()
     assert " daemon" in exec_start
     assert "Restart=on-failure" in unit.splitlines()
     assert "RestartPreventExitStatus=2" in unit.splitlines()
