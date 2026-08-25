@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Final, Protocol, TypedDict, final
 
+from google_auth_oauthlib import flow as oauthlib_flow
 from google_auth_oauthlib.flow import InstalledAppFlow, WSGITimeoutError
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 from typing_extensions import override
@@ -28,6 +30,26 @@ _GOOGLE_OAUTH_ENDPOINT: Final[str] = "https://oauth2.googleapis.com/token"
 _SUPPORTED_REDIRECT_URIS: Final[tuple[str, ...]] = ("http://127.0.0.1",)
 HEADLESS_AUTHORIZATION_URL_EVENT: Final = "oauth.authorization_url"
 HEADLESS_SETUP_SUCCESS_EVENT: Final = "Google read-only sources configured."
+_OAUTHLIB_LOGGER_NAME: Final = "google_auth_oauthlib.flow"
+_OAUTHLIB_LOGGER: Final = logging.getLogger(_OAUTHLIB_LOGGER_NAME)
+_OAUTHLIB_FLOW_SOURCE: Final[str | None] = oauthlib_flow.__file__
+
+
+@final
+class _OAuthCallbackAccessLogFilter(logging.Filter):
+    """Drop oauthlib loopback request logs without formatting their query."""
+
+    @override
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Keep events not emitted by oauthlib's callback request handler."""
+        return not (
+            record.name == _OAUTHLIB_LOGGER_NAME
+            and record.pathname == _OAUTHLIB_FLOW_SOURCE
+            and record.funcName == "log_message"
+        )
+
+
+_OAUTHLIB_LOGGER.addFilter(_OAuthCallbackAccessLogFilter())
 
 
 @dataclass(frozen=True, slots=True)
