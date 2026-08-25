@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     import pytest
 
-_PID = 4321
+_PID = os.getpid()
 _UNIT_NAME = "proactive-mcp.service"
 
 
@@ -214,7 +214,7 @@ case "$1" in
     }
     printf 'inactive\\n'; exit 3
     ;;
-  show) printf '4321\\n' ;;
+  show) printf '%s\\n' "$SERVICE_FAKE_PID" ;;
   *) exit 2 ;;
 esac
 """,
@@ -229,6 +229,7 @@ esac
     env = os.environ | {
         "PATH": f"{binary_dir}{os.pathsep}{os.environ['PATH']}",
         "PROACTIVE_DATABASE": str(database),
+        "SERVICE_FAKE_PID": str(_PID),
         "SERVICE_FAKE_STATE": str(state),
         "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
     }
