@@ -9,6 +9,7 @@ import pytest
 from google.oauth2.credentials import Credentials
 from keyring.errors import NoKeyringError, PasswordDeleteError
 
+import proactive_mcp.sources as sources_module
 import proactive_mcp.sources.credentials as credentials_module
 from proactive_mcp.sources.credentials import (
     GOOGLE_READONLY_SCOPES,
@@ -16,6 +17,7 @@ from proactive_mcp.sources.credentials import (
     CredentialStore,
     GoogleCredential,
 )
+from proactive_mcp.store import Store
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,6 +117,56 @@ def test_credentials_are_isolated_by_state_root(tmp_path: Path) -> None:
     remaining = second.load()
     assert remaining is not None
     assert remaining.refresh_token == second_refresh
+
+
+def test_disconnect_google_sources_deletes_credential_then_auth_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: configured Google sources with one profile-bound keyring credential.
+    database_path = tmp_path / "state" / "proactive.db"
+    keyring = FakeKeyring()
+    monkeypatch.setattr(credentials_module, "os_keyring", keyring)
+    CredentialStore(database_path.parent).save(_credentials())
+    with Store(database_path) as store:
+        store.set_google_auth_state("configured")
+
+    # When: credential-first rollback disconnects Google.
+    sources_module.disconnect_google_sources(database_path)
+
+    # Then: the credential is gone before both source states become unconfigured.
+    assert CredentialStore(database_path.parent).load() is None
+    with Store(database_path) as store:
+        assert tuple(state.auth_state for state in store.list_source_sync()) == (
+            "not_configured",
+            "not_configured",
+        )
+
+
+def test_disconnect_google_sources_preserves_configured_state_on_delete_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: configured sources whose keyring refuses credential deletion.
+    database_path = tmp_path / "state" / "proactive.db"
+    keyring = FakeKeyring(delete_fails=True)
+    monkeypatch.setattr(credentials_module, "os_keyring", keyring)
+    credential_store = CredentialStore(database_path.parent)
+    credential_store.save(_credentials())
+    with Store(database_path) as store:
+        store.set_google_auth_state("configured")
+
+    # When: credential-first rollback cannot remove the keyring value.
+    with pytest.raises(CredentialStorageError):
+        sources_module.disconnect_google_sources(database_path)
+
+    # Then: source state is preserved and the deletion tombstone remains.
+    with Store(database_path) as store:
+        assert tuple(state.auth_state for state in store.list_source_sync()) == (
+            "configured",
+            "configured",
+        )
+    assert credential_store.state_path.exists()
 
 
 def test_default_state_migrates_previous_global_keyring_credential(

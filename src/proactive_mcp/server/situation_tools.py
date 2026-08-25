@@ -110,7 +110,7 @@ class SituationToolService:
         attention = self._dependencies.runtime.attention
         reservation = attention.reserve_for_delivery(now)
         claimed = reservation.situations
-        held_count = self._situations.count_pending_unclaimed(now)
+        held_count = max(0, self._situations.count_situations("pending") - len(claimed))
         return ProactiveCheckResponse(
             situations=tuple(situation_response(item) for item in claimed),
             receipt_token=reservation.claim_token if claimed else None,

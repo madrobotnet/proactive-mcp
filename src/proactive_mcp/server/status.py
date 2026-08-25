@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from proactive_mcp.store import DaemonStatus, SourceFreshnessStatus
 
 __all__ = [
+    "DaemonDiagnosticResponse",
     "DaemonStatusResponse",
     "DatabaseStatusResponse",
     "DeliveriesStatusResponse",
@@ -61,6 +62,33 @@ class DatabaseStatusResponse(BaseModel):
     journal_mode: str
     busy_timeout: int
     migration_version: int
+
+
+class DaemonDiagnosticResponse(BaseModel):
+    """Journal-safe identity of one failed daemon phase."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+
+    phase: Literal[
+        "config",
+        "database",
+        "credential",
+        "source_sync",
+        "evaluation",
+        "notification",
+        "heartbeat",
+        "runtime_ownership",
+        "service",
+    ]
+    code: Literal[
+        "invalid",
+        "unsafe_path",
+        "open_failed",
+        "unavailable",
+        "failed",
+        "ownership_conflict",
+        "notify_failed",
+    ]
 
 
 class DaemonStatusResponse(BaseModel):

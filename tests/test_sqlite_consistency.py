@@ -147,6 +147,15 @@ def claim(path: Path, barrier: Barrier) -> tuple[int, ...]:
         return tuple(item.id for item in policy(store).claim_for_delivery(clock.now()))
 
 
+def reserve(path: Path, barrier: Barrier) -> tuple[tuple[int, ...], str | None]:
+    clock = FakeClock(utc_datetime(2026, 8, 21, 16))
+    with Store(path, clock=clock) as store:
+        assert barrier.wait(timeout=10) >= 0
+        reservation = policy(store).reserve_for_delivery(clock.now())
+        ids = tuple(item.id for item in reservation.situations)
+        return ids, reservation.claim_token if ids else None
+
+
 def test_two_stores_atomically_claim_once_and_share_budget(tmp_path: Path) -> None:
     # Given: two candidates and one unit of local-day budget.
     path = tmp_path / "db"
@@ -162,6 +171,43 @@ def test_two_stores_atomically_claim_once_and_share_budget(tmp_path: Path) -> No
     results = tuple(future.result(timeout=10) for future in futures)
     # Then: only a successfully claimed row is returned.
     assert sorted(len(result) for result in results) == [0, 1]
+
+
+def test_concurrent_leases_have_one_owner_and_expired_owner_is_recoverable(
+    tmp_path: Path,
+) -> None:
+    # Given: two independent SQLite connections and one pending budget slot.
+    path = tmp_path / "db"
+    now = utc_datetime(2026, 8, 21, 16)
+    clock = FakeClock(now)
+    with Store(path, clock=clock) as store:
+        _ = store.situations.upsert_detections((detection("leased"),))
+
+    barrier = Barrier(2)
+
+    # When: both connections reserve at the same fixed instant.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(executor.submit(reserve, path, barrier) for _ in range(2))
+    results = tuple(future.result(timeout=10) for future in futures)
+    winner = next(result for result in results if result[0])
+    loser = next(result for result in results if not result[0])
+
+    # Then: one opaque receipt owns the row and no delivery was recorded.
+    assert winner[1] is not None
+    assert loser == ((), None)
+    with Store(path, clock=clock) as store:
+        assert store.situations.count_deliveries() == 0
+
+    # When: the owner disappears and a later connection retries after expiry.
+    clock.advance(timedelta(minutes=3))
+    with Store(path, clock=clock) as store:
+        attention = policy(store)
+        assert attention.budget_usage(clock.now()).used == 0
+        recovered = attention.reserve_for_delivery(clock.now())
+
+    # Then: the same pending row is leased once without historical charge.
+    assert tuple(item.id for item in recovered.situations) == winner[0]
+    assert recovered.claim_token != winner[1]
 
 
 def test_atomic_claim_prioritizes_high_before_older_routine(tmp_path: Path) -> None:

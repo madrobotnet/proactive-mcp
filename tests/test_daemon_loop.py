@@ -1,7 +1,9 @@
+"""Daemon state-machine scenarios. # noqa: SIZE_OK - one fixture surface."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import NoReturn
 
@@ -9,10 +11,12 @@ import pytest
 
 from proactive_mcp.delivery.daemon import (
     DaemonDependencies,
+    DaemonFailureError,
     DaemonSchedule,
     WatcherDaemon,
 )
 from proactive_mcp.delivery.evaluation import SkippedSources
+from proactive_mcp.delivery.fallback import FallbackFailed
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.scheduler import EventScheduler
 from proactive_mcp.store import Store
@@ -64,9 +68,16 @@ class _RaisingNotifier:
 
     error: Exception
 
-    def dispatch(self, now: object) -> NoReturn:
+    def dispatch(self, now: datetime) -> NoReturn:
         del now
         raise self.error
+
+
+@dataclass(frozen=True, slots=True)
+class _FailedNotifier:
+    def dispatch(self, now: datetime) -> tuple[FallbackFailed, ...]:
+        del now
+        return (FallbackFailed(1, "nonzero_exit"),)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,10 +145,11 @@ def test_once_path_stops_daemon_status_when_evaluation_raises() -> None:
     )
 
     # When: the library once-path is interrupted by that evaluation error.
-    with pytest.raises(RuntimeError, match="evaluation failed"):
+    with pytest.raises(DaemonFailureError) as raised:
         _ = daemon.run_once()
 
     # Then: the dead process must not keep the liveness row running.
+    assert raised.value.args == ("evaluation", "failed")
     assert notifier.dispatches == []
     assert heartbeat.events == [f"start:{_PID}", "stop"]
 
@@ -184,11 +196,12 @@ def test_non_owner_once_path_does_not_record_stop() -> None:
         )
     )
 
-    # When: the once-path cannot claim ownership and then the pass raises.
-    with pytest.raises(RuntimeError, match="evaluation failed"):
+    # When: the once-path cannot claim runtime ownership.
+    with pytest.raises(DaemonFailureError) as raised:
         _ = daemon.run_once()
 
-    # Then: the challenger must not heartbeat or stop the incumbent.
+    # Then: the challenger does no work and never mutates the incumbent.
+    assert raised.value.args == ("runtime_ownership", "ownership_conflict")
     assert notifier.dispatches == []
     assert heartbeat.events == [f"reject:{_PID}"]
 
@@ -199,8 +212,8 @@ def test_non_owner_continuous_loop_does_not_record_stop() -> None:
     runner = FakeEvaluationRunner(result=local_only_pass(), clock=clock)
     heartbeat = _FencedHeartbeat(incumbent_pid=1111)
 
-    # When: the loop runs until the scheduler stops it.
-    run = WatcherDaemon(
+    # When: the continuous loop cannot claim runtime ownership.
+    daemon = WatcherDaemon(
         DaemonDependencies(
             pid=_PID,
             clock=clock,
@@ -208,16 +221,18 @@ def test_non_owner_continuous_loop_does_not_record_stop() -> None:
             evaluation=runner,
             notifier=RecordingNotifier(),
         )
-    ).run_forever(
-        DaemonSchedule(
-            scheduler=RecordingScheduler(stop_after=1),
-            poll_interval=_POLL_INTERVAL,
-        )
     )
+    with pytest.raises(DaemonFailureError) as raised:
+        _ = daemon.run_forever(
+            DaemonSchedule(
+                scheduler=RecordingScheduler(stop_after=1),
+                poll_interval=_POLL_INTERVAL,
+            )
+        )
 
-    # Then: work may run, but liveness writes stay with the owner.
-    assert run.pass_count == 1
-    assert len(runner.passes) == 1
+    # Then: no work or liveness mutation crosses the ownership fence.
+    assert raised.value.args == ("runtime_ownership", "ownership_conflict")
+    assert runner.passes == []
     assert heartbeat.events == [f"reject:{_PID}"]
 
 
@@ -244,12 +259,13 @@ def test_second_live_watcher_does_not_stop_the_owner(tmp_path: Path) -> None:
             )
         )
 
-        # When: a second watcher starts and then fails its pass.
-        with pytest.raises(RuntimeError, match="evaluation failed"):
+        # When: a second watcher is rejected before its pass.
+        with pytest.raises(DaemonFailureError) as raised:
             _ = challenger.run_once()
         status = owner_store.daemon.status(stale_after=_POLL_INTERVAL)
 
     # Then: the incumbent is still running under its own pid.
+    assert raised.value.args == ("runtime_ownership", "ownership_conflict")
     assert claimed is True
     assert status.liveness == "running"
     assert status.pid == _PID
@@ -273,7 +289,7 @@ def test_continuous_loop_stops_daemon_status_when_notification_raises() -> None:
     )
 
     # When: the loop is interrupted by that notification error.
-    with pytest.raises(RuntimeError, match="notification failed"):
+    with pytest.raises(DaemonFailureError) as raised:
         _ = daemon.run_forever(
             DaemonSchedule(
                 scheduler=RecordingScheduler(stop_after=3),
@@ -282,7 +298,31 @@ def test_continuous_loop_stops_daemon_status_when_notification_raises() -> None:
         )
 
     # Then: the dead process must not keep the liveness row running.
+    assert raised.value.args == ("notification", "failed")
     assert len(runner.passes) == 1
+    assert heartbeat.events == [f"start:{_PID}", "stop"]
+
+
+def test_recorded_notification_failure_stops_the_pass_safely() -> None:
+    # Given: notification dispatch records a bounded sandbox failure.
+    clock = FakeClock(_START)
+    heartbeat = RecordingHeartbeat()
+    daemon = WatcherDaemon(
+        DaemonDependencies(
+            pid=_PID,
+            clock=clock,
+            heartbeat=heartbeat,
+            evaluation=FakeEvaluationRunner(result=local_only_pass(), clock=clock),
+            notifier=_FailedNotifier(),
+        )
+    )
+
+    # When: one pass observes the failed notification outcome.
+    with pytest.raises(DaemonFailureError) as raised:
+        _ = daemon.run_once()
+
+    # Then: the pass fails safely and releases its liveness row.
+    assert raised.value.args == ("notification", "failed")
     assert heartbeat.events == [f"start:{_PID}", "stop"]
 
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
 import sqlite3
 import sys
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, ClassVar, Final
 
@@ -15,8 +17,11 @@ from proactive_mcp.clock import UtcClock
 from proactive_mcp.config import ConfigError, load_config
 from proactive_mcp.delivery.daemon import (
     DaemonDependencies,
+    DaemonFailureError,
+    DaemonFailureKind,
     DaemonSchedule,
     WatcherDaemon,
+    run_daemon_phase,
 )
 from proactive_mcp.delivery.evaluation import (
     EvaluationDependencies,
@@ -32,6 +37,12 @@ from proactive_mcp.delivery.notify import (
 )
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.scheduler import EventScheduler
+from proactive_mcp.server.situation_responses import (
+    SourceReadDiagnosticsResponse,
+    gmail_freshness_diagnostics,
+    source_read_diagnostics_response,
+)
+from proactive_mcp.server.status import DaemonDiagnosticResponse
 from proactive_mcp.situations import SituationRuntime
 from proactive_mcp.sources.lazy_sync import ScheduledSourceProvider, open_source_access
 from proactive_mcp.store import Store, UnsafeDatabasePathError
@@ -41,13 +52,14 @@ if TYPE_CHECKING:
 
     from proactive_mcp.clock import Clock
     from proactive_mcp.delivery.daemon import DaemonPass
-    from proactive_mcp.delivery.evaluation import SourceOutcome
+    from proactive_mcp.delivery.evaluation import SourceOutcome, SourceProvider
     from proactive_mcp.scheduler import Scheduler
 
 __all__ = [
     "DaemonOnceResponse",
     "bind_stop_signals",
     "daemon_clock",
+    "notify_service_ready",
     "open_watcher_daemon",
     "run_daemon",
     "stopping_scheduler",
@@ -64,6 +76,7 @@ class DaemonOnceResponse(BaseModel):
     created: int
     notifications: int
     gmail: str
+    gmail_diagnostics: SourceReadDiagnosticsResponse
     calendar: str
     sources: str
     warning_count: int
@@ -91,6 +104,41 @@ def stopping_scheduler() -> Scheduler:
     return scheduler
 
 
+def notify_service_ready() -> None:
+    """Notify systemd after startup ownership is durably recorded."""
+    configured = os.environ.get("NOTIFY_SOCKET")
+    if configured is None:
+        return
+    address = f"\0{configured[1:]}" if configured.startswith("@") else configured
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notifier:
+        notifier.connect(address)
+        notifier.sendall(b"READY=1")
+
+
+def _process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@dataclass(frozen=True, slots=True)
+class _DaemonSourceProvider:
+    """Attach source-sync phase identity to the shared source provider."""
+
+    provider: SourceProvider
+
+    def prepare_sources(self) -> SourceOutcome:
+        """Prepare sources or raise one redacted daemon failure."""
+        return run_daemon_phase(
+            DaemonFailureKind.SOURCE_SYNC_FAILED,
+            self.provider.prepare_sources,
+        )
+
+
 def open_watcher_daemon(store: Store, clock: Clock) -> WatcherDaemon:
     """Compose the library watcher from local paths, store, and config."""
     paths = resolve_paths(os.environ)
@@ -103,8 +151,8 @@ def open_watcher_daemon(store: Store, clock: Clock) -> WatcherDaemon:
             evaluation=EvaluationService(
                 EvaluationDependencies(
                     evaluator=runtime.engine,
-                    sources=ScheduledSourceProvider(
-                        open_source_access(paths, store, clock)
+                    sources=_DaemonSourceProvider(
+                        ScheduledSourceProvider(open_source_access(paths, store, clock))
                     ),
                 )
             ),
@@ -124,26 +172,58 @@ def run_daemon(*, once: bool, poll_interval_minutes: float | None) -> int:
     """Run the watcher once, or until SIGINT/SIGTERM."""
     paths = resolve_paths(os.environ)
     clock = daemon_clock()
+    result = 0
     try:
         override = _poll_override(poll_interval_minutes)
         config = load_config(paths.config)
         interval = config.daemon.poll_interval if override is None else override
         with Store(paths.database, clock=clock) as store:
             daemon = open_watcher_daemon(store, clock)
-            # Persist the effective CLI/config cadence before the library start
-            # so a later same-owner claim keeps this interval on the liveness row.
-            store.daemon.record_start(os.getpid(), poll_interval=interval)
-            if once:
+            # Persist cadence before the library's idempotent same-owner claim.
+            claimed = run_daemon_phase(
+                DaemonFailureKind.HEARTBEAT_FAILED,
+                lambda: store.daemon.try_record_start(
+                    os.getpid(),
+                    poll_interval=interval,
+                    incumbent_is_alive=_process_is_alive,
+                ),
+            )
+            if not claimed:
+                result = _emit_failure(DaemonFailureKind.OWNERSHIP_CONFLICT)
+            elif once:
                 _emit_once(daemon.run_once())
-                return 0
-            _ = daemon.run_forever(DaemonSchedule(stopping_scheduler(), interval))
-    except (ConfigError, UnsafeDatabasePathError) as error:
-        _ = sys.stderr.write(f"error: {error}\n")
-        return 2
+            else:
+                try:
+                    run_daemon_phase(
+                        DaemonFailureKind.SERVICE_NOTIFY_FAILED,
+                        notify_service_ready,
+                    )
+                except DaemonFailureError:
+                    run_daemon_phase(
+                        DaemonFailureKind.HEARTBEAT_FAILED,
+                        store.daemon.record_stop,
+                    )
+                    raise
+                _ = daemon.run_forever(DaemonSchedule(stopping_scheduler(), interval))
+    except ConfigError:
+        return _emit_failure(DaemonFailureKind.CONFIG_INVALID)
+    except UnsafeDatabasePathError:
+        return _emit_failure(DaemonFailureKind.DATABASE_UNSAFE_PATH)
     except (OSError, sqlite3.Error):
-        _ = sys.stderr.write("error: daemon infrastructure failure\n")
-        return 1
-    return 0
+        return _emit_failure(DaemonFailureKind.DATABASE_OPEN_FAILED)
+    except DaemonFailureError as failure:
+        return _emit_diagnostic(failure)
+    return result
+
+
+def _emit_failure(kind: DaemonFailureKind) -> int:
+    return _emit_diagnostic(DaemonFailureError(kind))
+
+
+def _emit_diagnostic(failure: DaemonFailureError) -> int:
+    payload = DaemonDiagnosticResponse(phase=failure.phase, code=failure.code)
+    _ = sys.stderr.write(f"{payload.model_dump_json()}\n")
+    return 2
 
 
 def _poll_override(value: float | None) -> timedelta | None:
@@ -160,10 +240,18 @@ def _poll_override(value: float | None) -> timedelta | None:
 def _emit_once(completed: DaemonPass) -> None:
     evaluation = completed.evaluation
     result = evaluation.result
+    match evaluation.sources:
+        case PreparedSources(inputs=inputs):
+            diagnostics = inputs.gmail_diagnostics
+        case SkippedSources():
+            diagnostics = None
+    if diagnostics is None:
+        diagnostics = gmail_freshness_diagnostics(result.gmail_freshness)
     payload = DaemonOnceResponse(
         created=result.created,
         notifications=len(completed.notifications),
         gmail=result.gmail_freshness.status,
+        gmail_diagnostics=source_read_diagnostics_response(diagnostics),
         calendar=result.calendar_freshness.status,
         sources=_source_token(evaluation.sources),
         warning_count=len(evaluation.warnings),
@@ -172,6 +260,7 @@ def _emit_once(completed: DaemonPass) -> None:
 
 
 def _source_token(outcome: SourceOutcome) -> str:
+    # Exhaustive: basedpyright proves every SourceOutcome variant is handled.
     match outcome:
         case PreparedSources():
             return "prepared"

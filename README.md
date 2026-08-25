@@ -15,7 +15,7 @@ A local-first MCP server that turns read-only signals and local memory into grou
 </div>
 
 > [!IMPORTANT]
-> **proactive-mcp is in closed alpha.** The package isn't on PyPI yet, so the public package path below is written for launch day and doesn't work today. What works right now is a source checkout or the private wheel in [Closed-alpha testers](#closed-alpha-testers).
+> **proactive-mcp is in closed alpha.** The package isn't on PyPI yet, so the public package path below is written for launch day and doesn't work today. What works right now is a source checkout or the private tester artifact in [Closed-alpha testers](#closed-alpha-testers).
 
 ## Why proactive-mcp?
 
@@ -96,7 +96,7 @@ Integration recipes are available for:
 |:---|:---|
 | Grok CLI | Local stdio MCP plus an OS scheduler for proactive runs |
 | Codex CLI | Local stdio MCP plus an OS scheduler for proactive runs |
-| Hermes Agent | Local stdio MCP with Hermes-managed proactive delivery |
+| Hermes Agent | Experimental generic stdio MCP interoperability only; not supported in the closed alpha |
 | Claude Code Desktop | Local stdio MCP registration |
 
 ### The delivery contract
@@ -124,7 +124,7 @@ The Owner sends the OS tester sheet alongside the wheel. Open [`docs/testers/REA
 ### Alpha completion checklist
 
 - The wheel checksum matches the Owner's value.
-- `--help` shows `serve`, `serve-scheduled`, `status`, `setup`, `google-smoke`, and `daemon`.
+- `--help` shows `serve`, `serve-scheduled`, `status`, `setup`, `disconnect`, `google-smoke`, `daemon`, and `service`.
 - `status` reports migration version `9` and the expected database path.
 - Gmail and Calendar become `ok` after a successful read.
 - The agent can call `get_status`, memory tools, and `proactive_check`.
@@ -158,7 +158,7 @@ Find safe evidence and rollback instructions in [`docs/RELEASE_ALPHA.md`](docs/R
 
 | Area | Closed alpha now | Public release target |
 |:---|:---|:---|
-| Distribution | Private wheel or source checkout | PyPI package and public repository |
+| Distribution | Private tester artifact or source checkout | PyPI package and public repository |
 | Google OAuth | Owner-provided client or BYO validation | BYO OAuth client by default |
 | Validation | Named testers, Linux automation, Owner Windows smoke | Published support matrix |
 | Data model | Local SQLite with migrations and private-path checks | Same local-first contract |

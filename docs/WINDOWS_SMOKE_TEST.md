@@ -936,7 +936,7 @@ after the agent runs and compare the two. Agent output is discarded unread.
 Not Owner smoke targets:
 
 - **Claude Code Desktop** is documentation only (PRODUCT_PLAN §5.3). It isn't installed on your machine and it is not part of this sign-off.
-- **Hermes** Native Cron is separate Owner-only verification, not part of this smoke.
+- **Hermes** is excluded from closed-alpha support because live receipt confirmation was not deterministic. Do not test or configure it here.
 - **ChatGPT web/desktop** and **Claude cloud Routines** are out of scope until V2 HTTP transport. Don't try them.
 
 Everything below stays synthetic. No real names, birthdays, mail, or calendar data.

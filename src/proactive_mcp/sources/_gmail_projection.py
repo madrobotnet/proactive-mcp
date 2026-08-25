@@ -112,7 +112,7 @@ def project_thread(
         sender_display=sender_name or sender_address or None,
         snippet=latest.snippet,
         body_text=body_text,
-        is_complete=not degradation_reasons,
+        resolution_safe=not degradation_reasons,
         degradation_reasons=degradation_reasons,
         provider_history_cursor=profile_history_cursor,
     )

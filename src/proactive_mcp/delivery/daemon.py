@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from enum import Enum
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    Protocol,
+    TypeVar,
+    final,
+    runtime_checkable,
+)
 
+from proactive_mcp.delivery.evaluation import SkippedSources
+from proactive_mcp.delivery.fallback import FallbackFailed
 from proactive_mcp.scheduler import remaining_delay
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from datetime import datetime, timedelta
 
     from proactive_mcp.clock import Clock
@@ -17,6 +27,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DaemonDependencies",
+    "DaemonFailureCode",
+    "DaemonFailureError",
+    "DaemonFailureKind",
+    "DaemonFailurePhase",
     "DaemonPass",
     "DaemonRun",
     "DaemonSchedule",
@@ -25,7 +39,85 @@ __all__ = [
     "FallbackOutcome",
     "HeartbeatRecorder",
     "WatcherDaemon",
+    "run_daemon_phase",
 ]
+
+
+DaemonFailurePhase = Literal[
+    "config",
+    "database",
+    "credential",
+    "source_sync",
+    "evaluation",
+    "notification",
+    "heartbeat",
+    "runtime_ownership",
+    "service",
+]
+DaemonFailureCode = Literal[
+    "invalid",
+    "unsafe_path",
+    "open_failed",
+    "unavailable",
+    "failed",
+    "ownership_conflict",
+    "notify_failed",
+]
+_T = TypeVar("_T")
+
+
+@dataclass(frozen=True, slots=True)
+class _FailureIdentity:
+    phase: DaemonFailurePhase
+    code: DaemonFailureCode
+
+
+class DaemonFailureKind(Enum):
+    """Every stable daemon failure pair accepted at the process boundary."""
+
+    CONFIG_INVALID = _FailureIdentity("config", "invalid")
+    DATABASE_UNSAFE_PATH = _FailureIdentity("database", "unsafe_path")
+    DATABASE_OPEN_FAILED = _FailureIdentity("database", "open_failed")
+    CREDENTIAL_UNAVAILABLE = _FailureIdentity("credential", "unavailable")
+    SOURCE_SYNC_FAILED = _FailureIdentity("source_sync", "failed")
+    EVALUATION_FAILED = _FailureIdentity("evaluation", "failed")
+    NOTIFICATION_FAILED = _FailureIdentity("notification", "failed")
+    HEARTBEAT_FAILED = _FailureIdentity("heartbeat", "failed")
+    OWNERSHIP_CONFLICT = _FailureIdentity("runtime_ownership", "ownership_conflict")
+    SERVICE_NOTIFY_FAILED = _FailureIdentity("service", "notify_failed")
+
+
+@final
+class DaemonFailureError(Exception):
+    """A phase and code with no underlying exception data."""
+
+    __slots__: tuple[str, ...] = ("_kind",)
+    _kind: DaemonFailureKind
+
+    def __init__(self, kind: DaemonFailureKind) -> None:
+        """Expose only bounded machine values through Exception.args."""
+        self._kind = kind
+        super().__init__(self.phase, self.code)
+
+    @property
+    def phase(self) -> DaemonFailurePhase:
+        """Return the journal-safe failed phase."""
+        return self._kind.value.phase
+
+    @property
+    def code(self) -> DaemonFailureCode:
+        """Return the journal-safe reason code."""
+        return self._kind.value.code
+
+
+def run_daemon_phase(kind: DaemonFailureKind, operation: Callable[[], _T]) -> _T:
+    """Normalize an exception at one named daemon decision boundary."""
+    try:
+        return operation()
+    except DaemonFailureError:
+        raise
+    except Exception:  # noqa: BLE001  # noqa: BROAD_EXCEPT_OK
+        raise DaemonFailureError(kind) from None
 
 
 class HeartbeatRecorder(Protocol):
@@ -126,14 +218,7 @@ class DaemonRun:
 
 
 class WatcherDaemon:
-    """Compose one watcher process from its liveness, evaluation, and fallback.
-
-    The daemon never commits agent delivery: only a host that receives a
-    ``proactive_check`` result and calls ``confirm_delivery`` may do so (§5.1).
-    A pass therefore
-    evaluates, hands unreceived rows to the OS notification fallback, and
-    records the heartbeat that proves the cycle completed.
-    """
+    """Compose heartbeat, evaluation, and fallback without agent delivery."""
 
     _dependencies: DaemonDependencies
 
@@ -180,20 +265,46 @@ class WatcherDaemon:
         """Return an owner token when this run claimed the singleton row."""
         pid = self._dependencies.pid
         if isinstance(heartbeat, _ClaimableHeartbeat):
-            claimed = heartbeat.try_record_start(pid, poll_interval=poll_interval)
-            return _OwnerToken(pid) if claimed else None
-        heartbeat.record_start(pid)
+            claimed = run_daemon_phase(
+                DaemonFailureKind.HEARTBEAT_FAILED,
+                lambda: heartbeat.try_record_start(
+                    pid,
+                    poll_interval=poll_interval,
+                ),
+            )
+            if not claimed:
+                raise DaemonFailureError(DaemonFailureKind.OWNERSHIP_CONFLICT)
+            return _OwnerToken(pid)
+        run_daemon_phase(
+            DaemonFailureKind.HEARTBEAT_FAILED,
+            lambda: heartbeat.record_start(pid),
+        )
         return _OwnerToken(pid)
 
     def _run_pass(self, owner: _OwnerToken | None) -> DaemonPass:
         """Evaluate, notify, and heartbeat only when this run owns liveness."""
-        evaluation = self._dependencies.evaluation.run_once()
-        notifications = self._dependencies.notifier.dispatch(
-            self._dependencies.clock.now()
+        evaluation = run_daemon_phase(
+            DaemonFailureKind.EVALUATION_FAILED,
+            self._dependencies.evaluation.run_once,
         )
+        if evaluation.sources == SkippedSources("credential_storage_unavailable"):
+            raise DaemonFailureError(DaemonFailureKind.CREDENTIAL_UNAVAILABLE)
+        notifications = tuple(
+            run_daemon_phase(
+                DaemonFailureKind.NOTIFICATION_FAILED,
+                lambda: self._dependencies.notifier.dispatch(
+                    self._dependencies.clock.now()
+                ),
+            )
+        )
+        if any(isinstance(item, FallbackFailed) for item in notifications):
+            raise DaemonFailureError(DaemonFailureKind.NOTIFICATION_FAILED)
         if owner is not None:
-            self._dependencies.heartbeat.record_heartbeat()
-        return DaemonPass(evaluation=evaluation, notifications=tuple(notifications))
+            run_daemon_phase(
+                DaemonFailureKind.HEARTBEAT_FAILED,
+                self._dependencies.heartbeat.record_heartbeat,
+            )
+        return DaemonPass(evaluation=evaluation, notifications=notifications)
 
     @staticmethod
     def _release(
@@ -202,4 +313,7 @@ class WatcherDaemon:
     ) -> None:
         """Stop only the row this run owns."""
         if owner is not None:
-            heartbeat.record_stop()
+            run_daemon_phase(
+                DaemonFailureKind.HEARTBEAT_FAILED,
+                heartbeat.record_stop,
+            )

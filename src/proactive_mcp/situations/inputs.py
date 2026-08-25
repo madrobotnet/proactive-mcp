@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
     from proactive_mcp.sources.calendar import CalendarEvent
     from proactive_mcp.store import SourceErrorCode, SourceGeneration
+    from proactive_mcp.store.sync import SourceReadDiagnostics
 
 InboxThreadDegradationReason: TypeAlias = Literal[
     "body_snippet_fallback",
@@ -46,9 +47,14 @@ class InboxThreadSnapshot:
     sender_display: str | None = None
     snippet: str | None = None
     body_text: str | None = None
-    is_complete: bool = True
+    resolution_safe: bool = True
     degradation_reasons: tuple[InboxThreadDegradationReason, ...] = ()
     provider_history_cursor: str | None = None
+
+    @property
+    def is_complete(self) -> bool:
+        """Return the compatibility alias for resolution safety."""
+        return self.resolution_safe
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,3 +82,4 @@ class EngineInputs:
 
     gmail_threads: SourceSnapshot[InboxThreadSnapshot] | None = None
     calendar_events: SourceSnapshot[CalendarEvent] | None = None
+    gmail_diagnostics: SourceReadDiagnostics | None = None

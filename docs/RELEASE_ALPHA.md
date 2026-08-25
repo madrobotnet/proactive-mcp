@@ -43,35 +43,37 @@ uv run ruff check
 uv run basedpyright
 ```
 
-## 2. Build the wheel
+## 2. Build the Linux bundle
 
-Build into a scratch directory outside the repository. The tracked `dist/` folder collects older artifacts, and mixing versions there is how the wrong file gets attached to a message.
+For a Linux tester, build the one supported offline bundle: CPython 3.11 on Linux aarch64. The bundle contains the project wheel, its resolved Linux aarch64 dependency wheels, and an internal `SHA256SUMS` manifest. Build it into an empty scratch directory outside the repository. The tracked `dist/` folder collects older artifacts, and mixing versions there is how the wrong file gets attached to a message.
 
 ```bash
 export PMCP_RELEASE_DIR=/tmp/proactive-mcp-alpha-$(date +%Y%m%d)
 rm -rf "$PMCP_RELEASE_DIR"
-uv build --out-dir "$PMCP_RELEASE_DIR"
-ls -l "$PMCP_RELEASE_DIR"
+uv run scripts/build_alpha_bundle.py "$PMCP_RELEASE_DIR"
+ls -l "$PMCP_RELEASE_DIR/proactive-mcp-alpha-linux-aarch64-py311.tar.gz"
 ```
 
-`uv build` produces two files: a source distribution and a wheel. Note what it actually did, because it matters for trust:
+The output is exactly `proactive-mcp-alpha-linux-aarch64-py311.tar.gz`. When extracted into `~/Downloads`, it creates the canonical tester directory `~/Downloads/proactive-mcp-alpha/`. Do not send an individual wheel, a separate wheelhouse, or a staging directory to a Linux tester.
 
-```text
-Building source distribution...
-Building wheel from source distribution...
-Successfully built .../proactive_mcp-<version>.tar.gz
-Successfully built .../proactive_mcp-<version>-py3-none-any.whl
+The builder creates the project wheel from the sdist, resolves only locked CPython 3.11 manylinux aarch64 wheels, verifies every downloaded wheel against the lock, and writes `SHA256SUMS` for every wheel in the bundle. Inspect the archive before it leaves the machine:
+
+```bash
+tar -tzf "$PMCP_RELEASE_DIR/proactive-mcp-alpha-linux-aarch64-py311.tar.gz"
 ```
 
-The wheel is built *from* the sdist, not straight from the working directory, so anything the sdist misses is missing from the wheel too. The filename carries `py3-none-any`, meaning pure Python with no platform or ABI pin, so one wheel serves Linux, macOS, and Windows testers. The version in the filename comes from `pyproject.toml` (`0.1.0` for the alpha). Hand over the `.whl` only. The tester has no use for the tarball, and shipping both invites them to install the wrong one.
+Expect only `proactive-mcp-alpha/`, its `wheels/` directory, `SHA256SUMS`, and `bundle-metadata.json`. The project wheel remains pure Python, but the dependency wheelhouse is intentionally Linux aarch64 and must not be sent to macOS or Windows testers.
 
 ## 3. Inspect the artifact before it leaves the machine
 
 Never hand over a wheel you haven't opened. A wheel is a zip file, so listing it needs nothing but the standard library.
 
 ```bash
-cd "$PMCP_RELEASE_DIR"
-WHEEL=$(ls proactive_mcp-*-py3-none-any.whl)
+export PMCP_BUNDLE_INSPECT_DIR=$(mktemp -d)
+tar -xzf "$PMCP_RELEASE_DIR/proactive-mcp-alpha-linux-aarch64-py311.tar.gz" \
+  -C "$PMCP_BUNDLE_INSPECT_DIR"
+export PMCP_BUNDLE_DIR="$PMCP_BUNDLE_INSPECT_DIR/proactive-mcp-alpha"
+WHEEL=$(ls "$PMCP_BUNDLE_DIR"/wheels/proactive_mcp-*-py3-none-any.whl)
 python3 -m zipfile -l "$WHEEL"
 ```
 
@@ -102,10 +104,10 @@ source file. Extract the wheel and run the same approved secret scanner used
 for the release commit range:
 
 ```bash
-rm -rf "$PMCP_RELEASE_DIR/wheel-unpacked"
-python3 -m zipfile -e "$WHEEL" "$PMCP_RELEASE_DIR/wheel-unpacked"
+rm -rf "$PMCP_BUNDLE_INSPECT_DIR/wheel-unpacked"
+python3 -m zipfile -e "$WHEEL" "$PMCP_BUNDLE_INSPECT_DIR/wheel-unpacked"
 gitleaks git --redact --log-opts="origin/main..HEAD"
-gitleaks dir "$PMCP_RELEASE_DIR/wheel-unpacked" --redact
+gitleaks dir "$PMCP_BUNDLE_INSPECT_DIR/wheel-unpacked" --redact
 ```
 
 Record the gitleaks version and configuration with the build evidence. Any
@@ -121,31 +123,34 @@ unzip -p "$WHEEL" 'proactive_mcp-*.dist-info/entry_points.txt'
 unzip -p "$WHEEL" 'proactive_mcp-*.dist-info/METADATA' | head -20
 ```
 
-`entry_points.txt` must map `proactive-mcp` to `proactive_mcp.cli:entrypoint`, and `METADATA` must show `Requires-Python: >=3.11` plus the runtime dependencies from `pyproject.toml`. The `licenses/LICENSE` entry should be present as well.
+`entry_points.txt` must map `proactive-mcp` to `proactive_mcp.cli:entrypoint`, and `METADATA` must show `Requires-Python: >=3.11` plus the runtime dependencies from `pyproject.toml`. The `licenses/LICENSE` entry should be present as well. Remove the inspection directory when this section is complete:
 
-## 4. Checksum
+```bash
+rm -rf "$PMCP_BUNDLE_INSPECT_DIR"
+unset PMCP_BUNDLE_DIR PMCP_BUNDLE_INSPECT_DIR WHEEL
+```
 
-Compute the digest once, at the end of the build, and treat it as the artifact's identity from then on.
+## 4. Two-channel integrity checks
+
+The Linux bundle has two separate integrity checks. `SHA256SUMS` is inside the archive and verifies each staged wheel after extraction. The archive digest is sent separately and verifies the archive before extraction. Neither replaces the other. Extraction must start with no `~/Downloads/proactive-mcp-alpha/` path present; an agent stops instead of deleting or overlaying an existing directory. After extraction it also compares the files in `wheels/` with the paths in `SHA256SUMS` and stops if either side has an extra entry.
 
 ```bash
 cd "$PMCP_RELEASE_DIR"
-sha256sum proactive_mcp-*-py3-none-any.whl | tee SHA256SUMS
+sha256sum proactive-mcp-alpha-linux-aarch64-py311.tar.gz
 ```
 
-On macOS use `shasum -a 256`; on Windows PowerShell, `Get-FileHash -Algorithm SHA256`. Keep `SHA256SUMS` next to the wheel and record the same line in your delivery log (section 9). Send the digest over a different channel from the wheel, since a checksum that travels with the file it's supposed to protect proves nothing about tampering in transit.
+Record that archive digest in the delivery log. Send it through a different authenticated channel from the archive. The tester compares it before extracting, confirms the canonical extraction path does not already exist, then runs `sha256sum --check SHA256SUMS` and verifies manifest-to-directory parity inside the extracted bundle before any virtual-environment mutation. The agent reads `project_wheel` from `bundle-metadata.json` and installs that exact `wheels/<filename>` path, never the unpinned package name. `SHA256SUMS` stays inside the archive and is never the independently delivered archive digest.
 
 ## 5. Private handoff
 
 The handoff has three separately delivered items when the Owner OAuth client is
 used, and two when the tester is validating BYO.
 
-**Package one, the wheel.** A single `.whl` file, sent over a private channel you both already use with real authentication behind it: a direct message, an encrypted chat, or a signed link that expires. No public link, no shared folder with guessable listing, no attachment on a GitHub issue.
+**Package one, the Linux archive.** Send `proactive-mcp-alpha-linux-aarch64-py311.tar.gz` over a private channel you both already use with real authentication behind it: a direct message, an encrypted chat, or a signed link that expires. The Linux tester saves it as `~/Downloads/proactive-mcp-alpha-linux-aarch64-py311.tar.gz` and extracts it to a new `~/Downloads/proactive-mcp-alpha/`. If that path already exists, the agent stops and reports it instead of deleting or overlaying anything. No public link, no shared folder with guessable listing, no attachment on a GitHub issue.
 
-**Package two, the checksum.** Send the SHA-256 digest through a different
-authenticated channel from the wheel. A checksum that arrives beside the file
-does not provide an independent transit-integrity check.
+**Package two, the archive checksum.** Send the archive SHA-256 digest through a different authenticated channel from the archive. A checksum that arrives beside the file does not provide an independent transit-integrity check. The bundle's `SHA256SUMS` is a second, internal check for its wheels.
 
-**Package three, the OAuth client JSON.** Per §12, alpha testers use the Owner's published-but-unverified OAuth client, so you deliver that installed-app client JSON as its own message, separate from the wheel and digest. Say plainly in that message:
+**Package three, the OAuth client JSON.** Per §12, alpha testers use the Owner's published-but-unverified OAuth client, so you deliver that installed-app client JSON as its own message, separate from the package and archive digest. Say plainly in that message:
 
 - the file goes to `~/.proactive-mcp/client_secret.json` on Linux and macOS, or `%USERPROFILE%\.proactive-mcp\client_secret.json` on Windows,
 - the directory should be mode `0700` and the file `0600` on POSIX,
@@ -168,14 +173,8 @@ wall of text is the fastest way to miss it.
 
 ## 6. Tester handoff sheet
 
-Privately deliver the wheel and the exact matching sheet from
-`docs/testers/windows.md`, `docs/testers/linux.md`, or `docs/testers/macos.md`.
-The sheet is delivered alongside the wheel as a separate document. It is not
-packaged into the wheel. Send the wheel checksum over a separate authenticated
-channel, and send the Owner OAuth client JSON as its own separate message.
-BYO testers receive no Owner JSON. Send them `docs/SETUP_GOOGLE.md` alongside
-the matching OS sheet, outside the wheel, so their agent can follow the guide
-while creating and placing their own client JSON.
+Privately deliver the Linux archive and `docs/testers/linux.md` to a Linux aarch64 tester. The archive extracts to `~/Downloads/proactive-mcp-alpha/`. For Windows or macOS, privately deliver the wheel and the exact matching sheet from `docs/testers/windows.md` or `docs/testers/macos.md`.
+The sheet is delivered alongside the Linux archive or the matching OS wheel as a separate document. It is not packaged into either artifact. Send the Linux archive checksum or matching wheel checksum over a separate authenticated channel, and send the Owner OAuth client JSON as its own separate message. BYO testers receive no Owner JSON. Send them `docs/SETUP_GOOGLE.md` alongside the matching OS sheet, outside the package artifact, so their agent can follow the guide while creating and placing their own client JSON.
 
 The tester opens their existing agent and pastes that sheet's single text block
 into the agent. They do not paste shell or PowerShell into a terminal. They do
@@ -222,6 +221,43 @@ virtual environment, or the wheel installation. This order is mandatory because
 a keyring credential can outlive the state directory and appear to be a legacy
 credential on reinstall.
 
+For the supported Linux alpha bundle, the agent runs this credential-first
+sequence. `set -e` makes credential deletion a hard stop: if `disconnect`
+cannot delete the keyring or fallback credential, the state directory and its
+tombstone remain intact.
+
+```bash
+set -euo pipefail
+PROACTIVE_BIN="$HOME/venvs/proactive/bin/proactive-mcp"
+"$PROACTIVE_BIN" service remove
+"$PROACTIVE_BIN" disconnect
+```
+
+Only after the command prints `{"google":"disconnected"}` may the agent remove
+the two MCP registrations for the client in use:
+
+```bash
+# Grok CLI
+grok mcp remove --scope user proactive
+grok mcp remove --scope user proactive_scheduled
+```
+
+```bash
+# Codex CLI
+codex mcp remove proactive
+codex mcp remove proactive_scheduled
+```
+
+Then, and only then, it removes proactive-mcp-owned local state and install
+artifacts. It must preserve every unrelated MCP profile and configuration.
+
+```bash
+rm -rf \
+  "$HOME/.proactive-mcp" \
+  "$HOME/venvs/proactive" \
+  "$HOME/Downloads/proactive-mcp-alpha"
+```
+
 If credential storage is unavailable, the agent leaves the state directory and
 its tombstone in place, revokes access in Google Account permissions, and
 reports the failure to the Owner. For a downgrade, the agent uninstalls before
@@ -232,7 +268,7 @@ directory aside before a downgrade that must retain data.
 
 Keep this outside the repository. It contains delivery records, and none of it belongs in git.
 
-For each build, record: the commit SHA and `git log -1 --oneline`, the `uv --version` and Python version, the wheel filename, the `SHA256SUMS` line, the file listing from section 3, and the results of `pytest`, `ruff`, and `basedpyright`. A transcript is enough:
+For each Linux build, record: the commit SHA and `git log -1 --oneline`, the `uv --version` and Python version, the archive filename, its separately sent SHA-256 digest, the internal `SHA256SUMS` contents, the archive listing from section 2, and the results of `pytest`, `ruff`, and `basedpyright`. A transcript is enough:
 
 ```bash
 mkdir -p ~/alpha-records
@@ -240,8 +276,9 @@ mkdir -p ~/alpha-records
   git rev-parse HEAD
   uv --version
   uv run python -V
-  sha256sum "$PMCP_RELEASE_DIR"/proactive_mcp-*.whl
-  python3 -m zipfile -l "$PMCP_RELEASE_DIR"/proactive_mcp-*.whl
+  sha256sum "$PMCP_RELEASE_DIR"/proactive-mcp-alpha-linux-aarch64-py311.tar.gz
+  tar -xOf "$PMCP_RELEASE_DIR"/proactive-mcp-alpha-linux-aarch64-py311.tar.gz proactive-mcp-alpha/SHA256SUMS
+  tar -tzf "$PMCP_RELEASE_DIR"/proactive-mcp-alpha-linux-aarch64-py311.tar.gz
 } > ~/alpha-records/build-$(date +%Y%m%d-%H%M).log
 ```
 
@@ -262,12 +299,12 @@ are the valuable part; they're what the onboarding docs get fixed from.
 
 - [ ] Clean tree, commit SHA recorded
 - [ ] `uv sync --locked` clean, tests and linters green on Python 3.11
-- [ ] `uv build --out-dir` into a scratch directory outside the repo
+- [ ] `uv run scripts/build_alpha_bundle.py "$PMCP_RELEASE_DIR"` completed into an empty scratch directory outside the repo
 - [ ] Wheel listing shows only `proactive_mcp/` and `dist-info`, with migrations and platform scripts present
 - [ ] Filename scan, commit-range secret scan, and extracted-wheel content scan are clean
 - [ ] `entry_points.txt` and `METADATA` correct
-- [ ] `sha256sum` recorded in `SHA256SUMS` and in the delivery log
-- [ ] Wheel sent privately to a named tester; digest sent on a separate channel
+- [ ] Archive SHA-256 recorded in the delivery log; internal `SHA256SUMS` covers every bundled wheel
+- [ ] Linux aarch64 archive sent privately to a named tester; archive digest sent on a separate channel
 - [ ] OAuth client JSON sent as its own message, with placement, permissions, and no-commit warning
 - [ ] `git status` clean, no OAuth JSON anywhere in the tree
 - [ ] No PyPI publication, and no `uv publish` in the build history
