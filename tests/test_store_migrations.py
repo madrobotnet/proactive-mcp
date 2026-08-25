@@ -6,6 +6,7 @@ from threading import Barrier as ThreadBarrier
 from typing import TYPE_CHECKING
 
 from proactive_mcp.store import DEFAULT_BUSY_TIMEOUT_MS, DatabaseStatus, Store
+from proactive_mcp.store.migrations import load_migrations
 
 if TYPE_CHECKING:
     from multiprocessing.queues import Queue as ProcessQueue
@@ -19,6 +20,21 @@ def _open_store_at_barrier(db_path: Path, barrier: ThreadBarrier) -> int:
         return store.status().migration_version
 
 
+def test_packaged_v9_baseline_remains_before_additive_v10(tmp_path: Path) -> None:
+    db_path = tmp_path / "proactive.db"
+
+    with Store(db_path) as store:
+        applied = (
+            store.connection()
+            .execute("SELECT version FROM schema_migrations ORDER BY version")
+            .fetchall()
+        )
+
+    packaged = tuple(version for version, _sql in load_migrations())
+    assert packaged[:9] == tuple(range(1, 10))
+    assert applied == [(version,) for version in range(1, 11)]
+
+
 def test_temp_database_migrates_to_wal_with_busy_timeout(tmp_path: Path) -> None:
     db_path = tmp_path / "proactive.db"
 
@@ -29,7 +45,7 @@ def test_temp_database_migrates_to_wal_with_busy_timeout(tmp_path: Path) -> None
     assert status.path == db_path.absolute()
     assert status.journal_mode.lower() == "wal"
     assert status.busy_timeout == DEFAULT_BUSY_TIMEOUT_MS
-    assert status.migration_version == 9
+    assert status.migration_version == 10
 
 
 def test_migration_is_idempotent(tmp_path: Path) -> None:
@@ -41,7 +57,7 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     with Store(db_path) as store:
         second = store.status()
 
-    assert second.migration_version == first.migration_version == 9
+    assert second.migration_version == first.migration_version == 10
     assert second.journal_mode.lower() == "wal"
     assert second.busy_timeout == first.busy_timeout
     assert second.path == first.path
@@ -55,7 +71,7 @@ def test_configured_busy_timeout_is_reported(tmp_path: Path) -> None:
 
     assert status.busy_timeout == 2500
     assert status.journal_mode.lower() == "wal"
-    assert status.migration_version == 9
+    assert status.migration_version == 10
 
 
 def test_concurrent_fresh_database_startup_is_reliable(tmp_path: Path) -> None:
@@ -67,7 +83,7 @@ def test_concurrent_fresh_database_startup_is_reliable(tmp_path: Path) -> None:
             executor.submit(_open_store_at_barrier, db_path, barrier) for _ in range(4)
         ]
 
-    assert [future.result(timeout=10) for future in futures] == [9, 9, 9, 9]
+    assert [future.result(timeout=10) for future in futures] == [10, 10, 10, 10]
 
 
 def _open_fresh_store_in_worker(
@@ -104,4 +120,4 @@ def test_cross_process_fresh_database_startup_is_serialized(tmp_path: Path) -> N
     ] * process_count
     observed_versions = [versions.get(timeout=10) for _ in range(process_count)]
 
-    assert observed_versions == [9] * process_count
+    assert observed_versions == [10] * process_count
