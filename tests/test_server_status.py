@@ -12,9 +12,9 @@ from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server import StatusResponse, build_status
 from proactive_mcp.server.status import status_response
 from proactive_mcp.store import FallbackClaim, Store
+from tests.daemon_cli_test_support import start_live_overridden_watcher
 from tests.situation_test_support import FakeClock, utc_datetime
 from tests.situation_tool_support import UNTRUSTED_SUBJECT, pending_detection
-from tests.test_daemon_cli import start_live_overridden_watcher
 
 _PID = 4242
 _FALLBACK_WAIT = timedelta(minutes=30)

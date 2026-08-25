@@ -37,6 +37,7 @@ from proactive_mcp.store import (
     Store,
 )
 from proactive_mcp.store.sync import SourceReadDiagnostics, SourceReadReasonCount
+from tests.daemon_cli_test_support import start_live_overridden_watcher
 from tests.daemon_test_support import (
     FakeCredential,
     FakeCredentialStore,
@@ -56,7 +57,6 @@ from tests.situation_tool_support import (
     tool_schema,
     write_config,
 )
-from tests.test_daemon_cli import start_live_overridden_watcher
 
 if TYPE_CHECKING:
     from pathlib import Path
