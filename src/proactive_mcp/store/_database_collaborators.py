@@ -23,6 +23,7 @@ from .private_path import (
     sqlite_connection_target,
 )
 from .situations import SituationStore
+from .storage_errors import ReceiptErasurePendingError
 from .sync import SyncStore
 
 if TYPE_CHECKING:
@@ -77,7 +78,12 @@ def open_collaborators(
             reader = ScalarReader(connection)
             initialize_connection(connection, reader)
             enforce_private_sidecars(directory_fd, path)
-    except (OSError, sqlite3.Error, UnsafeDatabasePathError):
+    except (
+        OSError,
+        sqlite3.Error,
+        ReceiptErasurePendingError,
+        UnsafeDatabasePathError,
+    ):
         close_connection(
             connection,
             directory_fd,

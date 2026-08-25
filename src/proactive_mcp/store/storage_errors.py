@@ -3,10 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, final
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@final
+class ReceiptErasurePendingError(Exception):
+    """Raised when an older reader prevents migrated receipt erasure."""
+
+    def __init__(self) -> None:
+        """Expose only a fixed credential-safe message."""
+        Exception.__init__(
+            self,
+            "receipt erasure is blocked; close older processes and retry",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,4 +33,4 @@ class UnsafeDatabasePathError(Exception):
         Exception.__init__(self, f"unsafe database path: {self.reason}")
 
 
-__all__ = ["UnsafeDatabasePathError"]
+__all__ = ["ReceiptErasurePendingError", "UnsafeDatabasePathError"]

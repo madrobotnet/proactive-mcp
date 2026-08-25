@@ -45,7 +45,11 @@ from proactive_mcp.server.situation_responses import (
 from proactive_mcp.server.status import DaemonDiagnosticResponse
 from proactive_mcp.situations import SituationRuntime
 from proactive_mcp.sources.lazy_sync import ScheduledSourceProvider, open_source_access
-from proactive_mcp.store import Store, UnsafeDatabasePathError
+from proactive_mcp.store import (
+    ReceiptErasurePendingError,
+    Store,
+    UnsafeDatabasePathError,
+)
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -209,6 +213,8 @@ def run_daemon(*, once: bool, poll_interval_minutes: float | None) -> int:
         return _emit_failure(DaemonFailureKind.CONFIG_INVALID)
     except UnsafeDatabasePathError:
         return _emit_failure(DaemonFailureKind.DATABASE_UNSAFE_PATH)
+    except ReceiptErasurePendingError:
+        return _emit_failure(DaemonFailureKind.DATABASE_OPEN_FAILED)
     except (OSError, sqlite3.Error):
         return _emit_failure(DaemonFailureKind.DATABASE_OPEN_FAILED)
     except DaemonFailureError as failure:

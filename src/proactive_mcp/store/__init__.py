@@ -69,6 +69,7 @@ from .memory import (
 )
 from .private_path import UnsafeDatabasePathError
 from .situations import SituationStore
+from .storage_errors import ReceiptErasurePendingError
 from .sync import (
     SourceAuthState,
     SourceErrorCode,
@@ -122,6 +123,7 @@ __all__ = [
     "MemorySource",
     "MemoryValidationError",
     "NewMemory",
+    "ReceiptErasurePendingError",
     "Situation",
     "SituationEvidence",
     "SituationNotFoundError",

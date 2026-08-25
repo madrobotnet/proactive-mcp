@@ -5,6 +5,16 @@
 PRAGMA secure_delete = ON;
 DROP TABLE situation_delivery_claims;
 
+-- This durable marker is cleared only after initialization checkpoints the WAL.
+-- It makes erasure completion retryable if a legacy reader pins pre-v10 pages.
+CREATE TABLE migration_maintenance (
+    task TEXT PRIMARY KEY NOT NULL
+        CHECK(task = 'v9_receipt_erasure'),
+    pending INTEGER NOT NULL CHECK(pending = 1)
+) WITHOUT ROWID;
+INSERT INTO migration_maintenance(task, pending)
+VALUES ('v9_receipt_erasure', 1);
+
 CREATE TABLE situation_delivery_claims (
     receipt_digest BLOB NOT NULL
         CHECK(typeof(receipt_digest) = 'blob' AND length(receipt_digest) = 32),
