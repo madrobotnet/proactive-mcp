@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING, ClassVar, Final, Protocol, TypedDict, final
 
 from google_auth_oauthlib import flow as oauthlib_flow
 from google_auth_oauthlib.flow import InstalledAppFlow, WSGITimeoutError
+from oauthlib.oauth2 import OAuth2Error
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from requests.exceptions import RequestException
+from requests_oauthlib import oauth2_session
 from typing_extensions import override
 
 from proactive_mcp.sources.credentials import (
@@ -30,9 +33,15 @@ _GOOGLE_OAUTH_ENDPOINT: Final[str] = "https://oauth2.googleapis.com/token"
 _SUPPORTED_REDIRECT_URIS: Final[tuple[str, ...]] = ("http://127.0.0.1",)
 HEADLESS_AUTHORIZATION_URL_EVENT: Final = "oauth.authorization_url"
 HEADLESS_SETUP_SUCCESS_EVENT: Final = "Google read-only sources configured."
+_BROWSER_AUTHORIZATION_EVENT: Final = (
+    "Waiting for Google authorization in your browser."
+)
 _OAUTHLIB_LOGGER_NAME: Final = "google_auth_oauthlib.flow"
 _OAUTHLIB_LOGGER: Final = logging.getLogger(_OAUTHLIB_LOGGER_NAME)
 _OAUTHLIB_FLOW_SOURCE: Final[str | None] = oauthlib_flow.__file__
+_REQUESTS_OAUTHLIB_LOGGER_NAME: Final = "requests_oauthlib.oauth2_session"
+_REQUESTS_OAUTHLIB_LOGGER: Final = logging.getLogger(_REQUESTS_OAUTHLIB_LOGGER_NAME)
+_REQUESTS_OAUTHLIB_SOURCE: Final[str | None] = oauth2_session.__file__
 
 
 @final
@@ -49,7 +58,22 @@ class _OAuthCallbackAccessLogFilter(logging.Filter):
         )
 
 
+@final
+class _OAuthCredentialDebugLogFilter(logging.Filter):
+    """Drop credential-bearing DEBUG records from requests-oauthlib itself."""
+
+    @override
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Keep other sources and non-DEBUG operational records unchanged."""
+        return not (
+            record.name == _REQUESTS_OAUTHLIB_LOGGER_NAME
+            and record.pathname == _REQUESTS_OAUTHLIB_SOURCE
+            and record.levelno == logging.DEBUG
+        )
+
+
 _OAUTHLIB_LOGGER.addFilter(_OAuthCallbackAccessLogFilter())
+_REQUESTS_OAUTHLIB_LOGGER.addFilter(_OAuthCredentialDebugLogFilter())
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +84,16 @@ class OAuthClientConfigError(Exception):
     def __str__(self) -> str:
         """Return a client-secret-safe operator message."""
         return "Google installed-app client configuration is invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class GoogleOAuthAuthorizationError(Exception):
+    """Signal a provider denial or transport failure without provider text."""
+
+    @override
+    def __str__(self) -> str:
+        """Return a fixed credential-safe authorization message."""
+        return "Google authorization failed; run setup again"
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +203,11 @@ def write_headless_setup_success() -> None:
     _ = sys.stdout.write(f"{HEADLESS_SETUP_SUCCESS_EVENT}\n")
 
 
+def _write_browser_authorization_status() -> None:
+    """Emit a fixed status without the browser authorization URL or state."""
+    _ = sys.stdout.write(f"{_BROWSER_AUTHORIZATION_EVENT}\n")
+
+
 @final
 class _OwnedAuthorizationPrompt:
     """Capture oauthlib's URL once so this package owns presentation.
@@ -177,15 +216,20 @@ class _OwnedAuthorizationPrompt:
     and its print.
     """
 
-    __slots__ = ("_emitted",)
+    __slots__ = ("_emitted", "_headless")
     _emitted: bool
+    _headless: bool
 
-    def __init__(self) -> None:
+    def __init__(self, *, headless: bool) -> None:
         self._emitted = False
+        self._headless = headless
 
     def format(self, **kwargs: str) -> str:
         if not self._emitted:
-            write_headless_authorization_url(kwargs["url"])
+            if self._headless:
+                write_headless_authorization_url(kwargs["url"])
+            else:
+                _write_browser_authorization_status()
             self._emitted = True
         return ""
 
@@ -218,7 +262,9 @@ class _GoogleLocalInstalledAppFlow:
             open_browser=open_browser,
             timeout_seconds=timeout_seconds,
             prompt=prompt,
-            authorization_prompt_message=_OwnedAuthorizationPrompt(),
+            authorization_prompt_message=_OwnedAuthorizationPrompt(
+                headless=not open_browser
+            ),
         )
 
 
@@ -266,10 +312,11 @@ class GoogleOAuthAuthorizer:
         headless: bool = False,
     ) -> GoogleCredential:
         """Run a bounded loopback flow and persist a durable read-only credential."""
-        flow = self.flow_factory.from_client_config(
-            _load_client_config(client_secrets_path), GOOGLE_READONLY_SCOPES
-        )
+        client_config = _load_client_config(client_secrets_path)
         try:
+            flow = self.flow_factory.from_client_config(
+                client_config, GOOGLE_READONLY_SCOPES
+            )
             if reauth:
                 credentials = flow.run_local_server(
                     host=_LOOPBACK_HOST,
@@ -287,6 +334,8 @@ class GoogleOAuthAuthorizer:
                 )
         except WSGITimeoutError:
             raise GoogleOAuthAuthorizationTimeoutError from None
+        except (OAuth2Error, RequestException):
+            raise GoogleOAuthAuthorizationError from None
         self.credential_store.save(credentials)
         write_headless_setup_success()
         return credentials
@@ -308,6 +357,7 @@ __all__ = [
     "HEADLESS_AUTHORIZATION_URL_EVENT",
     "HEADLESS_SETUP_SUCCESS_EVENT",
     "GoogleClientConfig",
+    "GoogleOAuthAuthorizationError",
     "GoogleOAuthAuthorizationTimeoutError",
     "GoogleOAuthAuthorizer",
     "InstalledAppFlowFactory",

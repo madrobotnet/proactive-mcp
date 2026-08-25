@@ -36,6 +36,7 @@ from .google_sync import (
     InvalidGrantError,
 )
 from .oauth import (
+    GoogleOAuthAuthorizationError,
     GoogleOAuthAuthorizationTimeoutError,
     GoogleOAuthAuthorizer,
     OAuthClientConfigError,
@@ -266,6 +267,7 @@ __all__ = [
     "CredentialStorageError",
     "GmailProfileReader",
     "GoogleCredentialStore",
+    "GoogleOAuthAuthorizationError",
     "GoogleOAuthAuthorizationTimeoutError",
     "GoogleOAuthAuthorizer",
     "GoogleReadDependencies",

@@ -30,6 +30,7 @@ from proactive_mcp.server.situation_responses import (
 from proactive_mcp.sources import (
     CredentialScopeError,
     CredentialStorageError,
+    GoogleOAuthAuthorizationError,
     GoogleOAuthAuthorizationTimeoutError,
     GoogleReadSmokeDisabledError,
     GoogleReadSummary,
@@ -61,6 +62,7 @@ _GOOGLE_ERRORS: Final = (
     ConfigError,
     CredentialScopeError,
     CredentialStorageError,
+    GoogleOAuthAuthorizationError,
     GoogleOAuthAuthorizationTimeoutError,
     GoogleReadSmokeDisabledError,
     MissingGoogleCredentialsError,

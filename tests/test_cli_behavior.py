@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from oauthlib.oauth2 import AccessDeniedError
 from pydantic import BaseModel, ConfigDict
+from requests.exceptions import RequestException
 
 from proactive_mcp import cli
 from proactive_mcp.server import StatusResponse
@@ -24,6 +26,7 @@ from proactive_mcp.sources.credentials import CredentialStore
 from proactive_mcp.store import SourceErrorCode, Store
 from tests.test_google_oauth import (
     FIXTURES,
+    ErrorInstalledAppFlow,
     FakeFlowFactory,
     FakeInstalledAppFlow,
     FakeKeyring,
@@ -216,6 +219,53 @@ def test_setup_reports_authorization_timeout_without_a_traceback(
     assert captured.out == ""
     assert captured.err
     assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "provider_error",
+    [
+        AccessDeniedError(
+            description="provider-/private/provider?state=state-canary&code=code-canary"
+        ),
+        RequestException(
+            "transport-/private/provider?state=state-canary&code=code-canary"
+        ),
+    ],
+)
+def test_setup_reports_provider_failure_as_one_closed_safe_error(
+    provider_error: Exception,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_path = tmp_path / "private-client.json"
+    _ = private_path.write_bytes((FIXTURES / "installed-client.json").read_bytes())
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "state.db"))
+    _install_fake_authorizer(monkeypatch, ErrorInstalledAppFlow(provider_error))
+
+    result = cli.main(["setup", "--client-secrets", str(private_path)])
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert captured.out == ""
+    assert captured.err == "error: Google authorization failed; run setup again\n"
+    assert "Traceback" not in captured.err
+    assert str(provider_error) not in captured.err
+    assert str(private_path) not in captured.err
+    assert "state-canary" not in captured.err
+    assert "code-canary" not in captured.err
+
+
+def test_cli_does_not_swallow_process_control_exceptions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupted(_path: Path, _options: GoogleSetupOptions) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "configure_google_sources", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        _ = cli.main(["setup", "--client-secrets", "client.json"])
 
 
 def test_google_smoke_requires_explicit_real_account_read_opt_in(

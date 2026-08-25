@@ -13,6 +13,9 @@ import pytest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib import flow as oauthlib_flow
 from google_auth_oauthlib.flow import InstalledAppFlow, WSGITimeoutError
+from oauthlib.oauth2 import AccessDeniedError
+from requests.exceptions import RequestException
+from requests_oauthlib import oauth2_session
 from typing_extensions import override
 
 from proactive_mcp.sources.credentials import (
@@ -25,6 +28,7 @@ from proactive_mcp.sources.oauth import (
     HEADLESS_AUTHORIZATION_URL_EVENT,
     HEADLESS_SETUP_SUCCESS_EVENT,
     GoogleClientConfig,
+    GoogleOAuthAuthorizationError,
     GoogleOAuthAuthorizationTimeoutError,
     GoogleOAuthAuthorizer,
     OAuthClientConfigError,
@@ -188,6 +192,27 @@ class RecordingOauthlibFlow:
         return self.credentials
 
 
+class ErrorInstalledAppFlow(FakeInstalledAppFlow):
+    error: BaseException
+
+    def __init__(self, error: BaseException) -> None:
+        super().__init__(google_credential())
+        self.error = error
+
+    @override
+    def run_local_server(
+        self,
+        *,
+        host: str,
+        port: int,
+        open_browser: bool,
+        timeout_seconds: int,
+        prompt: str | None = None,
+    ) -> GoogleCredential:
+        self.calls.append(FlowCall(host, port, open_browser, timeout_seconds, prompt))
+        raise self.error
+
+
 class TimeoutInstalledAppFlow(FakeInstalledAppFlow):
     @override
     def run_local_server(
@@ -321,6 +346,65 @@ def test_loopback_callback_access_log_hides_oauth_query_canaries(
     assert all(canary not in combined_output for canary in canaries)
 
 
+def test_requests_oauthlib_debug_credentials_are_fenced_at_the_exact_source(
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    canaries = (
+        "oauth-state-canary",
+        "oauth-code-canary",
+        "client-secret-canary",
+        "access-token-canary",
+        "refresh-token-canary",
+        "/private/oauth-path-canary",
+    )
+    logger = logging.getLogger("requests_oauthlib.oauth2_session")
+    source = oauth2_session.__file__
+    assert source is not None
+    caplog.set_level(logging.DEBUG)
+
+    for canary in canaries:
+        record = logger.makeRecord(
+            logger.name,
+            logging.DEBUG,
+            source,
+            1,
+            "upstream OAuth diagnostic %s",
+            (canary,),
+            None,
+            "fetch_token",
+        )
+        logger.handle(record)
+
+    for level, message in (
+        (logging.INFO, "oauth-info-diagnostic-canary"),
+        (logging.WARNING, "oauth-warning-diagnostic-canary"),
+    ):
+        record = logger.makeRecord(
+            logger.name,
+            level,
+            source,
+            1,
+            message,
+            (),
+            None,
+            "fetch_token",
+        )
+        logger.handle(record)
+
+    captured = capsys.readouterr()
+    combined_output = "\n".join(
+        (
+            captured.out,
+            captured.err,
+            *(record.getMessage() for record in caplog.records),
+        )
+    )
+    assert all(combined_output.count(canary) == 0 for canary in canaries)
+    assert "oauth-info-diagnostic-canary" in combined_output
+    assert "oauth-warning-diagnostic-canary" in combined_output
+
+
 def test_oauthlib_same_template_non_callback_log_survives(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -426,6 +510,52 @@ def test_authorization_rejects_a_flow_without_a_refresh_token(tmp_path: Path) ->
         _ = authorizer.authorize(FIXTURES / "installed-client.json")
 
     assert store.load() is None
+
+
+@pytest.mark.parametrize(
+    "provider_error",
+    [
+        AccessDeniedError(description="provider-/private/path?state=state&code=code"),
+        RequestException("transport-/private/path?state=state&code=code"),
+    ],
+)
+def test_authorization_provider_failures_return_one_safe_typed_error(
+    provider_error: Exception,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = CredentialStore(tmp_path / "state", keyring=FakeKeyring())
+    authorizer = GoogleOAuthAuthorizer(
+        store,
+        flow_factory=FakeFlowFactory(ErrorInstalledAppFlow(provider_error)),
+    )
+
+    with pytest.raises(GoogleOAuthAuthorizationError) as error:
+        _ = authorizer.authorize(FIXTURES / "installed-client.json", headless=True)
+    captured = capsys.readouterr()
+
+    assert str(error.value) == "Google authorization failed; run setup again"
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__
+    assert captured.out == ""
+    assert captured.err == ""
+    assert store.load() is None
+
+
+@pytest.mark.parametrize("control", [KeyboardInterrupt(), SystemExit(19)])
+def test_authorization_does_not_swallow_process_control_exceptions(
+    control: BaseException,
+    tmp_path: Path,
+) -> None:
+    authorizer = GoogleOAuthAuthorizer(
+        CredentialStore(tmp_path / "state", keyring=FakeKeyring()),
+        flow_factory=FakeFlowFactory(ErrorInstalledAppFlow(control)),
+    )
+
+    with pytest.raises(type(control)) as raised:
+        _ = authorizer.authorize(FIXTURES / "installed-client.json")
+
+    assert raised.value is control
 
 
 def test_authorization_timeout_returns_a_typed_error(tmp_path: Path) -> None:
@@ -564,6 +694,45 @@ def test_headless_credential_failure_emits_no_success_when_refresh_token_is_miss
     assert count_authorization_url_events(captured.out, captured.err) <= 1
     assert count_setup_success_events(captured.out, captured.err) == 0
     assert store.load() is None
+
+
+def test_browser_authorization_prompt_never_emits_state_bearing_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    recording = RecordingOauthlibFlow(google_credential())
+
+    def from_client_config(
+        _cls: type[InstalledAppFlow],
+        _client_config: GoogleClientConfig,
+        scopes: tuple[str, str],
+    ) -> RecordingOauthlibFlow:
+        del scopes
+        return recording
+
+    monkeypatch.setattr(
+        InstalledAppFlow,
+        "from_client_config",
+        classmethod(from_client_config),
+    )
+
+    _ = GoogleOAuthAuthorizer(
+        CredentialStore(tmp_path / "state", keyring=FakeKeyring()),
+    ).authorize(FIXTURES / "installed-client.json", headless=False)
+    _ = capsys.readouterr()
+    owned_prompt = recording.authorization_prompts[0]
+    assert owned_prompt is not None
+    assert (
+        owned_prompt.format(url=f"{_FAKE_AUTHORIZATION_URL}&state=browser-state-canary")
+        == ""
+    )
+    captured = capsys.readouterr()
+
+    assert captured.out == "Waiting for Google authorization in your browser.\n"
+    assert captured.err == ""
+    assert "browser-state-canary" not in captured.out
+    assert _AUTHORIZATION_URL_NEEDLE not in captured.out
 
 
 def test_headless_real_adapter_supplies_owned_authorization_prompt_once(
