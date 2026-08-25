@@ -100,6 +100,11 @@ class DaemonFailureError(Exception):
         super().__init__(self.phase, self.code)
 
     @property
+    def kind(self) -> DaemonFailureKind:
+        """Return the closed failure identity for process classification."""
+        return self._kind
+
+    @property
     def phase(self) -> DaemonFailurePhase:
         """Return the journal-safe failed phase."""
         return self._kind.value.phase

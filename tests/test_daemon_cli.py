@@ -12,11 +12,18 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Final, NoReturn, Self
 
+import pytest
+
 from proactive_mcp import cli
 from proactive_mcp.cli import daemon as daemon_cli
 from proactive_mcp.cli.daemon import DaemonOnceResponse
 from proactive_mcp.config import load_config
-from proactive_mcp.delivery.daemon import DaemonDependencies, WatcherDaemon
+from proactive_mcp.delivery.daemon import (
+    DaemonDependencies,
+    DaemonFailureError,
+    DaemonFailureKind,
+    WatcherDaemon,
+)
 from proactive_mcp.delivery.evaluation import (
     EvaluationPass,
     EvaluationService,
@@ -52,8 +59,6 @@ from tests.situation_test_support import FakeClock, utc_datetime
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    import pytest
 
     from proactive_mcp.clock import Clock
 
@@ -156,6 +161,52 @@ def _ok_daemon() -> WatcherDaemon:
     )
 
 
+@pytest.mark.parametrize(
+    ("kind", "expected_exit_status"),
+    [
+        (DaemonFailureKind.CONFIG_INVALID, 2),
+        (DaemonFailureKind.DATABASE_UNSAFE_PATH, 2),
+        (DaemonFailureKind.DATABASE_OPEN_FAILED, 1),
+        (DaemonFailureKind.CREDENTIAL_UNAVAILABLE, 2),
+        (DaemonFailureKind.SOURCE_SYNC_FAILED, 1),
+        (DaemonFailureKind.EVALUATION_FAILED, 1),
+        (DaemonFailureKind.NOTIFICATION_FAILED, 1),
+        (DaemonFailureKind.HEARTBEAT_FAILED, 1),
+        (DaemonFailureKind.OWNERSHIP_CONFLICT, 2),
+        (DaemonFailureKind.SERVICE_NOTIFY_FAILED, 1),
+    ],
+)
+def test_daemon_failure_kind_controls_systemd_restart_exit_status(
+    kind: DaemonFailureKind,
+    expected_exit_status: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: startup reaches one closed daemon failure classification.
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
+
+    failure = DaemonFailureError(kind)
+
+    def fail_startup(_path: Path) -> NoReturn:
+        raise failure
+
+    monkeypatch.setattr(daemon_cli, "load_config", fail_startup)
+
+    # When: the daemon process boundary handles the failure.
+    result = daemon_cli.run_daemon(once=True, poll_interval_minutes=None)
+    captured = capsys.readouterr()
+
+    # Then: permanent failures stop restart while retryable failures request it.
+    assert result == expected_exit_status
+    assert failure.kind is kind
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "phase": failure.phase,
+        "code": failure.code,
+    }
+
+
 def test_daemon_help_exposes_once_and_poll_interval_override() -> None:
     # Given: the installed CLI entry point.
 
@@ -246,7 +297,7 @@ def test_once_exits_one_on_infrastructure_failure(
     captured = capsys.readouterr()
 
     # Then: the database phase is actionable without exception data.
-    assert result == 2
+    assert result == 1
     assert captured.out == ""
     assert json.loads(captured.err) == {"phase": "database", "code": "open_failed"}
     assert "Traceback" not in captured.err
@@ -468,7 +519,7 @@ def test_service_notify_failure_is_redacted_and_releases_heartbeat(
     # Then: the failure is bounded and the aborted owner is stopped.
     with Store(database) as store:
         liveness = store.daemon.status().liveness
-    assert result == 2
+    assert result == 1
     assert captured.out == ""
     assert json.loads(captured.err) == {"phase": "service", "code": "notify_failed"}
     assert "canary" not in captured.err
@@ -619,7 +670,7 @@ def test_source_sync_failure_emits_only_phase_and_code(
     captured = capsys.readouterr()
 
     # Then: source failure identity is bounded and safe.
-    assert result == 2
+    assert result == 1
     assert captured.out == ""
     assert json.loads(captured.err) == {"phase": "source_sync", "code": "failed"}
     assert "canary" not in captured.err
@@ -643,7 +694,7 @@ def test_evaluation_failure_emits_only_phase_and_code(
     captured = capsys.readouterr()
 
     # Then: evaluation failure identity is bounded and safe.
-    assert result == 2
+    assert result == 1
     assert captured.out == ""
     assert json.loads(captured.err) == {"phase": "evaluation", "code": "failed"}
     assert "canary" not in captured.err
@@ -667,7 +718,7 @@ def test_notification_failure_emits_only_phase_and_code(
     captured = capsys.readouterr()
 
     # Then: notification failure identity is bounded and safe.
-    assert result == 2
+    assert result == 1
     assert captured.out == ""
     assert json.loads(captured.err) == {"phase": "notification", "code": "failed"}
     assert "canary" not in captured.err
@@ -697,7 +748,7 @@ def test_heartbeat_failure_emits_only_phase_and_code(
     captured = capsys.readouterr()
 
     # Then: heartbeat failure identity is bounded and safe.
-    assert result == 2
+    assert result == 1
     assert captured.out == ""
     assert json.loads(captured.err) == {"phase": "heartbeat", "code": "failed"}
     assert "canary" not in captured.err

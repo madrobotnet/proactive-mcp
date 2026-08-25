@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp import cli
 from proactive_mcp.cli import service as service_cli
+from proactive_mcp.cli.service_unit import render_user_unit
 from proactive_mcp.store import Store
 
 if TYPE_CHECKING:
@@ -270,6 +271,19 @@ def _response(result: subprocess.CompletedProcess[str]) -> _ServiceResponse:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_rendered_unit_restarts_only_retryable_daemon_failures() -> None:
+    # Given: an isolated executable and profile database.
+    executable = Path("/opt/proactive/bin/proactive-mcp")
+    database = Path("/var/lib/proactive/proactive.db")
+
+    # When: the managed user unit is rendered.
+    directives = render_user_unit(executable, database).splitlines()
+
+    # Then: systemd retries failures except the permanent exit status.
+    assert "Restart=on-failure" in directives
+    assert "RestartPreventExitStatus=2" in directives
 
 
 def test_service_help_exposes_install_status_and_remove() -> None:

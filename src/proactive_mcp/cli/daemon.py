@@ -223,7 +223,27 @@ def _emit_failure(kind: DaemonFailureKind) -> int:
 def _emit_diagnostic(failure: DaemonFailureError) -> int:
     payload = DaemonDiagnosticResponse(phase=failure.phase, code=failure.code)
     _ = sys.stderr.write(f"{payload.model_dump_json()}\n")
-    return 2
+    return _failure_exit_status(failure.kind)
+
+
+def _failure_exit_status(kind: DaemonFailureKind) -> int:
+    match kind:
+        case (
+            DaemonFailureKind.CONFIG_INVALID
+            | DaemonFailureKind.DATABASE_UNSAFE_PATH
+            | DaemonFailureKind.CREDENTIAL_UNAVAILABLE
+            | DaemonFailureKind.OWNERSHIP_CONFLICT
+        ):
+            return 2
+        case (
+            DaemonFailureKind.DATABASE_OPEN_FAILED
+            | DaemonFailureKind.SOURCE_SYNC_FAILED
+            | DaemonFailureKind.EVALUATION_FAILED
+            | DaemonFailureKind.NOTIFICATION_FAILED
+            | DaemonFailureKind.HEARTBEAT_FAILED
+            | DaemonFailureKind.SERVICE_NOTIFY_FAILED
+        ):
+            return 1
 
 
 def _poll_override(value: float | None) -> timedelta | None:
