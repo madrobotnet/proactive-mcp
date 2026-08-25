@@ -120,6 +120,17 @@ class _FakeSystemdManager:
 
 
 @dataclass(frozen=True, slots=True)
+class _FakeDaemonStatus:
+    liveness: Literal["running"] = "running"
+    pid: int = _PID
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeStatus:
+    daemon: _FakeDaemonStatus = _FakeDaemonStatus()
+
+
+@dataclass(frozen=True, slots=True)
 class _Harness:
     root: Path
     database: Path
@@ -136,10 +147,15 @@ def _run_cli_in_process(
     stdout = StringIO()
     stderr = StringIO()
     arguments = ["proactive-mcp", "service", action]
+
+    def build_running_status() -> _FakeStatus:
+        return _FakeStatus()
+
     with (
         patch.dict(os.environ, harness.env, clear=True),
         patch.object(sys, "platform", "linux"),
         patch.object(service_cli, "_MANAGER", harness.manager),
+        patch.object(service_cli, "build_status", build_running_status),
         redirect_stdout(stdout),
         redirect_stderr(stderr),
     ):
@@ -153,7 +169,7 @@ def _run_cli_in_process(
 
 
 def _run_cli(harness: _Harness, action: str) -> subprocess.CompletedProcess[str]:
-    if os.name == "nt":
+    if not sys.platform.startswith("linux"):
         return _run_cli_in_process(harness, action)
     command = (
         "from proactive_mcp.cli import entrypoint; "
