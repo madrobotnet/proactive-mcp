@@ -9,6 +9,7 @@ from proactive_mcp.server.situation_responses import ProactiveCheckResponse
 from tests.mcp_session_contract_support import (
     SCHEDULED as _SCHEDULED,
 )
+from tests.mcp_session_contract_support import SERVE as _SERVE
 from tests.mcp_session_contract_support import (
     listed_tools as _listed_tools,
 )
@@ -42,6 +43,52 @@ def _require_conditional_confirm_routing(description: str) -> str:
     assert "situations" in folded
     assert "receipt token" in folded
     return folded
+
+
+def _require_owner_host_contract(description: str) -> None:
+    folded = _folded_routing(description)
+    assert "reply deadline" in folded
+    assert "candidate" in folded
+    for dropped in ("newsletter", "marketing", "receipt", "fyi", "someone else"):
+        assert dropped in folded
+    for kept in ("reply", "rsvp", "decision", "user owned", "unanswered question"):
+        assert kept in folded
+    assert "uncertain" in folded
+    assert "unconfirmed" in folded
+    assert "snooze" in folded
+    assert "entire reviewed lease" in folded
+    assert "dropped candidates" in folded
+    assert "mcp" in folded
+    assert "english" in folded
+    assert "user's language" in folded
+    assert "quoted" in folded
+    assert "interactive" in folded
+    assert "scheduled" in folded
+    assert "separate profiles" in folded
+
+
+@pytest.mark.anyio
+async def test_proactive_check_description_has_owner_host_contract(
+    tmp_path: Path,
+) -> None:
+    tools = await _listed_tools(tmp_path, _SERVE)
+    _require_owner_host_contract(tools["proactive_check"].description or "")
+
+
+@pytest.mark.anyio
+async def test_list_situations_description_has_owner_host_contract(
+    tmp_path: Path,
+) -> None:
+    tools = await _listed_tools(tmp_path, _SERVE)
+    _require_owner_host_contract(tools["list_situations"].description or "")
+
+
+@pytest.mark.anyio
+async def test_get_situation_description_has_owner_host_contract(
+    tmp_path: Path,
+) -> None:
+    tools = await _listed_tools(tmp_path, _SERVE)
+    _require_owner_host_contract(tools["get_situation"].description or "")
 
 
 @pytest.mark.anyio
