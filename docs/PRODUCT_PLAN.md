@@ -114,8 +114,8 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 
 | 도구 | 목적 | 핵심 입출력 |
 |---|---|---|
-| `proactive_check` | **핵심 도구.** 미전달 상황 요약을 짧은 lease로 예약해 반환. 가볍고 빨라야 함(<1s, sync 필요 시 예외) | 입력 없음 → `{situations[], receipt_token?, freshness, warnings}` |
-| `confirm_delivery` | 호스트가 `proactive_check` 결과를 수령한 뒤 lease를 전달 완료로 확정 | `receipt_token` → `{delivered_count}` |
+| `proactive_check` | **핵심 도구.** 미전달 상황 요약을 짧은 lease로 예약해 반환. 가볍고 빨라야 함(<1s, sync 필요 시 예외) | 입력 없음 → `{protocol_version: "1", requires_confirmation, confirmation: {tool: "confirm_delivery"}, situations[], receipt_token, freshness, budget, held_count, warnings, all_clear}`. `requires_confirmation`은 situations가 비어 있지 않고 token이 있을 때만 true |
+| `confirm_delivery` | 호스트가 `proactive_check` 결과를 수령한 뒤 lease를 전달 완료로 확정 | `receipt_token` → `{status: "confirmed"\|"already_confirmed", delivered_count}`. 최초 확정은 `confirmed`; replay는 `already_confirmed`와 최초 확정의 동일 count를 반환 |
 | `list_situations` | 상황 목록 조회 (상태 필터) | `state?` → 상황 배열 |
 | `get_situation` | 상황 상세 + 근거(evidence) | `id` → 상세 |
 | `acknowledge_situation` | 사용자가 인지/처리함 | `id` |
@@ -166,7 +166,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 
 | 플랫폼 | stdio 로컬 | 스케줄 트리거 | 판정 |
 |---|---|---|---|
-| Grok CLI | O — `grok mcp add` 또는 `~/.grok/config.toml`. `~/.claude.json` 설정도 자동 로드 | 없음 → OS 스케줄러 | M5 1순위 |
+| Grok CLI | O — 일상용·예약용 별도 project 디렉터리에 각각 project-scope 등록. user/Claude 설정도 병합되므로 inherited full 등록 제거와 wrapper의 모든 nested Claude project entry를 포함한 raw source 중복 검사와 scope/command/list/handshake/3-tool gate 필수 | 없음 → OS 스케줄러 | 격리 보장 시 M5 1순위; 불가하면 Codex 예약 collector |
 | Codex CLI | O — `~/.codex/config.toml` | 없음 → OS 스케줄러 | M5 1순위 |
 | Hermes | Owner 검증용 stdio만 | Hermes Native Cron | Owner 전용 상호운용 검증, 테스터 경로 제외 |
 | Claude Code Desktop | O | 로컬 예약 작업(최소 간격 1분, 로컬 MCP 접근 가능) | 레시피 문서화만 (Owner 미설치, 실증 제외) |

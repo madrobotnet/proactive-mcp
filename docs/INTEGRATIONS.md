@@ -229,14 +229,16 @@ Every CLI here loads `AGENTS.md` from its working directory. That's exactly what
 
 It's the wrong behavior for a fresh one-shot or a scheduled run. If the agent starts inside this checkout, or inside any repository, that project's `AGENTS.md` joins the scheduled prompt and can divert the run: extra tool calls, a code review it was never asked for, or a refusal that leaves the counter untouched. A scheduled check has one job.
 
-So point one-shot and scheduled runs at a dedicated directory that holds nothing:
+Codex and Hermes one-shot runs use a dedicated directory that holds nothing:
 
 ```bash
 mkdir -p ~/.proactive-mcp/agent-cwd
 chmod 700 ~/.proactive-mcp/agent-cwd
 ```
 
-On Windows that's `%USERPROFILE%\.proactive-mcp\agent-cwd`. Keep it empty. No `AGENTS.md`, no `CLAUDE.md`, no `.mcp.json`, no git repository. The MCP registration is user scope, so the server still starts; only the project instructions disappear. Each run starts a separate scheduled conversation with only `serve-scheduled`; the interactive everyday conversation keeps only `serve`. Because the directory isn't a repository, Codex needs `--skip-git-repo-check`.
+On Windows that's `%USERPROFILE%\.proactive-mcp\agent-cwd`. Keep it empty: no `AGENTS.md`, `CLAUDE.md`, `.mcp.json`, or git repository. Codex receives explicit per-run profile overrides and needs `--skip-git-repo-check` there.
+
+Grok is different because 0.2.112 has no per-run profile override. Its scheduled directory is `~/.proactive-mcp/grok-scheduled` and intentionally contains only the project-scoped `.grok/config.toml` for `proactive_scheduled`. It contains no instruction file or other project config. The Grok wrapper changes to that exact directory and gates both the MCP list and all-source doctor result before every run.
 
 ## Agent reference and appendices
 
@@ -246,43 +248,44 @@ These appendices are the implementation reference for the agent handling the tes
 
 Verified against grok 0.2.112.
 
-### 1. Registration: often zero config, but confirm it
+### 1. Registration: two project directories, never user scope
 
-Per `docs/PRODUCT_PLAN.md` §5.3 and [Issue #6](https://github.com/madrobotnet/proactive-mcp/issues/6), Grok automatically loads MCP configuration written for other harnesses, which is why the plan describes Grok setup as effectively zero extra configuration.
+Grok 0.2.112 merges `~/.grok/config.toml`, `~/.claude.json`, project `.mcp.json`, and project `.grok/config.toml`. It has no documented per-run MCP enable override. Consequently, prompt text cannot isolate a scheduled conversation from a globally visible full server.
 
-Treat it as a claim to check on your machine, not a guarantee. On grok 0.2.112, `grok mcp doctor` prints the config sources it consults, and the sources it visibly lists are `~/.grok/config.toml`, `~/.claude.json`, and a project-level `.mcp.json`. So an existing Claude registration, or a project-level `.mcp.json` in the directory you're working in, can be enough on its own. Anything outside those three files is not.
-
-So always ask Grok directly instead of assuming:
+Create two private, distinct Grok project directories. The interactive directory owns only `proactive`; the scheduled directory owns only `proactive_scheduled`:
 
 ```bash
-grok mcp doctor
-grok mcp doctor proactive
+GROK_INTERACTIVE_CWD="$HOME/.proactive-mcp/grok-interactive"
+GROK_SCHEDULED_CWD="$HOME/.proactive-mcp/grok-scheduled"
+mkdir -p "$GROK_INTERACTIVE_CWD" "$GROK_SCHEDULED_CWD"
+chmod 700 "$GROK_INTERACTIVE_CWD" "$GROK_SCHEDULED_CWD"
 ```
 
-If `grok mcp doctor proactive` reports the server, the interactive registration exists. If it doesn't, fall back to registering it in Grok's own config with `grok mcp add`. User scope writes `~/.grok/config.toml` and applies everywhere:
+First audit both directories. `doctor` is authoritative for every contributing source, including inherited Claude servers; in this build `list` can omit those inherited entries, so use both:
 
 ```bash
-grok mcp add --scope user proactive -- \
-  /home/you/.local/bin/uv run --directory /home/you/src/proactive-mcp proactive-mcp serve
+(cd "$GROK_INTERACTIVE_CWD" && grok mcp doctor && grok mcp list)
+(cd "$GROK_SCHEDULED_CWD" && grok mcp doctor && grok mcp list)
 ```
 
-Project scope writes `./.grok/config.toml` instead:
+Before claiming isolation, inspect the raw `~/.grok/config.toml`, scheduled `.grok/config.toml`, all top-level and `projects.*.mcpServers` entries in `~/.claude.json`, and scheduled `.mcp.json`, then remove or move every inherited `proactive` or duplicate `proactive_scheduled` registration. For a Grok user-scope registration, back up the config and use `grok mcp remove --scope user NAME`. For a Claude registration, use Claude's supported removal flow or move it into the interactive directory's project config; do not blindly edit or delete unrelated Claude settings. If an inherited full registration cannot be removed, **do not schedule Grok**: use the [Codex scheduled collector](#appendix-b-codex-cli) instead. Never keep simultaneous full and scheduled user registrations.
+
+With both all-source doctor results and lists clean, register each server from its own directory at project scope:
 
 ```bash
-grok mcp add --scope project proactive -- \
-  /home/you/.local/bin/uv run --directory /home/you/src/proactive-mcp proactive-mcp serve
+(
+  cd "$GROK_INTERACTIVE_CWD"
+  grok mcp add --scope project proactive -- \
+    /home/you/.local/bin/uv run --directory /home/you/src/proactive-mcp proactive-mcp serve
+)
+(
+  cd "$GROK_SCHEDULED_CWD"
+  grok mcp add --scope project proactive_scheduled -- \
+    /home/you/.local/bin/uv run --directory /home/you/src/proactive-mcp proactive-mcp serve-scheduled
+)
 ```
 
-Everything after `--` is the server command, per `grok mcp add --help`. Prefer user scope: repo-local servers only start in folders you've marked trusted, and user-scope servers sidestep that entirely.
-
-Grok does not expose a documented per-conversation MCP enable override in this build. Don't register both profiles in the same Grok config. Use the command above when Grok owns interactive everyday conversations. If Grok is the scheduled collector instead, use a dedicated Grok config that contains only this registration:
-
-```bash
-grok mcp add --scope user proactive_scheduled -- \
-  /home/you/.local/bin/uv run --directory /home/you/src/proactive-mcp proactive-mcp serve-scheduled
-```
-
-That scheduled setup gives up Grok's interactive `serve` profile. Use another separately configured host for everyday conversations, or use Codex as the scheduled collector. Never load `proactive` and `proactive_scheduled` into one Grok conversation.
+Everything after `--` is the server command. Open each directory once in interactive Grok and approve its folder-trust prompt; project-scoped servers do not start until their directory is trusted. Then repeat the all-source `doctor --json` and `list` checks. The interactive directory must expose exactly `proactive`. The scheduled raw files must contain exactly one relevant registration: project-scoped `proactive_scheduled`, whose command and args end in `proactive-mcp serve-scheduled`. Its doctor result must report a healthy handshake and exactly three tools. A hidden duplicate, malformed source, command drift, wrong scope, full profile, or any other tool count is a configuration failure, not something rules or a prompt can repair.
 
 ### 2. Watcher daemon, or degraded mode
 
@@ -294,16 +297,14 @@ Degraded alternative: skip the daemon and let `proactive_check` lazy-sync inline
 
 ### 3. Session-start rule
 
-Put [the rule](#the-session-start-rule) in `AGENTS.md` at your project root; Grok loads project instructions from there. This interactive conversation uses only `proactive`. For a single run you can append rules on the command line with `--rules`.
+Put [the rule](#the-session-start-rule) in `AGENTS.md` inside `$GROK_INTERACTIVE_CWD`; Grok loads project instructions from there. Start everyday Grok conversations with `--cwd "$GROK_INTERACTIVE_CWD"`, where the merged configuration exposes only `proactive`. For a single run you can append rules on the command line with `--rules`.
 
 ### 4. Scheduled trigger: none, hand off to the OS
 
-Grok has no scheduler. Use `-p/--single` for a one-shot headless prompt, and run it from the [neutral agent directory](#the-neutral-agent-directory) rather than the checkout:
+Grok has no scheduler. Use `-p/--single` for a one-shot headless prompt, always from the trusted scheduled project directory. The scheduler wrapper below performs the mandatory raw-source and runtime profile gate before this command; do not run a prompt-only substitute:
 
 ```bash
-mkdir -p ~/.proactive-mcp/agent-cwd
-chmod 700 ~/.proactive-mcp/agent-cwd
-grok --cwd ~/.proactive-mcp/agent-cwd --no-alt-screen --single 'Load only proactive_scheduled in this separate scheduled conversation and call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty, leave the whole lease unconfirmed, or defer it to an interactive conversation for snooze; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Never load the interactive profile in this conversation. Report kept or uncertain candidates and freshness warnings; with healthy freshness and nothing kept, stay silent.'
+grok --cwd "$GROK_SCHEDULED_CWD" --no-alt-screen --single 'Use the available proactive_scheduled server and call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty, leave the whole lease unconfirmed, or defer it to an interactive conversation for snooze; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Report kept or uncertain candidates and freshness warnings; with healthy freshness and nothing kept, stay silent.'
 ```
 
 For machine-readable output add `--output-format json` (values: `plain`, `json`, `streaming-json`). Full scheduler wiring is in [OS scheduler handoff](#appendix-e-os-scheduler-handoff).
@@ -311,12 +312,11 @@ For machine-readable output add `--output-format json` (values: `plain`, `json`,
 ### Verification
 
 ```bash
-grok mcp list
-grok mcp doctor proactive
-grok mcp doctor --json proactive
+(cd "$GROK_INTERACTIVE_CWD" && grok mcp list && grok mcp doctor proactive && grok mcp doctor --json)
+(cd "$GROK_SCHEDULED_CWD" && grok mcp list && grok mcp doctor proactive_scheduled && grok mcp doctor --json)
 ```
 
-`doctor` should report the one profile assigned to this Grok config as healthy. For a scheduled-only config, substitute `proactive_scheduled`. Then run one conversation and confirm a single `proactive_check` call and no second profile in its tool list.
+Both named `doctor` checks must be healthy, and an unfiltered `doctor --json` in each directory must show no second proactive profile from another source. The first list must contain `proactive` and not `proactive_scheduled`; the second must contain `proactive_scheduled` and not `proactive`. The scheduled wrapper parses all four raw sources before every run, scanning every Claude `projects` entry without trusting path spelling or aliases, then enforces project scope, the exact `proactive-mcp serve-scheduled` command tail, a healthy handshake, and exactly three discovered tools in `list`/`doctor`. It fails closed on malformed config, hidden duplicate scheduled registrations, any inherited full registration, command drift, or tool-surface drift.
 
 ### Troubleshooting
 
@@ -324,8 +324,9 @@ Grok writes MCP stderr to `~/.grok/logs/mcp/`. Start there when a launch fails.
 
 | Symptom | Cause and fix |
 |---|---|
-| `folder untrusted (repo-local (project-scoped) server not started for an untrusted folder)` | A project-scoped server in a folder Grok doesn't trust. Trust the folder in an interactive `grok` session, or re-register with `--scope user`. |
-| Server not listed at all | Run `grok mcp doctor`. It names the config sources Grok consults (`~/.grok/config.toml`, `~/.claude.json`, project `.mcp.json`) and how many servers each one contributed. If your registration lives anywhere else, Grok won't see it, so re-register with `grok mcp add --scope user`. |
+| `folder untrusted (repo-local (project-scoped) server not started for an untrusted folder)` | Open that exact directory once in interactive Grok and approve the folder-trust prompt. Never work around this by moving either profile to user scope. |
+| Server not listed at all | Run `grok mcp doctor` in the intended interactive or scheduled directory. Re-register the missing server there with `--scope project`; never use user scope for these two profiles. |
+| Scheduled gate reports profile isolation failure | Inspect all four raw files named above, then run `grok mcp doctor --json` and `grok mcp list --json` in the scheduled directory. Remove duplicate/inherited registrations and restore project scope, the `proactive-mcp serve-scheduled` command tail, healthy handshake, and three-tool surface. If all conditions cannot be guaranteed, switch the scheduled collector to Codex. |
 | Launch fails immediately | Check `~/.grok/logs/mcp/`. Usually `uv` isn't on `PATH`; use the absolute path in the command. |
 | Doctor reports auth expired | `grok login`. Config-source diagnostics still work without it. |
 | Headless run produces no tool call | Make the prompt itself name the tool. Rules may not load in every headless context; the prompt always does. |
@@ -707,6 +708,7 @@ is in flight. The wrappers enforce this with a lock directory at
 | Notifier missing at preflight | `result=failure reason=notifier_unavailable` | none possible | 3 |
 | Notification attempt failed | `result=failure reason=notify_failed` | attempted, failed | 3 |
 | Another measurement in flight | `result=failure reason=concurrent_run` | none | 5 |
+| Grok raw/merged config, command, scope, handshake, or three-tool surface fails validation | `result=failure reason=profile_isolation` | fixed failure | 4 |
 
 An increase outranks everything but a regression. If the counter moved, the
 user gets told, whatever the agent's exit code, whatever the priority, whatever
@@ -741,7 +743,7 @@ set -u
 
 PATH="/home/you/.local/bin:/home/you/.grok/bin:/usr/local/bin:/usr/bin:/bin"
 REPO="/home/you/src/proactive-mcp"
-AGENT_CWD="$HOME/.proactive-mcp/agent-cwd"
+AGENT_CWD="$HOME/.proactive-mcp/grok-scheduled"
 LOGDIR="$HOME/.proactive-mcp/logs"
 LOG="$LOGDIR/grok-cron.log"
 LOCK="$HOME/.proactive-mcp/scheduler.lock"
@@ -826,6 +828,128 @@ fail_status() {
   mark "result=failure reason=$1 notify=$NOTIFY exit=4"
   exit 4
 }
+
+# Configuration is the security boundary. Grok's merged list and doctor can
+# hide a lower-precedence duplicate, so inspect every raw source as well. Every
+# Claude project entry is scanned, regardless of path or alias spelling. This
+# parser is embedded in the wrapper; it creates no installed helper or config.
+grok_profile_gate() {
+  uv run --directory "$REPO" python - "$HOME" "$AGENT_CWD" <<'PY' >/dev/null 2>&1 || return 1
+import json
+from pathlib import Path
+import sys
+import tomllib
+
+home, project = map(Path, sys.argv[1:])
+entries = []
+
+def add_toml(path, source):
+    if not path.exists():
+        return
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    servers = data.get("mcp_servers", {})
+    if not isinstance(servers, dict):
+        raise TypeError("mcp_servers must be a table")
+    for name in ("proactive", "proactive_scheduled"):
+        if name in servers:
+            if not isinstance(servers[name], dict):
+                raise TypeError("server must be a table")
+            entries.append((source, name, servers[name]))
+
+def add_servers(servers, source):
+    if not isinstance(servers, dict):
+        raise TypeError("mcpServers must be an object")
+    for name, server in servers.items():
+        if not isinstance(server, dict):
+            raise TypeError("server must be an object")
+        if name in ("proactive", "proactive_scheduled"):
+            entries.append((source, name, server))
+
+def add_json(path, source, scan_projects=False):
+    if not path.exists():
+        return
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise TypeError("config must be an object")
+    add_servers(data.get("mcpServers", {}), source)
+    if not scan_projects:
+        return
+    projects = data.get("projects", {})
+    if not isinstance(projects, dict):
+        raise TypeError("projects must be an object")
+    for project_path, settings in projects.items():
+        if not isinstance(project_path, str) or not isinstance(settings, dict):
+            raise TypeError("Claude project must be an object")
+        add_servers(settings.get("mcpServers", {}), "user_claude_project")
+
+try:
+    add_toml(home / ".grok" / "config.toml", "user_grok")
+    add_toml(project / ".grok" / "config.toml", "project_grok")
+    add_json(home / ".claude.json", "user_claude", scan_projects=True)
+    add_json(project / ".mcp.json", "project_mcp")
+    if len(entries) != 1:
+        raise ValueError("expected one raw proactive registration")
+    source, name, server = entries[0]
+    if source != "project_grok" or name != "proactive_scheduled":
+        raise ValueError("scheduled registration must be project-only")
+    command = server.get("command")
+    args = server.get("args", [])
+    if not isinstance(command, str) or not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        raise TypeError("invalid command or args")
+    tokens = [command, *args]
+    if len(tokens) < 2 or Path(tokens[-2]).name not in {"proactive-mcp", "proactive-mcp.exe"} or tokens[-1] != "serve-scheduled":
+        raise ValueError("scheduled command drift")
+except (OSError, UnicodeError, json.JSONDecodeError, tomllib.TOMLDecodeError, TypeError, ValueError):
+    sys.exit(1)
+PY
+
+  LIST_JSON=$(cd "$AGENT_CWD" && grok mcp list --json 2>/dev/null) || return 1
+  printf '%s' "$LIST_JSON" | uv run --directory "$REPO" python -c '
+import json
+from pathlib import Path
+import sys
+try:
+    servers = json.load(sys.stdin)
+    if len(servers) != 1:
+        raise ValueError
+    server = servers[0]
+    tokens = [server["command"], *server.get("args", [])]
+    valid = (
+        server["name"] == "proactive_scheduled"
+        and server["scope"] == "project"
+        and len(tokens) >= 2
+        and Path(tokens[-2]).name in {"proactive-mcp", "proactive-mcp.exe"}
+        and tokens[-1] == "serve-scheduled"
+    )
+    if not valid:
+        raise ValueError
+except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+    sys.exit(1)
+' >/dev/null 2>&1 || return 1
+
+  DOCTOR_JSON=$(cd "$AGENT_CWD" && grok mcp doctor --json 2>/dev/null || true)
+  printf '%s' "$DOCTOR_JSON" | uv run --directory "$REPO" python -c '
+import json, sys
+try:
+    servers = json.load(sys.stdin)["servers"]
+    if len(servers) != 1:
+        raise ValueError
+    server = servers[0]
+    passed = {item["label"] for item in server["checks"] if item["passed"]}
+    valid = (
+        server["name"] == "proactive_scheduled"
+        and server["healthy"] is True
+        and any(label.startswith("handshake OK") for label in passed)
+        and "3 tools discovered" in passed
+    )
+    if not valid:
+        raise ValueError
+except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+    sys.exit(1)
+' >/dev/null 2>&1
+}
+
+grok_profile_gate || fail_status profile_isolation
 
 BEFORE=$(read_state) || fail_status status_unreadable
 BEFORE_TOTAL=${BEFORE%% *}
@@ -1072,7 +1196,7 @@ Skip the daemon and everything above still delivers situations at each cron tick
 #### Verifying the cron handoff
 
 ```bash
-grok mcp doctor proactive
+(cd ~/.proactive-mcp/grok-scheduled && grok mcp list && grok mcp doctor proactive_scheduled && grok mcp doctor --json)
 codex mcp get proactive
 uv run --directory /home/you/src/proactive-mcp proactive-mcp status
 ~/bin/proactive-cron-grok && tail -n 1 ~/.proactive-mcp/logs/grok-cron.log
@@ -1098,6 +1222,8 @@ counter that the wrapper is measuring.
 
 ### Windows: Task Scheduler
 
+If Grok is the collector, first create `%USERPROFILE%\.proactive-mcp\grok-interactive` and `%USERPROFILE%\.proactive-mcp\grok-scheduled`. Audit `grok mcp doctor` and `grok mcp list` from both directories and inspect the raw Grok user/project TOML, top-level and every nested Claude project MCP entry, plus project JSON; remove or move inherited full and duplicate scheduled registrations. Register full `proactive` with `--scope project` from the interactive directory and `proactive_scheduled` with `--scope project` from the scheduled directory, trust both directories interactively, and verify each list and all-source doctor result contains only its assigned profile. If the inherited full profile cannot be removed from the scheduled merged config, schedule Codex instead.
+
 Save `C:\Users\you\src\proactive-mcp-scripts\Invoke-ProactiveCheck.ps1`:
 
 ```powershell
@@ -1111,7 +1237,11 @@ param(
 $ErrorActionPreference = "Continue"
 
 $Repo     = "C:\Users\you\src\proactive-mcp"
-$AgentCwd = Join-Path $env:USERPROFILE ".proactive-mcp\agent-cwd"
+$AgentCwd = if ($Cli -eq "grok") {
+    Join-Path $env:USERPROFILE ".proactive-mcp\grok-scheduled"
+} else {
+    Join-Path $env:USERPROFILE ".proactive-mcp\agent-cwd"
+}
 $LogDir   = Join-Path $env:USERPROFILE ".proactive-mcp\logs"
 $Log      = Join-Path $LogDir "$Cli-task.log"
 $Lock     = Join-Path $env:USERPROFILE ".proactive-mcp\scheduler.lock"
@@ -1160,6 +1290,105 @@ function Stop-Loud {
     exit 4
 }
 
+function Test-GrokProfileIsolation {
+    $rawCheck = @'
+import json
+from pathlib import Path
+import sys
+import tomllib
+
+home, project = map(Path, sys.argv[1:])
+entries = []
+
+def add_toml(path, source):
+    if not path.exists():
+        return
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    servers = data.get("mcp_servers", {})
+    if not isinstance(servers, dict):
+        raise TypeError("mcp_servers must be a table")
+    for name in ("proactive", "proactive_scheduled"):
+        if name in servers:
+            if not isinstance(servers[name], dict):
+                raise TypeError("server must be a table")
+            entries.append((source, name, servers[name]))
+
+def add_servers(servers, source):
+    if not isinstance(servers, dict):
+        raise TypeError("mcpServers must be an object")
+    for name, server in servers.items():
+        if not isinstance(server, dict):
+            raise TypeError("server must be an object")
+        if name in ("proactive", "proactive_scheduled"):
+            entries.append((source, name, server))
+
+def add_json(path, source, scan_projects=False):
+    if not path.exists():
+        return
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise TypeError("config must be an object")
+    add_servers(data.get("mcpServers", {}), source)
+    if not scan_projects:
+        return
+    projects = data.get("projects", {})
+    if not isinstance(projects, dict):
+        raise TypeError("projects must be an object")
+    for project_path, settings in projects.items():
+        if not isinstance(project_path, str) or not isinstance(settings, dict):
+            raise TypeError("Claude project must be an object")
+        add_servers(settings.get("mcpServers", {}), "user_claude_project")
+
+try:
+    add_toml(home / ".grok" / "config.toml", "user_grok")
+    add_toml(project / ".grok" / "config.toml", "project_grok")
+    add_json(home / ".claude.json", "user_claude", scan_projects=True)
+    add_json(project / ".mcp.json", "project_mcp")
+    if len(entries) != 1:
+        raise ValueError("expected one raw proactive registration")
+    source, name, server = entries[0]
+    if source != "project_grok" or name != "proactive_scheduled":
+        raise ValueError("scheduled registration must be project-only")
+    command = server.get("command")
+    args = server.get("args", [])
+    if not isinstance(command, str) or not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        raise TypeError("invalid command or args")
+    tokens = [command, *args]
+    if len(tokens) < 2 or Path(tokens[-2]).name not in {"proactive-mcp", "proactive-mcp.exe"} or tokens[-1] != "serve-scheduled":
+        raise ValueError("scheduled command drift")
+except (OSError, UnicodeError, json.JSONDecodeError, tomllib.TOMLDecodeError, TypeError, ValueError):
+    sys.exit(1)
+'@
+    & $Uv run --directory $Repo python -c $rawCheck $env:USERPROFILE $AgentCwd *> $null
+    if ($LASTEXITCODE -ne 0) { return $false }
+
+    Push-Location $AgentCwd
+    try {
+        $json = & grok mcp list --json 2>$null
+        if ($LASTEXITCODE -ne 0) { return $false }
+        try { $servers = @($json | Out-String | ConvertFrom-Json) }
+        catch { return $false }
+        if ($servers.Count -ne 1) { return $false }
+        $listed = $servers[0]
+        $tokens = @([string] $listed.command) + @($listed.args)
+        if ($listed.name -ne "proactive_scheduled" -or $listed.scope -ne "project") { return $false }
+        if ($tokens.Count -lt 2 -or (Split-Path -Leaf $tokens[-2]) -notin @("proactive-mcp", "proactive-mcp.exe") -or $tokens[-1] -ne "serve-scheduled") { return $false }
+
+        $doctorJson = & grok mcp doctor --json 2>$null
+        try { $doctorServers = @(($doctorJson | Out-String | ConvertFrom-Json).servers) }
+        catch { return $false }
+        if ($doctorServers.Count -ne 1) { return $false }
+        $scheduled = $doctorServers[0]
+        if ($scheduled.name -ne "proactive_scheduled" -or $scheduled.healthy -ne $true) { return $false }
+        $passed = @($scheduled.checks | Where-Object { $_.passed -eq $true } | ForEach-Object { $_.label })
+        if (@($passed | Where-Object { $_ -like "handshake OK*" }).Count -ne 1) { return $false }
+        return (@($passed | Where-Object { $_ -eq "3 tools discovered" }).Count -eq 1)
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 if (-not (Test-Path -LiteralPath $ToastScript -PathType Leaf)) {
     Write-Marker "result=failure reason=notifier_unavailable notify=none exit=3"
     exit 3
@@ -1174,6 +1403,10 @@ if ($null -eq $lockDir) {
 }
 
 try {
+    if ($Cli -eq "grok" -and -not (Test-GrokProfileIsolation)) {
+        Stop-Loud "profile_isolation"
+    }
+
     $before = Get-DeliveryState
     if ($null -eq $before) { Stop-Loud "status_unreadable" }
 
@@ -1272,7 +1505,7 @@ for the same reason the wrapper passes `-C`: no project `AGENTS.md` should be
 anywhere near a scheduled run.
 
 For Grok, reuse the same script and register a separate task with `-Cli grok`,
-`grok` in the task name, and a Grok description. Do not enable both recurring
+`grok` in the task name, `-WorkingDirectory "$env:USERPROFILE\.proactive-mcp\grok-scheduled"`, and a Grok description. The script changes to that directory and runs the same bounded raw TOML/JSON parser as the POSIX wrapper before checking `list` and all-source `doctor --json`. It rejects relevant MCPs in every nested Claude project entry regardless of path alias, and requires one project registration ending in `proactive-mcp(.exe) serve-scheduled`, one healthy handshake, and exactly three tools; malformed config, hidden duplicates, full registrations, wrong scope/command, and tool drift all fail before it reserves a lease. Do not enable both recurring
 tasks against the same database. They would race to claim the same situations,
 and each would read the other's claim as its own delivery.
 Reference: [Register-ScheduledTask](https://learn.microsoft.com/powershell/module/scheduledtasks/register-scheduledtask).
@@ -1324,7 +1557,7 @@ From §9.2, non-negotiable.
 - **Never persist raw `proactive_check` payloads.** Not to a cron log, not to a task log, not to a debug file. The response deliberately carries the minimum context a human summary needs: sender display names, subjects, event titles. Fine in a chat window you own, not fine on disk.
 - **Never read agent output at all.** Scheduled wrappers redirect agent stdout and stderr to `/dev/null` or `$null` at the call site. Don't capture it, don't compare it, don't grep it, don't pass it to another process, and never use `-o/--output-last-message` or `--json` in a scheduled run. There's no token contract to salvage text for; the decision comes from the server's own `deliveries.total`.
 - The only server data a wrapper may hold is two integers and a boolean: `deliveries.total` before, `deliveries.total` after, and whether `warnings` was non-empty. Warning strings themselves stay in memory, never in the log, never in a notification.
-- Log only fixed fields: timestamp, CLI, `result`, optional fixed `reason`, `notify`, `agent_exit`, and exit code. `result` is one of `attention`, `status_warning`, `no_delivery`, or `failure`; `reason` is one of `notifier_unavailable`, `status_unreadable`, `counter_regressed`, `agent_failed`, `notify_failed`, or `concurrent_run`. Nothing outside those fixed sets, and no counter values, situation counts, titles, or warning text.
+- Log only fixed fields: timestamp, CLI, `result`, optional fixed `reason`, `notify`, `agent_exit`, and exit code. `result` is one of `attention`, `status_warning`, `no_delivery`, or `failure`; `reason` is one of `notifier_unavailable`, `status_unreadable`, `counter_regressed`, `agent_failed`, `notify_failed`, `concurrent_run`, or `profile_isolation`. Nothing outside those fixed sets, and no counter values, situation counts, titles, or warning text.
 - Keep the log directory private: `chmod 700 ~/.proactive-mcp/logs` on Linux and macOS. At the documented Windows store path, those files already get a restricted DACL.
 - Never log OAuth tokens, email bodies or addresses, calendar details, or situation `evidence` fields.
 - Reporting a problem in an Issue? Attach exit codes, tool names, call counts, situation type, state, priority, and integer IDs. Don't attach the database, WAL files, config, or screenshots of tool results.
@@ -1344,18 +1577,18 @@ Per platform, in order:
 
 | | Grok CLI | Codex CLI | Hermes | Claude Desktop |
 |---|---|---|---|---|
-| Registered | `grok mcp list`, one profile per config | `codex mcp list`, scheduled disabled by default | Owner only: `hermes mcp list`, one profile at a time | one profile in the conversation tool list |
-| Server healthy | `grok mcp doctor` for the one registered profile | full `proactive` is enabled and `prompt`; scheduled is disabled, uses `serve-scheduled`, and is `approve` | Owner only: `hermes mcp test` for the one registered profile | `get_status` from a chat |
+| Registered | project scope only: interactive directory lists only `proactive`; scheduled directory only `proactive_scheduled` | `codex mcp list`, scheduled disabled by default | Owner only: `hermes mcp list`, one profile at a time | one profile in the conversation tool list |
+| Server healthy | named `grok mcp doctor` succeeds in each project directory; scheduled wrapper repeats it | full `proactive` is enabled and `prompt`; scheduled is disabled, uses `serve-scheduled`, and is `approve` | Owner only: `hermes mcp test` for the one registered profile | `get_status` from a chat |
 | Daemon or degraded | `status` shows daemon state, or the missing-fallback warning is understood and accepted | same | Owner decides before validation | same |
 | Host contract | candidate filter, entire reviewed lease, uncertainty, English MCP, user language | same | same, Owner only | same |
-| Conversation isolation | interactive `proactive` or scheduled `proactive_scheduled`, never both | scheduled overrides disable full and enable restricted; interactive does the reverse | remove interactive before Native Cron registration | select only `serve` for interactive or `serve-scheduled` for a separate task |
+| Conversation isolation | distinct trusted project directories; raw-source plus list/doctor gate rejects full, duplicates, command/scope/tool drift | scheduled overrides disable full and enable restricted; interactive does the reverse | remove interactive before Native Cron registration | select only `serve` for interactive or `serve-scheduled` for a separate task |
 | Session-start rule | `AGENTS.md` at project root | `AGENTS.md` at workspace root | complete rule in a fresh Owner conversation | project instructions |
-| Neutral working directory | `--cwd ~/.proactive-mcp/agent-cwd` in scheduled-only config | `-C ~/.proactive-mcp/agent-cwd`, plus `--skip-git-repo-check` | Native Cron `--workdir` | task runs in its own folder |
+| Neutral working directory | `--cwd ~/.proactive-mcp/grok-scheduled`, whose project config contains only scheduled | `-C ~/.proactive-mcp/agent-cwd`, plus `--skip-git-repo-check` | Native Cron `--workdir` | task runs in its own folder |
 | Scheduled trigger | `deliveries.total` rises by one, state moves to `delivered`, fixed OS notification appears | same, and every `codex exec` enables only `proactive_scheduled` | Owner only: `hermes cron list`, `status`, and explicit `run JOB_ID` | local scheduled task, at least 1 min |
 | Quiet run | second run with nothing pending logs `result=no_delivery`, or `result=status_warning` with its own fixed text when a source is stale | same | n/a | n/a |
 | Dedupe | situation delivered once, never twice; one scheduled collector only | same | n/a | same |
 | Logs clean | no payloads on disk, no agent output captured, only fixed marker fields | no payloads on disk, no agent output captured, only fixed marker fields | n/a | no payloads on disk |
 
-Auditing a wrapper you inherited? Six things disqualify it: it reads or matches agent output instead of the delivery counter, it diffs `budget.used`, it starts the agent inside a repository, it approves the full `proactive` profile, it loads both profiles in one conversation, or it runs `codex exec` without all narrow scheduled-profile overrides. Extract each POSIX wrapper and check it with `sh -n` before you install it.
+Auditing a wrapper you inherited? Seven things disqualify it: it reads or matches agent output instead of the delivery counter, it diffs `budget.used`, it starts the agent inside a repository, it approves the full `proactive` profile, it loads both profiles in one conversation, it runs Grok without raw-source, exact command/scope, `list`, and handshake/three-tool `doctor --json` gates, or it runs `codex exec` without all narrow scheduled-profile overrides. Extract each POSIX wrapper and check it with `sh -n` before you install it.
 
 Commands that were **not** executable in the verification environment, and are therefore sourced rather than tested: everything Claude Code Desktop-specific (not installed; sourced from Anthropic's local MCP guide and §5.3), all Windows PowerShell snippets (checked on Linux; cmdlet shapes come from Microsoft's `Register-ScheduledTask` reference), and Hermes job creation or execution. Grok, Codex, Hermes, and `proactive-mcp` command shapes were read from the installed binaries' own `--help` output at the versions listed at the top of this file. Harmless MCP and cron listings were run locally. Hermes remains Owner-only; no job or registration was created during documentation verification.

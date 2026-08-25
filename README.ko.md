@@ -88,7 +88,7 @@ Google 동의 화면은 직접 승인해 주세요. 상태는 `not_configured`, 
 
 ## 에이전트 연결
 
-에이전트가 로컬 stdio MCP 서버를 등록합니다. 일상 대화에는 `serve`만 로드하고, 별도 예약 대화에는 `serve-scheduled`만 로드합니다. 한 대화에 두 프로필을 함께 로드하지 않습니다. 기본 경로에서는 MCP add 명령을 직접 실행하거나 MCP JSON을 직접 편집하지 마세요. 호스트별 정확한 레시피, 명령 형태, 설정 예시는 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)의 에이전트용 참고 자료에 있습니다.
+에이전트가 로컬 stdio MCP 서버를 등록합니다. 일상 대화에는 `serve`만 로드하고, 별도 예약 대화에는 `serve-scheduled`만 로드합니다. 한 대화에 두 프로필을 함께 로드하지 않습니다. Grok에서는 서로 다른 project-scope 디렉터리와 예약 실행 전 raw-source·command·restricted-tool gate로 이를 강제하며 prompt 문구만으로 격리했다고 보지 않습니다. 기본 경로에서는 MCP add 명령을 직접 실행하거나 MCP JSON을 직접 편집하지 마세요. 호스트별 정확한 레시피, 명령 형태, 설정 예시는 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)의 에이전트용 참고 자료에 있습니다.
 
 다음 클라이언트에 사용할 레시피가 있습니다.
 

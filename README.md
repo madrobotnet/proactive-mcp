@@ -88,7 +88,7 @@ Repository collaborators can ask their existing agent to install from its checko
 
 ## Connect an agent
 
-Your agent registers the local stdio MCP server. It loads `serve` only in interactive everyday conversations and `serve-scheduled` only in separate scheduled conversations. It never loads both profiles into one conversation. Don't manually run an MCP add command or edit MCP JSON for the primary path. The exact host recipes, command shapes, and configuration examples are agent-facing references in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
+Your agent registers the local stdio MCP server. It loads `serve` only in interactive everyday conversations and `serve-scheduled` only in separate scheduled conversations. It never loads both profiles into one conversation. On Grok, this is enforced with distinct project-scoped directories plus a scheduled raw-source, command, and restricted-tool gate; prompt wording alone is not isolation. Don't manually run an MCP add command or edit MCP JSON for the primary path. The exact host recipes, command shapes, and configuration examples are agent-facing references in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
 Integration recipes are available for:
 

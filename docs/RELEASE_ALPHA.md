@@ -234,12 +234,21 @@ PROACTIVE_BIN="$HOME/venvs/proactive/bin/proactive-mcp"
 ```
 
 Only after the command prints `{"google":"disconnected"}` may the agent remove
-the two MCP registrations for the client in use:
+the active MCP registrations for the client in use and any legacy Grok user-scope entries:
 
 ```bash
-# Grok CLI
-grok mcp remove --scope user proactive
-grok mcp remove --scope user proactive_scheduled
+# Grok CLI: remove the project registrations from the two trusted directories.
+if [ -d "$HOME/.proactive-mcp/grok-interactive" ]; then
+  (cd "$HOME/.proactive-mcp/grok-interactive" && grok mcp remove --scope project proactive 2>/dev/null || true)
+fi
+if [ -d "$HOME/.proactive-mcp/grok-scheduled" ]; then
+  (cd "$HOME/.proactive-mcp/grok-scheduled" && grok mcp remove --scope project proactive_scheduled 2>/dev/null || true)
+fi
+# Also clean legacy user-scope entries if they exist; absence is harmless here.
+grok mcp remove --scope user proactive 2>/dev/null || true
+grok mcp remove --scope user proactive_scheduled 2>/dev/null || true
+# Restore any pre-install Claude/user registration from its backup rather than
+# deleting unrelated settings.
 ```
 
 ```bash
