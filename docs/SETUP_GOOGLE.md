@@ -433,7 +433,7 @@ uv run --directory /home/you/src/proactive-mcp proactive-mcp setup --headless
 ```
 
 ```text
-Please visit this URL to authorize this application: https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=...&redirect_uri=http%3A%2F%2F127.0.0.1%3A55787%2F&scope=...
+oauth.authorization_url https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=...&redirect_uri=http%3A%2F%2F127.0.0.1%3A55787%2F&scope=...
 ```
 
 Opening that URL on your laptop and expecting it to work is the trap. The
