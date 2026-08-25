@@ -15,7 +15,7 @@ A local-first MCP server that turns read-only signals and local memory into grou
 </div>
 
 > [!IMPORTANT]
-> **proactive-mcp is in closed alpha.** The package isn't on PyPI yet, so the public package path below is written for launch day and doesn't work today. What works right now is a source checkout or the private wheel in [Closed-alpha testers](#closed-alpha-testers).
+> **proactive-mcp is in closed alpha.** The package isn't on PyPI yet, so the public package path below is written for launch day and doesn't work today. What works right now is a source checkout or the private tester artifact in [Closed-alpha testers](#closed-alpha-testers).
 
 ## Why proactive-mcp?
 
@@ -158,7 +158,7 @@ Find safe evidence and rollback instructions in [`docs/RELEASE_ALPHA.md`](docs/R
 
 | Area | Closed alpha now | Public release target |
 |:---|:---|:---|
-| Distribution | Private wheel or source checkout | PyPI package and public repository |
+| Distribution | Private tester artifact or source checkout | PyPI package and public repository |
 | Google OAuth | Owner-provided client or BYO validation | BYO OAuth client by default |
 | Validation | Named testers, Linux automation, Owner Windows smoke | Published support matrix |
 | Data model | Local SQLite with migrations and private-path checks | Same local-first contract |

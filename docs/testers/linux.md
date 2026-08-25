@@ -2,7 +2,7 @@
 
 ## 1. 받은 것
 
-Owner에게 wheel, 다른 인증 채널의 SHA-256, 필요하면 OAuth JSON을 각각 받으세요. 알파에서는 저장소 clone, PyPI, `uvx`를 사용하지 않습니다.
+Owner에게 Linux aarch64 archive, 다른 인증 채널의 archive SHA-256, 필요하면 OAuth JSON을 각각 받으세요. archive는 `~/Downloads/proactive-mcp-alpha-linux-aarch64-py311.tar.gz`에 저장합니다. 알파에서는 저장소 clone, PyPI, `uvx`를 사용하지 않습니다.
 
 ## 2. 에이전트에게 붙여 넣기
 
@@ -13,8 +13,9 @@ Owner에게 wheel, 다른 인증 채널의 SHA-256, 필요하면 OAuth JSON을 �
 
 규칙:
 - 저장소 clone, PyPI, uvx, pip install proactive-mcp, 관리자 권한 사용, PROACTIVE_DATABASE 설정은 금지입니다.
-- wheel은 ~/Downloads/proactive_mcp-0.1.0-py3-none-any.whl에 있습니다. sha256sum으로 다른 채널에서 받은 SHA-256과 비교하고, 다르면 설치를 멈추세요.
-- Python 3.11과 uv가 없으면 사용자 권한으로 설치하세요. ~/venvs/proactive 전용 venv를 만들고 wheel만 설치하세요.
+- Linux aarch64와 Python 3.11만 지원합니다. archive는 ~/Downloads/proactive-mcp-alpha-linux-aarch64-py311.tar.gz에 있습니다. sha256sum으로 다른 채널에서 받은 archive SHA-256과 먼저 비교하고, 다르면 추출하거나 설치하지 말고 멈추세요. 맞아도 ~/Downloads/proactive-mcp-alpha/가 이미 있으면 지우거나 덮어쓰지 말고 멈춰서 알려 주세요. 경로가 없을 때만 ~/Downloads에 풀어 새 ~/Downloads/proactive-mcp-alpha/를 만드세요.
+- 새 bundle 안에서 `sha256sum --check SHA256SUMS`를 실행하세요. 이어서 `comm -3 <(awk '{print $2}' SHA256SUMS | sort) <(find wheels -maxdepth 1 -type f -printf '%p\n' | sort)`를 실행해 출력이 없는지 확인하세요. checksum이 하나라도 실패하거나 목록 비교에 출력이 있으면 venv를 만들거나 바꾸기 전에 멈추세요.
+- Python 3.11과 uv가 없으면 사용자 권한으로 설치하세요. `bundle-metadata.json`의 `project_wheel` 값을 읽고 `wheels/` 아래의 단일 파일명인지 확인한 뒤, 그 파일이 `SHA256SUMS`에 정확히 한 번 있는지 확인하세요. 모든 확인이 끝난 뒤에만 ~/venvs/proactive 전용 venv를 만들고, `uv pip install --offline --no-index --find-links ~/Downloads/proactive-mcp-alpha/wheels ~/Downloads/proactive-mcp-alpha/wheels/<project_wheel>`처럼 metadata가 지정한 정확한 wheel 경로로 설치하세요. `proactive-mcp`라는 패키지 이름만 넘기거나 네트워크, 따로 받은 wheel을 설치에 쓰지 마세요.
 - OAuth JSON이 있으면 ~/.proactive-mcp를 mode 0700으로 만들고 client_secret.json을 mode 0600으로 설치한 뒤 권한을 확인하세요. 기존 파일을 단순히 mv해서 넓은 권한을 보존하지 마세요. 없으면 제가 BYO인지 확인한 뒤 docs/SETUP_GOOGLE.md를 안내하세요.
 - 이 에이전트에 MCP를 등록하세요. 일상용은 serve, 스케줄용은 serve-scheduled입니다. 등록 설정에는 ~/를 쓰지 말고 /home/사용자명/venvs/proactive/bin/proactive-mcp 같은 절대 경로만 쓰세요.
 - 이 호스트의 세션 시작 규칙에 "새 세션마다 proactive_check를 한 번 호출하고, 결과를 받은 뒤 receipt_token이 있을 때만 confirm_delivery를 정확히 한 번 호출한다"를 넣고 새 세션에서 실제 호출을 확인하세요.

@@ -251,7 +251,7 @@ def build_bundle(
             "bundle_format": 1,
             "install_command": ["uv", "pip", "install", "--offline",
                                 "--no-index", "--find-links", "wheels",
-                                "proactive-mcp"],
+                                f"wheels/{project_wheels[0].name}"],
             "lock_sha256": _sha256(config.project_root / "uv.lock"),
             "project_wheel": project_wheels[0].name,
             "target": {

@@ -134,7 +134,7 @@ def test_build_emits_one_archive_with_installable_layout(tmp_path: Path) -> None
         "--no-index",
         "--find-links",
         "wheels",
-        "proactive-mcp",
+        f"wheels/{_PROJECT_WHEEL}",
     ]
     assert verify_bundle(root) == 2
 
