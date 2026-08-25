@@ -46,9 +46,14 @@ class InboxThreadSnapshot:
     sender_display: str | None = None
     snippet: str | None = None
     body_text: str | None = None
-    is_complete: bool = True
+    resolution_safe: bool = True
     degradation_reasons: tuple[InboxThreadDegradationReason, ...] = ()
     provider_history_cursor: str | None = None
+
+    @property
+    def is_complete(self) -> bool:
+        """Return the compatibility alias for resolution safety."""
+        return self.resolution_safe
 
 
 @dataclass(frozen=True, slots=True)

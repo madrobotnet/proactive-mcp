@@ -237,9 +237,42 @@ def test_read_inbox_threads_marks_snippet_body_fallback_as_degraded() -> None:
     # turning the successful provider read into a source coverage failure.
     snapshot = result.threads[0]
     assert snapshot.body_text == "Fallback preview"
-    assert snapshot.is_complete is False
+    assert snapshot.resolution_safe is False
     assert snapshot.degradation_reasons == ("body_snippet_fallback",)
     assert snapshot.provider_history_cursor == "12345"
     assert result.is_complete is True
     assert result.degradation_reasons == ("body_snippet_fallback",)
     assert result.resolution_excluded_thread_ids == frozenset({"thread-fallback"})
+
+
+def test_unprojectable_thread_is_excluded_without_degrading_source() -> None:
+    # Given: Gmail returns one in-range thread whose detail has no projectable date.
+    thread_id = "thread-unprojectable"
+    thread_url = f"{GMAIL_THREADS_URL}/{thread_id}"
+    listed = json.dumps({"threads": [{"id": thread_id}]}).encode()
+    detail = json.dumps(
+        {
+            "messages": [
+                {
+                    "id": "message-without-date",
+                    "labelIds": ["INBOX"],
+                }
+            ]
+        }
+    ).encode()
+    transport = FakeGmailTransport(
+        {
+            GMAIL_PROFILE_URL: {None: (200, _fixture("profile.json"))},
+            GMAIL_THREADS_URL: {None: (200, listed)},
+            thread_url: {None: (200, detail)},
+        }
+    )
+
+    # When: the complete provider read cannot project that individual thread.
+    result = _adapter(transport).read_inbox_threads()
+
+    # Then: the thread stays resolution-unsafe without degrading the whole source.
+    assert result.threads == ()
+    assert result.is_complete is True
+    assert result.degradation_reasons == ("thread_without_projectable_message",)
+    assert result.resolution_excluded_thread_ids == frozenset({thread_id})

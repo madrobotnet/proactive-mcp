@@ -117,7 +117,7 @@ def _gmail_inbox_result() -> GmailInboxReadResult:
         fetched_at=NOW.isoformat(),
         provider_history_cursor="history-2",
         page_count=1,
-        is_complete=True,
+        coverage_complete=True,
         degradation_reasons=(),
     )
 
@@ -151,7 +151,7 @@ def test_sync_records_successful_gmail_projection_and_cursor(
 def test_sync_does_not_record_degraded_projection_as_fresh(tmp_path: Path) -> None:
     degraded_gmail = replace(
         _gmail_inbox_result(),
-        is_complete=False,
+        coverage_complete=False,
         degradation_reasons=("pagination_limit",),
     )
     degraded_calendar = replace(_calendar_result(), skipped_count=1)

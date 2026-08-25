@@ -177,12 +177,11 @@ class GmailAdapter:
             )
             if snapshot is None:
                 reasons.append("thread_without_projectable_message")
-                source_is_complete = False
                 excluded_thread_ids.add(thread.id)
             else:
                 snapshots.append(snapshot)
                 reasons.extend(snapshot.degradation_reasons)
-                if not snapshot.is_complete:
+                if not snapshot.resolution_safe:
                     excluded_thread_ids.add(thread.id)
         unique_reasons = tuple(dict.fromkeys(reasons))
         return GmailInboxReadResult(
@@ -190,7 +189,7 @@ class GmailAdapter:
             fetched_at=listed.fetched_at,
             provider_history_cursor=profile.history_id,
             page_count=listed.page_count,
-            is_complete=source_is_complete,
+            coverage_complete=source_is_complete,
             request_count=1 + listed.page_count + detail_request_count,
             projected_thread_count=len(snapshots),
             excluded_thread_count=len(excluded_thread_ids),
@@ -201,7 +200,7 @@ class GmailAdapter:
                 and len(projected_threads) == len(listed.threads)
             ),
             resolution_safe_thread_ids=frozenset(
-                item.thread_id for item in snapshots if item.is_complete
+                item.thread_id for item in snapshots if item.resolution_safe
             ),
             resolution_excluded_thread_ids=frozenset(excluded_thread_ids),
         )

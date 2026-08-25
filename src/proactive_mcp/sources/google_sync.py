@@ -160,7 +160,7 @@ class GoogleSyncService:
             gmail_snapshot = SourceSnapshot(
                 generation=gmail_generation,
                 items=gmail_result.threads,
-                complete=gmail_result.is_complete,
+                complete=gmail_result.coverage_complete,
                 sync_cursor=gmail_result.provider_history_cursor,
                 warning_codes=tuple(gmail_result.degradation_reasons),
                 resolve_absent=gmail_result.allows_absent_resolution,
@@ -224,7 +224,7 @@ class GoogleSyncService:
             result = self._dependencies.gmail.read_inbox_threads()
         except (GmailError, GoogleTransportError) as error:
             return self._record_failure("gmail", error.error_code)
-        if result.is_complete:
+        if result.coverage_complete:
             self._dependencies.store.record_sync_success(
                 "gmail",
                 sync_cursor=result.provider_history_cursor,
