@@ -19,6 +19,7 @@ from typing import (
 from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp.cli.daemon import run_daemon
+from proactive_mcp.cli.service import ServiceAction, run_service
 from proactive_mcp.config import ConfigError
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server import build_status, create_server, server
@@ -41,7 +42,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 Command: TypeAlias = Literal[
-    "serve", "serve-scheduled", "status", "setup", "google-smoke", "daemon"
+    "serve", "serve-scheduled", "status", "setup", "google-smoke", "daemon",
+    "service",
 ]
 _CLIENT_SECRETS_ENV: Final = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
 _GOOGLE_ERRORS: Final = (
@@ -68,6 +70,7 @@ class _CliArguments(BaseModel):
     confirm_real_account_read: bool = False
     once: bool = False
     poll_interval_minutes: float | None = None
+    service_action: ServiceAction = "status"
 
 
 class _GoogleSmokeSourceResponse(BaseModel):
@@ -203,6 +206,10 @@ def _parser() -> argparse.ArgumentParser:
         metavar="MINUTES",
         help="override the configured watcher poll interval",
     )
+    service = subparsers.add_parser("service", help="manage the watcher service")
+    service_actions = service.add_subparsers(dest="service_action", required=True)
+    for action in ("install", "status", "remove"):
+        _ = service_actions.add_parser(action)
     return parser
 
 
@@ -226,6 +233,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_server()
             case "serve-scheduled":
                 run_scheduled_server()
+            case "service":
+                return run_service(arguments.service_action)
             case "status":
                 _status()
             case "setup":

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -47,6 +48,7 @@ from tests.daemon_test_support import (
 from tests.situation_test_support import FakeClock, utc_datetime
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     import pytest
@@ -395,6 +397,52 @@ def test_sigint_stops_the_continuous_scheduler_without_waiting() -> None:
         _ = signal.signal(signal.SIGTERM, previous_term)
 
 
+def test_notify_service_ready_sends_systemd_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a systemd notification socket subscribed before daemon startup.
+    notify_socket = tmp_path / "notify.sock"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
+        receiver.bind(str(notify_socket))
+        receiver.settimeout(1)
+        monkeypatch.setenv("NOTIFY_SOCKET", str(notify_socket))
+
+        # When: the daemon announces that startup ownership is persisted.
+        daemon_cli.notify_service_ready()
+
+        # Then: systemd receives its readiness event synchronously.
+        assert receiver.recv(64) == b"READY=1"
+
+
+def test_service_notify_failure_is_redacted_and_releases_heartbeat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: systemd readiness notification fails with untrusted details.
+    database = tmp_path / "proactive.db"
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
+
+    def fail_notify() -> NoReturn:
+        raise _UntrustedPhaseError
+
+    monkeypatch.setattr(daemon_cli, "notify_service_ready", fail_notify)
+
+    # When: the continuous daemon reaches its readiness boundary.
+    result = cli.main(["daemon"])
+    captured = capsys.readouterr()
+
+    # Then: the failure is bounded and the aborted owner is stopped.
+    with Store(database) as store:
+        liveness = store.daemon.status().liveness
+    assert result == 2
+    assert captured.out == ""
+    assert json.loads(captured.err) == {"phase": "service", "code": "notify_failed"}
+    assert "canary" not in captured.err
+    assert liveness == "stopped"
+
+
 def test_once_subprocess_exits_without_hanging_and_stays_pii_free(
     tmp_path: Path,
 ) -> None:
@@ -610,7 +658,7 @@ def test_heartbeat_failure_emits_only_phase_and_code(
         del poll_interval
         raise _UntrustedPhaseError
 
-    monkeypatch.setattr(DaemonStatusStore, "record_start", fail_heartbeat)
+    monkeypatch.setattr(DaemonStatusStore, "try_record_start", fail_heartbeat)
 
     # When: the daemon starts one pass.
     result = cli.main(["daemon", "--once"])
@@ -659,8 +707,9 @@ def test_runtime_ownership_conflict_emits_only_phase_and_code(
         _pid: int,
         *,
         poll_interval: timedelta | None = None,
+        incumbent_is_alive: Callable[[int], bool] | None = None,
     ) -> bool:
-        del poll_interval
+        del poll_interval, incumbent_is_alive
         return False
 
     monkeypatch.setattr(DaemonStatusStore, "try_record_start", reject)
@@ -676,3 +725,42 @@ def test_runtime_ownership_conflict_emits_only_phase_and_code(
         "phase": "runtime_ownership",
         "code": "ownership_conflict",
     }
+
+
+def test_continuous_daemon_reclaims_dead_owner_after_systemd_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given: a crashed daemon left a fresh running row behind.
+    database = tmp_path / "proactive.db"
+    clock = FakeClock(_START)
+    with Store(database, clock=clock) as crashed:
+        assert crashed.daemon.try_record_start(
+            pid=4242,
+            poll_interval=timedelta(minutes=_CONFIG_MINUTES),
+        )
+    scheduler = RecordingScheduler(stop_after=1)
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
+    monkeypatch.setattr(daemon_cli, "daemon_clock", lambda: clock)
+    monkeypatch.setattr(daemon_cli, "stopping_scheduler", lambda: scheduler)
+
+    def process_is_dead(_pid: int) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        daemon_cli,
+        "_process_is_alive",
+        process_is_dead,
+        raising=False,
+    )
+
+    # When: systemd starts a replacement before the old heartbeat expires.
+    result = cli.main(["daemon"])
+    with Store(database, clock=clock) as store:
+        status = store.daemon.status()
+
+    # Then: the dead owner is replaced and the new daemon runs one clean cycle.
+    assert result == 0
+    assert status.pid == os.getpid()
+    assert status.liveness == "stopped"
+    assert status.cycle_count == 1

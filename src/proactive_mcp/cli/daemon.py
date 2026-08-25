@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -53,6 +54,7 @@ __all__ = [
     "DaemonOnceResponse",
     "bind_stop_signals",
     "daemon_clock",
+    "notify_service_ready",
     "open_watcher_daemon",
     "run_daemon",
     "stopping_scheduler",
@@ -94,6 +96,27 @@ def stopping_scheduler() -> Scheduler:
     scheduler = EventScheduler()
     bind_stop_signals(scheduler)
     return scheduler
+
+
+def notify_service_ready() -> None:
+    """Notify systemd after startup ownership is durably recorded."""
+    configured = os.environ.get("NOTIFY_SOCKET")
+    if configured is None:
+        return
+    address = f"\0{configured[1:]}" if configured.startswith("@") else configured
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notifier:
+        notifier.connect(address)
+        notifier.sendall(b"READY=1")
+
+
+def _process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,25 +168,41 @@ def run_daemon(*, once: bool, poll_interval_minutes: float | None) -> int:
     """Run the watcher once, or until SIGINT/SIGTERM."""
     paths = resolve_paths(os.environ)
     clock = daemon_clock()
+    result = 0
     try:
         override = _poll_override(poll_interval_minutes)
         config = load_config(paths.config)
         interval = config.daemon.poll_interval if override is None else override
         with Store(paths.database, clock=clock) as store:
             daemon = open_watcher_daemon(store, clock)
-            # Persist the effective CLI/config cadence before the library start
-            # so a later same-owner claim keeps this interval on the liveness row.
-            run_daemon_phase(
+            # Persist cadence before the library's idempotent same-owner claim.
+            claimed = run_daemon_phase(
                 DaemonFailureKind.HEARTBEAT_FAILED,
-                lambda: store.daemon.record_start(
+                lambda: store.daemon.try_record_start(
                     os.getpid(),
                     poll_interval=interval,
+                    incumbent_is_alive=_process_is_alive,
                 ),
             )
-            if once:
+            if not claimed:
+                result = _emit_failure(DaemonFailureKind.OWNERSHIP_CONFLICT)
+            elif once:
                 _emit_once(daemon.run_once())
-                return 0
-            _ = daemon.run_forever(DaemonSchedule(stopping_scheduler(), interval))
+            else:
+                try:
+                    run_daemon_phase(
+                        DaemonFailureKind.SERVICE_NOTIFY_FAILED,
+                        notify_service_ready,
+                    )
+                except DaemonFailureError:
+                    run_daemon_phase(
+                        DaemonFailureKind.HEARTBEAT_FAILED,
+                        store.daemon.record_stop,
+                    )
+                    raise
+                _ = daemon.run_forever(
+                    DaemonSchedule(stopping_scheduler(), interval)
+                )
     except ConfigError:
         return _emit_failure(DaemonFailureKind.CONFIG_INVALID)
     except UnsafeDatabasePathError:
@@ -172,7 +211,7 @@ def run_daemon(*, once: bool, poll_interval_minutes: float | None) -> int:
         return _emit_failure(DaemonFailureKind.DATABASE_OPEN_FAILED)
     except DaemonFailureError as failure:
         return _emit_diagnostic(failure)
-    return 0
+    return result
 
 
 def _emit_failure(kind: DaemonFailureKind) -> int:

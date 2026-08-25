@@ -45,11 +45,11 @@ __all__ = [
 
 DaemonFailurePhase = Literal[
     "config", "database", "credential", "source_sync", "evaluation",
-    "notification", "heartbeat", "runtime_ownership",
+    "notification", "heartbeat", "runtime_ownership", "service",
 ]
 DaemonFailureCode = Literal[
     "invalid", "unsafe_path", "open_failed", "unavailable", "failed",
-    "ownership_conflict",
+    "ownership_conflict", "notify_failed",
 ]
 _T = TypeVar("_T")
 
@@ -72,6 +72,7 @@ class DaemonFailureKind(Enum):
     NOTIFICATION_FAILED = _FailureIdentity("notification", "failed")
     HEARTBEAT_FAILED = _FailureIdentity("heartbeat", "failed")
     OWNERSHIP_CONFLICT = _FailureIdentity("runtime_ownership", "ownership_conflict")
+    SERVICE_NOTIFY_FAILED = _FailureIdentity("service", "notify_failed")
 
 
 @final

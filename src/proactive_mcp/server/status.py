@@ -71,11 +71,11 @@ class DaemonDiagnosticResponse(BaseModel):
 
     phase: Literal[
         "config", "database", "credential", "source_sync", "evaluation",
-        "notification", "heartbeat", "runtime_ownership",
+        "notification", "heartbeat", "runtime_ownership", "service",
     ]
     code: Literal[
         "invalid", "unsafe_path", "open_failed", "unavailable", "failed",
-        "ownership_conflict",
+        "ownership_conflict", "notify_failed",
     ]
 
 
