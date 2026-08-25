@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 from ._delivery_eligibility import (
+    CURRENT_SOURCE_ELIGIBILITY,
     reserved_non_reply_slots_for_claim,
     reserved_non_reply_slots_for_reservation,
 )
@@ -26,9 +27,7 @@ _MAX_DELIVERY_CANDIDATES: Final[int] = 100
 
 
 def claim_for_delivery(
-    connection: sqlite3.Connection,
-    reader: SituationReader,
-    claim: DeliveryClaim,
+    connection: sqlite3.Connection, reader: SituationReader, claim: DeliveryClaim
 ) -> tuple[Situation, ...]:
     """Atomically enforce suppression and claim only rows this call owns."""
     claimed: list[Situation] = []
@@ -45,12 +44,13 @@ def claim_for_delivery(
             if not claim.allow_noncritical and candidate.priority != "critical":
                 continue
             cursor = connection.execute(
-                """
+                f"""
                 UPDATE situations
                 SET state = 'delivered', delivered_at = ?, updated_at = ?,
                     snoozed_until = NULL, snooze_cooldown_exempt = 0
                 WHERE id = ? AND state = 'pending'
                   AND (expires_at IS NULL OR expires_at > ?)
+                  {CURRENT_SOURCE_ELIGIBILITY}
                   AND NOT EXISTS (
                       SELECT 1 FROM situation_type_mutes
                       WHERE situation_type = situations.situation_type
@@ -77,7 +77,7 @@ def claim_for_delivery(
                              AND deliveries.priority != 'critical'
                              AND delivered.situation_type = 'reply_deadline'
                        ) < MAX(0, ? - ?))
-                """,
+                """,  # noqa: S608
                 (
                     claim.delivered_at,
                     claim.delivered_at,
@@ -104,9 +104,7 @@ def claim_for_delivery(
 
 
 def reserve_for_delivery(
-    connection: sqlite3.Connection,
-    reader: SituationReader,
-    claim: DeliveryClaim,
+    connection: sqlite3.Connection, reader: SituationReader, claim: DeliveryClaim,
     *,
     claim_token: str,
     expires_at: str,
@@ -128,13 +126,14 @@ def reserve_for_delivery(
             if not claim.allow_noncritical and candidate.priority != "critical":
                 continue
             cursor = connection.execute(
-                """
+                f"""
                 INSERT INTO situation_delivery_claims(
                     claim_token, situation_id, claimed_at, expires_at
                 )
                 SELECT ?, id, ?, ? FROM situations
                 WHERE id = ? AND state = 'pending'
                   AND (expires_at IS NULL OR expires_at > ?)
+                  {CURRENT_SOURCE_ELIGIBILITY}
                   AND NOT EXISTS (
                       SELECT 1 FROM situation_delivery_claims
                       WHERE situation_id = situations.id
@@ -180,7 +179,7 @@ def reserve_for_delivery(
                               AND claimed.priority != 'critical'
                               AND claimed.situation_type = 'reply_deadline')
                        ) < MAX(0, ? - ?))
-                """,
+                """,  # noqa: S608
                 (
                     claim_token,
                     claim.delivered_at,

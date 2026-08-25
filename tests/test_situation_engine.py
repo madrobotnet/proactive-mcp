@@ -318,6 +318,80 @@ def test_calendar_overflow_is_degraded_and_preserves_existing_truth(
         store.close()
 
 
+def test_degraded_gmail_generation_preserves_rows_and_independent_sources(
+    tmp_path: Path,
+) -> None:
+    # Given: complete Gmail, Calendar, and local detections are persisted together.
+    store, engine, clock = _open_engine(tmp_path)
+    try:
+        clock.set(utc_datetime(2026, 7, 11, 9))
+        _ = store.remember(
+            NewMemory(
+                kind="fact",
+                entity="Mother",
+                entity_kind="person",
+                attribute="birthday",
+                content="Fixture birthday",
+                date_anchor="--07-18",
+                recurrence="yearly",
+                lead_days=7,
+            )
+        )
+        thread = situations.InboxThreadSnapshot(
+            thread_id="generation-thread",
+            latest_message_id="generation-message",
+            latest_from_user=False,
+            user_is_recipient=True,
+            latest_message_at=clock.now() - timedelta(hours=49),
+        )
+        initial = engine.evaluate(
+            situations.EngineInputs(
+                gmail_threads=_gmail_snapshot(store, (thread,)),
+                calendar_events=_calendar_snapshot(
+                    store,
+                    _conflicting_events(clock.now()),
+                ),
+            )
+        )
+        assert initial.created == 3
+
+        # When: a newer Gmail generation is degraded while Calendar stays complete.
+        degraded = engine.evaluate(
+            situations.EngineInputs(
+                gmail_threads=_gmail_snapshot(store, (), complete=False),
+                calendar_events=_calendar_snapshot(
+                    store,
+                    _conflicting_events(clock.now()),
+                ),
+            )
+        )
+        stored = store.situations.list_situations(limit=10)
+
+        # Then: source generations persist independently and no Gmail row is deleted.
+        gmail_state = store.source_generation_state("gmail")
+        calendar_state = store.source_generation_state("calendar")
+        assert degraded.resolved == 0
+        assert (gmail_state.issued, gmail_state.applied, gmail_state.status) == (
+            2,
+            2,
+            "degraded",
+        )
+        calendar_generation = (
+            calendar_state.issued,
+            calendar_state.applied,
+            calendar_state.status,
+        )
+        assert calendar_generation == (2, 2, "complete")
+        assert {item.situation_type for item in stored} == {
+            "reply_deadline",
+            "calendar_conflict",
+            "personal_occasion",
+        }
+        assert all(item.state == "pending" for item in stored)
+    finally:
+        store.close()
+
+
 def test_stale_gmail_does_not_block_local_personal_occasion(tmp_path: Path) -> None:
     # Given: a D-7 yearly memory while Gmail has no source snapshot.
     store, engine, clock = _open_engine(tmp_path)

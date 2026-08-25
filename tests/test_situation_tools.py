@@ -24,6 +24,7 @@ from proactive_mcp.store import (
     DaemonStatus,
     DaemonStatusStore,
     DeliveryReceiptError,
+    Detection,
     InvalidSituationTransitionError,
     SituationEvidence,
     SituationNotFoundError,
@@ -341,6 +342,125 @@ def test_reply_flood_cannot_starve_non_reply_budget_capacity(tmp_path: Path) -> 
     assert any(
         item.situation_type == "calendar_conflict" for item in response.situations
     )
+
+
+def test_proactive_check_excludes_gmail_after_newer_failed_generation(
+    tmp_path: Path,
+) -> None:
+    # Given: a complete Gmail generation produced one pending reply deadline.
+    with open_harness(tmp_path, _NOON, "already_fresh") as harness:
+        gmail = Detection(
+            situation_type="reply_deadline",
+            dedupe_key="gmail-generation-row",
+            priority="routine",
+            title="Fixture reply deadline",
+            why_now="Fixture delivery candidate",
+            evidence=SituationEvidence(facts={"thread_id": "generation-thread"}),
+        )
+        first_generation = harness.store.reserve_source_generation("gmail")
+        _ = harness.store.situations.apply_source_generation(
+            first_generation,
+            (gmail,),
+            status="complete",
+        )
+        _ = harness.store.situations.upsert_detections(
+            (pending_detection("independent-calendar"),)
+        )
+
+        # When: a newer Gmail generation fails before proactive_check claims rows.
+        failed_generation = harness.store.reserve_source_generation("gmail")
+        _ = harness.store.situations.apply_source_generation(
+            failed_generation,
+            (),
+            status="degraded",
+            error_code="network",
+        )
+        failed_response = harness.service.proactive_check()
+        stored_during_failure = harness.store.situations.list_situations(limit=10)
+        failed_state = harness.store.source_generation_state("gmail")
+        assert failed_response.receipt_token is not None
+        _ = harness.service.confirm_delivery(failed_response.receipt_token)
+
+        # When: the same Gmail truth returns in a later complete generation.
+        recovery_generation = harness.store.reserve_source_generation("gmail")
+        _ = harness.store.situations.apply_source_generation(
+            recovery_generation,
+            (gmail,),
+            status="complete",
+        )
+        recovered = harness.service.proactive_check()
+        assert recovered.receipt_token is not None
+        _ = harness.service.confirm_delivery(recovered.receipt_token)
+        repeated = harness.service.proactive_check()
+        stored_after_recovery = harness.store.situations.list_situations(limit=10)
+
+    # Then: failure gates only Gmail; recovery offers its preserved row exactly once.
+    assert (first_generation.number, failed_generation.number) == (1, 2)
+    assert (failed_state.issued, failed_state.applied, failed_state.status) == (
+        2,
+        2,
+        "degraded",
+    )
+    assert tuple(item.situation_type for item in failed_response.situations) == (
+        "calendar_conflict",
+    )
+    assert failed_response.held_count == 1
+    assert failed_response.warnings
+    assert failed_response.all_clear is False
+    assert {item.situation_type for item in stored_during_failure} == {
+        "reply_deadline",
+        "calendar_conflict",
+    }
+    assert tuple(item.situation_type for item in recovered.situations) == (
+        "reply_deadline",
+    )
+    assert recovery_generation.number == 3
+    assert repeated.situations == ()
+    assert sum(
+        item.situation_type == "reply_deadline" for item in stored_after_recovery
+    ) == 1
+
+
+def test_proactive_check_excludes_gmail_during_interrupted_newer_generation(
+    tmp_path: Path,
+) -> None:
+    # Given: complete Gmail truth and an independent Calendar row.
+    with open_harness(tmp_path, _NOON, "already_fresh") as harness:
+        gmail = Detection(
+            situation_type="reply_deadline",
+            dedupe_key="interrupted-gmail-row",
+            priority="routine",
+            title="Fixture reply deadline",
+            why_now="Fixture delivery candidate",
+            evidence=SituationEvidence(facts={"thread_id": "interrupted-thread"}),
+        )
+        complete_generation = harness.store.reserve_source_generation("gmail")
+        _ = harness.store.situations.apply_source_generation(
+            complete_generation,
+            (gmail,),
+            status="complete",
+        )
+        _ = harness.store.situations.upsert_detections(
+            (pending_detection("interrupted-calendar"),)
+        )
+
+        # When: the next generation is reserved but interrupted before acceptance.
+        interrupted_generation = harness.store.reserve_source_generation("gmail")
+        response = harness.service.proactive_check()
+        generation_state = harness.store.source_generation_state("gmail")
+        stored = harness.store.situations.list_situations(limit=10)
+
+    # Then: prior accepted Gmail truth cannot cross the in-flight generation.
+    assert (complete_generation.number, interrupted_generation.number) == (1, 2)
+    assert (
+        generation_state.issued,
+        generation_state.applied,
+        generation_state.status,
+    ) == (2, 1, "complete")
+    assert tuple(item.situation_type for item in response.situations) == (
+        "calendar_conflict",
+    )
+    assert sum(item.situation_type == "reply_deadline" for item in stored) == 1
 
 
 def test_proactive_check_never_reports_all_clear_while_a_source_is_not_ok(
