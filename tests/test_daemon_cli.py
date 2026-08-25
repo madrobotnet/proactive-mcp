@@ -8,10 +8,9 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import TYPE_CHECKING, Final, NoReturn
+from typing import TYPE_CHECKING, Final, NoReturn, Self
 
 from proactive_mcp import cli
 from proactive_mcp.cli import daemon as daemon_cli
@@ -52,6 +51,7 @@ from tests.situation_test_support import FakeClock, utc_datetime
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     import pytest
 
@@ -68,6 +68,29 @@ _UNTRUSTED_ERROR_TEXT: Final = "phase-canary /private/path SELECT secret bearer 
 class _UntrustedPhaseError(RuntimeError):
     def __init__(self) -> None:
         super().__init__(_UNTRUSTED_ERROR_TEXT)
+
+
+@dataclass(slots=True)
+class _RecordingNotifySocket:
+    connected: str | bytes | None = None
+    payload: bytes | None = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: object,
+        _exc_value: object,
+        _traceback: object,
+    ) -> None:
+        return None
+
+    def connect(self, address: str | bytes) -> None:
+        self.connected = address
+
+    def sendall(self, payload: bytes) -> None:
+        self.payload = payload
 
 
 def _keep_daemon_row_running(_heartbeat: DaemonStatusStore) -> None:
@@ -401,21 +424,25 @@ def test_notify_service_ready_sends_systemd_readiness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: a systemd notification socket subscribed before daemon startup.
-    notify_socket = Path(tempfile.gettempdir()) / f"pmcp-{os.getpid()}.sock"
-    notify_socket.unlink(missing_ok=True)
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
-            receiver.bind(str(notify_socket))
-            receiver.settimeout(1)
-            monkeypatch.setenv("NOTIFY_SOCKET", str(notify_socket))
+    notifier = _RecordingNotifySocket()
 
-            # When: the daemon announces that startup ownership is persisted.
-            daemon_cli.notify_service_ready()
+    def open_notifier(
+        family: socket.AddressFamily,
+        kind: socket.SocketKind,
+    ) -> _RecordingNotifySocket:
+        assert family is socket.AF_UNIX
+        assert kind is socket.SOCK_DGRAM
+        return notifier
 
-            # Then: systemd receives its readiness event synchronously.
-            assert receiver.recv(64) == b"READY=1"
-    finally:
-        notify_socket.unlink(missing_ok=True)
+    monkeypatch.setenv("NOTIFY_SOCKET", "/run/user/1000/notify")
+    monkeypatch.setattr(socket, "socket", open_notifier)
+
+    # When: the daemon announces that startup ownership is persisted.
+    daemon_cli.notify_service_ready()
+
+    # Then: systemd receives its readiness event synchronously.
+    assert notifier.connected == "/run/user/1000/notify"
+    assert notifier.payload == b"READY=1"
 
 
 def test_service_notify_failure_is_redacted_and_releases_heartbeat(

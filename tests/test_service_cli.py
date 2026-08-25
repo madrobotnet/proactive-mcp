@@ -4,12 +4,16 @@ import hashlib
 import os
 import subprocess
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
+from io import StringIO
 from typing import TYPE_CHECKING, ClassVar, Literal
+from unittest.mock import patch
 
 from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp import cli
+from proactive_mcp.cli import service as service_cli
 from proactive_mcp.store import Store
 
 if TYPE_CHECKING:
@@ -56,6 +60,65 @@ class _ServiceResponse(BaseModel):
     )
 
 
+@dataclass(slots=True)
+class _FakeSystemdManager:
+    state: Path
+    fail_enable: bool = False
+    enabled: bool = False
+    active: bool = False
+
+    def reload(self) -> bool:
+        return True
+
+    def enable(self) -> bool:
+        if self.fail_enable:
+            return False
+        self.enabled = True
+        self._sync()
+        return True
+
+    def start(self) -> bool:
+        self.active = True
+        self._sync()
+        return True
+
+    def stop(self) -> bool:
+        self.active = False
+        self._sync()
+        return True
+
+    def disable(self) -> bool:
+        self.enabled = False
+        self._sync()
+        return True
+
+    def is_enabled(self) -> bool:
+        return self.enabled
+
+    def is_active(self) -> bool:
+        return self.active
+
+    def main_pid(self) -> int:
+        return _PID
+
+    def linger(self) -> Literal["enabled"]:
+        return "enabled"
+
+    def _sync(self) -> None:
+        values = [
+            value
+            for value, selected in (
+                ("enabled", self.enabled),
+                ("active", self.active),
+            )
+            if selected
+        ]
+        if values:
+            _ = self.state.write_text("\n".join(values) + "\n", encoding="utf-8")
+        else:
+            self.state.unlink(missing_ok=True)
+
+
 @dataclass(frozen=True, slots=True)
 class _Harness:
     root: Path
@@ -63,13 +126,39 @@ class _Harness:
     unit: Path
     state: Path
     env: dict[str, str]
+    manager: _FakeSystemdManager
+
+
+def _run_cli_in_process(
+    harness: _Harness,
+    action: str,
+) -> subprocess.CompletedProcess[str]:
+    stdout = StringIO()
+    stderr = StringIO()
+    arguments = ["proactive-mcp", "service", action]
+    with (
+        patch.dict(os.environ, harness.env, clear=True),
+        patch.object(sys, "platform", "linux"),
+        patch.object(service_cli, "_MANAGER", harness.manager),
+        redirect_stdout(stdout),
+        redirect_stderr(stderr),
+    ):
+        returncode = cli.main(["service", action])
+    return subprocess.CompletedProcess(
+        arguments,
+        returncode,
+        stdout.getvalue(),
+        stderr.getvalue(),
+    )
 
 
 def _run_cli(harness: _Harness, action: str) -> subprocess.CompletedProcess[str]:
+    if os.name == "nt":
+        return _run_cli_in_process(harness, action)
     command = (
+        "from proactive_mcp.cli import entrypoint; "
         "import sys; "
         "sys.platform = 'linux'; "
-        "from proactive_mcp.cli import entrypoint; "
         "entrypoint()"
     )
     return subprocess.run(
@@ -145,7 +234,8 @@ esac
     }
     if fail_enable:
         env["SERVICE_FAKE_FAIL_ENABLE"] = "1"
-    return _Harness(tmp_path, database, unit, state, env)
+    manager = _FakeSystemdManager(state, fail_enable=fail_enable)
+    return _Harness(tmp_path, database, unit, state, env, manager)
 
 
 def _record_running(database: Path) -> None:
@@ -178,6 +268,23 @@ def test_service_help_exposes_install_status_and_remove() -> None:
     assert "install" in result.stdout
     assert "status" in result.stdout
     assert "remove" in result.stdout
+
+
+def test_portable_in_process_harness_exercises_linux_contract(tmp_path: Path) -> None:
+    # Given: the cross-platform harness selects the Linux service contract.
+    harness = _make_harness(tmp_path)
+    _record_running(harness.database)
+
+    # When: installation uses the in-process manager used by Windows CI.
+    result = _run_cli_in_process(harness, "install")
+
+    # Then: it preserves the same managed lifecycle response as POSIX CI.
+    response = _response(result)
+    assert result.returncode == 0
+    assert response.state == "installed"
+    assert response.enabled is True
+    assert response.active is True
+    assert response.main_pid == _PID
 
 
 def test_install_writes_absolute_managed_restartable_unit(tmp_path: Path) -> None:
