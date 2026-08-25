@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from threading import Barrier
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -38,6 +40,7 @@ from tests.memory_tools_stdio import json_text, memory_session
 from tests.situation_test_support import FakeClock, utc_datetime
 from tests.situation_tool_support import (
     UNTRUSTED_SUBJECT,
+    BarrierClock,
     deliver_one,
     error_text,
     open_harness,
@@ -133,6 +136,56 @@ def test_rapid_proactive_checks_coalesce_expensive_evaluation(tmp_path: Path) ->
     assert evaluation.calls == 1
 
 
+def test_concurrent_daily_and_scheduled_checks_lease_once_then_recover(
+    tmp_path: Path,
+) -> None:
+    # Given: two service instances poised to reserve the same one-row budget.
+    write_config(tmp_path, daily_budget=1)
+    with open_harness(tmp_path, _NOON, "already_fresh") as harness:
+        harness.store.set_google_auth_state("configured")
+        harness.store.record_sync_success("gmail")
+        harness.store.record_sync_success("calendar")
+        _ = harness.store.situations.upsert_detections(
+            (pending_detection("concurrent-lease"),)
+        )
+
+    barrier = Barrier(2)
+
+    def check_once() -> ProactiveCheckResponse:
+        with open_harness(tmp_path, _NOON, "already_fresh") as harness:
+            service = SituationToolService(
+                replace(
+                    harness.dependencies,
+                    clock=BarrierClock(harness.clock, barrier),
+                )
+            )
+            return service.proactive_check()
+
+    # When: daily and scheduled callers race, and the winner exits unconfirmed.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (executor.submit(check_once), executor.submit(check_once))
+    responses = tuple(future.result(timeout=20) for future in futures)
+    winner = next(response for response in responses if response.situations)
+    loser = next(response for response in responses if not response.situations)
+
+    # Then: only the winner owns a token, while the loser sees held work.
+    assert winner.receipt_token is not None
+    assert loser.receipt_token is None
+    assert loser.held_count == 1
+    assert loser.all_clear is False
+
+    recovery_time = _NOON + timedelta(minutes=3)
+    with open_harness(tmp_path, recovery_time, "already_fresh") as harness:
+        assert harness.store.situations.count_deliveries() == 0
+        recovered = harness.service.proactive_check()
+
+    assert tuple(item.id for item in recovered.situations) == (
+        winner.situations[0].id,
+    )
+    assert recovered.receipt_token is not None
+    assert recovered.budget.used == 1
+
+
 def test_unconfirmed_delivery_lease_expires_back_to_pending(tmp_path: Path) -> None:
     with open_harness(tmp_path, _NOON) as harness:
         _ = harness.store.situations.upsert_detections((pending_detection("receipt"),))
@@ -172,6 +225,22 @@ def test_one_row_receipt_confirmation_reports_one_delivery(tmp_path: Path) -> No
     assert confirmation.delivered_count == 1
     assert len(delivered.items) == 1
     assert delivery_events == 1
+
+
+def test_receipt_confirmation_rejects_same_token_replay(tmp_path: Path) -> None:
+    # Given: one receipt already consumed by a successful confirmation.
+    with open_harness(tmp_path, _NOON) as harness:
+        _ = harness.store.situations.upsert_detections(
+            (pending_detection("receipt-replay"),)
+        )
+        reservation = harness.service.proactive_check()
+        assert reservation.receipt_token is not None
+        _ = harness.service.confirm_delivery(reservation.receipt_token)
+
+        # When/Then: replay cannot deliver or charge the same row again.
+        with pytest.raises(DeliveryReceiptError):
+            _ = harness.service.confirm_delivery(reservation.receipt_token)
+        assert harness.store.situations.count_deliveries() == 1
 
 
 @pytest.mark.parametrize("situation_count", [1, 3, 100])
