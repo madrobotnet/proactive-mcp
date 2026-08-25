@@ -35,6 +35,7 @@ from proactive_mcp.sources import (
     GoogleReadSmokeDisabledError,
     GoogleReadSummary,
     GoogleSetupOptions,
+    GoogleSourceConfigurationError,
     MissingGoogleCredentialsError,
     MissingRefreshTokenError,
     OAuthClientConfigError,
@@ -42,7 +43,7 @@ from proactive_mcp.sources import (
     disconnect_google_sources,
     run_google_read_smoke,
 )
-from proactive_mcp.store import SourceErrorCode  # noqa: TC001
+from proactive_mcp.store import ReceiptErasurePendingError, SourceErrorCode
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,7 +69,9 @@ _GOOGLE_ERRORS: Final = (
     MissingGoogleCredentialsError,
     MissingRefreshTokenError,
     OAuthClientConfigError,
+    GoogleSourceConfigurationError,
 )
+_EXPECTED_ERRORS: Final = (*_GOOGLE_ERRORS, ReceiptErasurePendingError)
 
 
 class _CliArguments(BaseModel):
@@ -283,7 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_google_smoke(arguments)
             case _:
                 assert_never(arguments.command)
-    except _GOOGLE_ERRORS as error:
+    except _EXPECTED_ERRORS as error:
         _ = sys.stderr.write(f"error: {error}\n")
         return 2
     return 0

@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import webbrowser
@@ -24,7 +25,12 @@ from proactive_mcp.sources import (
     GoogleSyncService,
 )
 from proactive_mcp.sources.credentials import CredentialStore
-from proactive_mcp.store import SourceErrorCode, Store
+from proactive_mcp.store import (
+    ReceiptErasurePendingError,
+    SourceErrorCode,
+    Store,
+    UnsafeDatabasePathError,
+)
 from tests.test_google_oauth import (
     FIXTURES,
     ErrorInstalledAppFlow,
@@ -182,6 +188,28 @@ def test_disconnect_deletes_google_authorization_for_selected_state(
     assert disconnected == [database_path]
     assert json.loads(captured.out) == {"google": "disconnected"}
     assert captured.err == ""
+
+
+def test_shared_cli_boundary_redacts_pending_erasure_for_disconnect(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def pending_erasure(_path: Path) -> None:
+        raise ReceiptErasurePendingError
+
+    monkeypatch.setattr(cli, "disconnect_google_sources", pending_erasure)
+
+    result = cli.main(["disconnect"])
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "error: receipt erasure is blocked; close older processes and retry\n"
+    )
+    assert "Traceback" not in captured.err
+    assert "ReceiptErasurePendingError" not in captured.err
 
 
 def test_setup_reports_a_safe_error_for_invalid_client_secrets(tmp_path: Path) -> None:
@@ -486,6 +514,128 @@ def test_headless_setup_emits_single_url_and_success_when_authorization_complete
     assert result == 0
     assert count_authorization_url_events(captured.out, captured.err) == 1
     assert count_setup_success_events(captured.out, captured.err) == 1
+    with Store(tmp_path / "state.db") as store:
+        assert tuple(state.auth_state for state in store.list_source_sync()) == (
+            "configured",
+            "configured",
+        )
+
+
+@pytest.mark.parametrize(
+    ("failure_phase", "storage_error"),
+    [
+        (
+            "open",
+            OSError("open-/private/path-canary provider-canary token-canary"),
+        ),
+        (
+            "write",
+            sqlite3.OperationalError(
+                "write-/private/path-canary provider-canary token-canary"
+            ),
+        ),
+        (
+            "open",
+            UnsafeDatabasePathError(
+                Path("/private/path-canary"),
+                "unsafe-provider-canary-token-canary",
+            ),
+        ),
+        ("open", ReceiptErasurePendingError()),
+    ],
+)
+def test_setup_entrypoint_redacts_post_authorization_storage_failures(
+    failure_phase: str,
+    storage_error: Exception,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "state.db"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "proactive-mcp",
+            "setup",
+            "--client-secrets",
+            str(FIXTURES / "installed-client.json"),
+        ],
+    )
+    _install_fake_authorizer(monkeypatch, FakeInstalledAppFlow(google_credential()))
+
+    class FailingStore:
+        def __init__(self, _path: Path) -> None:
+            if failure_phase == "open":
+                raise storage_error
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def set_google_auth_state(self, _state: str) -> None:
+            raise storage_error
+
+    monkeypatch.setattr(sources, "Store", FailingStore)
+
+    with pytest.raises(SystemExit) as raised:
+        cli.entrypoint()
+    captured = capsys.readouterr()
+
+    assert raised.value.code == 2
+    assert count_setup_success_events(captured.out, captured.err) == 0
+    assert captured.err == "error: Google setup could not be saved; run setup again\n"
+    combined = captured.out + captured.err
+    assert "Traceback" not in combined
+    assert type(storage_error).__name__ not in combined
+    assert str(tmp_path) not in combined
+    assert "/private/" not in combined
+    assert "provider-canary" not in combined
+    assert "token-canary" not in combined
+
+
+def test_setup_state_write_failure_rolls_back_both_auth_states(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    database = tmp_path / "state.db"
+    with Store(database) as store:
+        store.set_google_auth_state("not_configured")
+        _ = store.connection().executescript(
+            """
+            CREATE TRIGGER fail_calendar_setup
+            BEFORE UPDATE ON source_sync_state
+            WHEN NEW.source = 'calendar'
+            BEGIN
+                SELECT RAISE(ABORT, 'state-write-token-canary');
+            END;
+            """
+        )
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
+    _install_fake_authorizer(monkeypatch, FakeInstalledAppFlow(google_credential()))
+
+    result = cli.main(
+        [
+            "setup",
+            "--headless",
+            "--client-secrets",
+            str(FIXTURES / "installed-client.json"),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert count_setup_success_events(captured.out, captured.err) == 0
+    assert captured.err == "error: Google setup could not be saved; run setup again\n"
+    assert "state-write-token-canary" not in captured.out + captured.err
+    with Store(database) as store:
+        assert tuple(state.auth_state for state in store.list_source_sync()) == (
+            "not_configured",
+            "not_configured",
+        )
 
 
 def test_setup_emits_no_success_when_database_open_fails_after_credential_save(
@@ -514,7 +664,7 @@ def test_setup_emits_no_success_when_database_open_fails_after_credential_save(
     monkeypatch.setattr(sources, "GoogleOAuthAuthorizer", authorizer)
     monkeypatch.setattr(sources, "Store", DatabaseOpenFailure)
 
-    with pytest.raises(OSError, match="database-/private/path-canary"):
+    with pytest.raises(sources.GoogleSourceConfigurationError) as raised:
         sources.configure_google_sources(
             tmp_path / "state.db",
             GoogleSetupOptions(
@@ -525,6 +675,8 @@ def test_setup_emits_no_success_when_database_open_fails_after_credential_save(
         )
     captured = capsys.readouterr()
 
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__
     assert credential_stores[0].load() is not None
     assert count_authorization_url_events(captured.out, captured.err) == 1
     assert count_setup_success_events(captured.out, captured.err) == 0

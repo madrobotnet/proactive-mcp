@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final, Literal, TypeAlias, final
 
@@ -10,7 +11,11 @@ from typing_extensions import override
 from proactive_mcp.clock import UtcClock
 from proactive_mcp.config import load_config
 from proactive_mcp.paths import ProactivePaths
-from proactive_mcp.store import Store
+from proactive_mcp.store import (
+    ReceiptErasurePendingError,
+    Store,
+    UnsafeDatabasePathError,
+)
 
 from .calendar import CalendarAdapter, CalendarHttpResponse
 from .credentials import (
@@ -59,6 +64,15 @@ class GoogleSetupOptions:
     client_secrets_path: Path
     reauth: bool
     headless: bool
+
+
+@final
+class GoogleSourceConfigurationError(Exception):
+    """Signal that authorized source state could not be safely persisted."""
+
+    def __init__(self) -> None:
+        """Expose only a fixed credential-safe recovery message."""
+        Exception.__init__(self, "Google setup could not be saved; run setup again")
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +134,16 @@ def configure_google_sources(
         reauth=options.reauth,
         headless=options.headless,
     )
-    with Store(database_path) as store:
-        store.set_google_auth_state("configured")
+    try:
+        with Store(database_path) as store:
+            store.set_google_auth_state("configured")
+    except (
+        OSError,
+        sqlite3.Error,
+        ReceiptErasurePendingError,
+        UnsafeDatabasePathError,
+    ):
+        raise GoogleSourceConfigurationError from None
     write_headless_setup_success()
 
 
@@ -277,6 +299,7 @@ __all__ = [
     "GoogleReadSmokeDisabledError",
     "GoogleReadSummary",
     "GoogleSetupOptions",
+    "GoogleSourceConfigurationError",
     "GoogleSyncService",
     "InvalidGrantError",
     "MissingGoogleCredentialsError",
