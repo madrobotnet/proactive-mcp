@@ -90,6 +90,7 @@ def test_help_is_useful() -> None:
     assert "serve" in result.stdout
     assert "status" in result.stdout
     assert "setup" in result.stdout
+    assert "disconnect" in result.stdout
     assert "google-smoke" in result.stdout
     assert "daemon" in result.stdout
 
@@ -155,6 +156,28 @@ def test_setup_prefers_explicit_client_secrets_over_environment_and_state_file(
     # Then: setup selects only the explicit path and forwards its controls.
     assert result == 0
     assert configured == [(explicit_path, True, True)]
+
+
+def test_disconnect_deletes_google_authorization_for_selected_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: a selected proactive database and a captured disconnect boundary.
+    database_path = tmp_path / "state" / "proactive.db"
+    disconnected: list[Path] = []
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(database_path))
+    monkeypatch.setattr(cli, "disconnect_google_sources", disconnected.append)
+
+    # When: the operator runs the credential-first rollback command.
+    result = cli.main(["disconnect"])
+    captured = capsys.readouterr()
+
+    # Then: only that state root is disconnected and success is machine-readable.
+    assert result == 0
+    assert disconnected == [database_path]
+    assert json.loads(captured.out) == {"google": "disconnected"}
+    assert captured.err == ""
 
 
 def test_setup_reports_a_safe_error_for_invalid_client_secrets(tmp_path: Path) -> None:

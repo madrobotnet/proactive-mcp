@@ -184,7 +184,7 @@ command -v uv grok codex
 The CLI surface is small. An agent or developer can confirm it with `uv run proactive-mcp --help`:
 
 ```text
-proactive-mcp {serve,serve-scheduled,status,setup,google-smoke,daemon}
+proactive-mcp {serve,serve-scheduled,status,setup,disconnect,google-smoke,daemon,service}
 proactive-mcp daemon [--once] [--poll-interval-minutes MINUTES]
 ```
 

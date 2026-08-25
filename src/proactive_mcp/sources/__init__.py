@@ -122,6 +122,14 @@ def configure_google_sources(
         store.set_google_auth_state("configured")
 
 
+def disconnect_google_sources(database_path: Path) -> None:
+    """Delete Google credentials before clearing persisted source auth state."""
+    paths = ProactivePaths.for_database(database_path)
+    CredentialStore(paths.state_directory).delete()
+    with Store(paths.database) as store:
+        store.set_google_auth_state("not_configured")
+
+
 @dataclass(frozen=True, slots=True)
 class _GmailReadTransport:
     """Adapt the shared transport to Gmail's nominal response contract."""
@@ -271,5 +279,6 @@ __all__ = [
     "MissingRefreshTokenError",
     "OAuthClientConfigError",
     "configure_google_sources",
+    "disconnect_google_sources",
     "run_google_read_smoke",
 ]

@@ -38,6 +38,7 @@ from proactive_mcp.sources import (
     MissingRefreshTokenError,
     OAuthClientConfigError,
     configure_google_sources,
+    disconnect_google_sources,
     run_google_read_smoke,
 )
 from proactive_mcp.store import SourceErrorCode  # noqa: TC001
@@ -46,8 +47,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 Command: TypeAlias = Literal[
-    "serve", "serve-scheduled", "status", "setup", "google-smoke", "daemon",
-    "service",
+    "serve", "serve-scheduled", "status", "setup", "disconnect", "google-smoke",
+    "daemon", "service",
 ]
 _CLIENT_SECRETS_ENV: Final = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
 _GOOGLE_ERRORS: Final = (
@@ -102,6 +103,14 @@ class _GoogleSmokeResponse(BaseModel):
     credential_cleanup_failed: bool
 
 
+class _GoogleDisconnectResponse(BaseModel):
+    """Machine-readable confirmation for credential-first rollback."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    google: Literal["disconnected"] = "disconnected"
+
+
 def run_server() -> None:
     """Run the MCP server over stdio."""
     server.run("stdio")
@@ -134,6 +143,12 @@ def run_setup(arguments: _CliArguments) -> None:
             headless=arguments.headless,
         ),
     )
+
+
+def run_disconnect() -> None:
+    """Delete stored Google authorization before any state-directory cleanup."""
+    disconnect_google_sources(_database_path())
+    _ = sys.stdout.write(f"{_GoogleDisconnectResponse().model_dump_json()}\n")
 
 
 def run_google_smoke(arguments: _CliArguments) -> None:
@@ -195,6 +210,10 @@ def _parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="path to an installed-app OAuth client secret file",
     )
+    _ = subparsers.add_parser(
+        "disconnect",
+        help="delete stored Google authorization before local state cleanup",
+    )
     smoke = subparsers.add_parser(
         "google-smoke",
         help="perform an explicitly confirmed real-account read-only Google smoke test",
@@ -240,6 +259,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     once=arguments.once,
                     poll_interval_minutes=arguments.poll_interval_minutes,
                 )
+            case "disconnect":
+                run_disconnect()
             case "serve":
                 run_server()
             case "serve-scheduled":

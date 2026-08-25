@@ -219,6 +219,43 @@ virtual environment, or the wheel installation. This order is mandatory because
 a keyring credential can outlive the state directory and appear to be a legacy
 credential on reinstall.
 
+For the supported Linux alpha bundle, the agent runs this credential-first
+sequence. `set -e` makes credential deletion a hard stop: if `disconnect`
+cannot delete the keyring or fallback credential, the state directory and its
+tombstone remain intact.
+
+```bash
+set -euo pipefail
+PROACTIVE_BIN="$HOME/venvs/proactive/bin/proactive-mcp"
+"$PROACTIVE_BIN" service remove
+"$PROACTIVE_BIN" disconnect
+```
+
+Only after the command prints `{"google":"disconnected"}` may the agent remove
+the two MCP registrations for the client in use:
+
+```bash
+# Grok CLI
+grok mcp remove --scope user proactive
+grok mcp remove --scope user proactive_scheduled
+```
+
+```bash
+# Codex CLI
+codex mcp remove proactive
+codex mcp remove proactive_scheduled
+```
+
+Then, and only then, it removes proactive-mcp-owned local state and install
+artifacts. It must preserve every unrelated MCP profile and configuration.
+
+```bash
+rm -rf \
+  "$HOME/.proactive-mcp" \
+  "$HOME/venvs/proactive" \
+  "$HOME/Downloads/proactive-mcp-alpha"
+```
+
 If credential storage is unavailable, the agent leaves the state directory and
 its tombstone in place, revokes access in Google Account permissions, and
 reports the failure to the Owner. For a downgrade, the agent uninstalls before

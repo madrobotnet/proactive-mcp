@@ -40,3 +40,35 @@ Owner에게 Linux aarch64 archive, 다른 인증 채널의 archive SHA-256, 필�
 ## 5. 되돌리기 프롬프트
 
 제거가 필요하면 에이전트에게 다음과 같이 요청하세요. "먼저 proactive-mcp 자격 증명을 삭제하고 성공을 확인해 주세요. 그다음 이 에이전트의 MCP 등록과 상태 폴더를 정리해 주세요. 자격 증명 삭제가 실패하면 상태 폴더는 지우지 말고 알려 주세요."
+
+에이전트는 먼저 예약 작업을 중지한 뒤 아래 credential-first 블록을 그대로 실행해야 합니다. `disconnect`가 실패하면 `set -e`가 이후 삭제를 막습니다. 이 경우 `~/.proactive-mcp`와 그 안의 tombstone을 그대로 두고 Google 계정 권한을 취소한 뒤 실패를 보고하세요.
+
+```bash
+set -euo pipefail
+PROACTIVE_BIN="$HOME/venvs/proactive/bin/proactive-mcp"
+"$PROACTIVE_BIN" service remove
+"$PROACTIVE_BIN" disconnect
+```
+
+`{"google":"disconnected"}`가 출력된 경우에만 현재 에이전트와 일치하는 MCP 제거 블록 하나를 실행하세요.
+
+```bash
+# Grok CLI
+grok mcp remove --scope user proactive
+grok mcp remove --scope user proactive_scheduled
+```
+
+```bash
+# Codex CLI
+codex mcp remove proactive
+codex mcp remove proactive_scheduled
+```
+
+그다음에만 proactive-mcp 전용 상태, venv, 추출한 bundle을 삭제합니다. 다른 MCP 프로필이나 설정은 삭제하지 마세요.
+
+```bash
+rm -rf \
+  "$HOME/.proactive-mcp" \
+  "$HOME/venvs/proactive" \
+  "$HOME/Downloads/proactive-mcp-alpha"
+```

@@ -124,7 +124,7 @@ The Owner sends the OS tester sheet alongside the wheel. Open [`docs/testers/REA
 ### Alpha completion checklist
 
 - The wheel checksum matches the Owner's value.
-- `--help` shows `serve`, `serve-scheduled`, `status`, `setup`, `google-smoke`, and `daemon`.
+- `--help` shows `serve`, `serve-scheduled`, `status`, `setup`, `disconnect`, `google-smoke`, `daemon`, and `service`.
 - `status` reports migration version `9` and the expected database path.
 - Gmail and Calendar become `ok` after a successful read.
 - The agent can call `get_status`, memory tools, and `proactive_check`.

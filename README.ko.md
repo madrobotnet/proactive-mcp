@@ -124,7 +124,7 @@ Owner가 wheel과 함께 운영체제 테스터 시트를 전달합니다. [`doc
 ### 알파 완료 체크리스트
 
 - wheel 체크섬이 Owner가 알려준 값과 일치하는지 확인합니다.
-- `--help`에 `serve`, `serve-scheduled`, `status`, `setup`, `google-smoke`, `daemon`이 모두 보여야 합니다.
+- `--help`에 `serve`, `serve-scheduled`, `status`, `setup`, `disconnect`, `google-smoke`, `daemon`, `service`가 모두 보여야 합니다.
 - `status`는 마이그레이션 버전 `9`와 예상된 데이터베이스 경로를 보고해야 합니다.
 - 읽기에 성공하면 Gmail과 Calendar가 `ok` 상태가 됩니다.
 - 에이전트에서 `get_status`, 메모리 도구, `proactive_check`를 호출할 수 있어야 합니다.
