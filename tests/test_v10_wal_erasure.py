@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
@@ -16,44 +13,7 @@ import pytest
 from proactive_mcp.cli import daemon as daemon_cli
 from proactive_mcp.store import ReceiptErasurePendingError, Store
 from tests.store_migration_support import capture_strings, scalar_int
-from tests.v10_migration_support import create_v9_database
-
-
-def _insert_v9_claim(path: Path, receipt: str) -> None:
-    connection = sqlite3.connect(path)
-    try:
-        _ = connection.execute(
-            """
-            INSERT INTO situations (
-                situation_type, dedupe_key, state, priority, title, why_now,
-                evidence, detected_at, updated_at
-            ) VALUES (
-                'reply_deadline', 'v9-active-claim', 'pending', 'routine',
-                'fixture', 'fixture', '{}', ?, ?
-            )
-            """,
-            ("2026-08-25T12:00:00+00:00", "2026-08-25T12:00:00+00:00"),
-        )
-        situation_id = scalar_int(
-            connection,
-            "SELECT id FROM situations WHERE dedupe_key = 'v9-active-claim'",
-        )
-        _ = connection.execute(
-            """
-            INSERT INTO situation_delivery_claims (
-                claim_token, situation_id, claimed_at, expires_at
-            ) VALUES (?, ?, ?, ?)
-            """,
-            (
-                receipt,
-                situation_id,
-                "2026-08-25T12:00:00+00:00",
-                "2026-08-25T12:02:00+00:00",
-            ),
-        )
-        connection.commit()
-    finally:
-        connection.close()
+from tests.v10_migration_support import create_v9_database, insert_v9_claim
 
 
 def _artifact_hits(path: Path, canary: bytes) -> dict[str, int]:
@@ -94,7 +54,7 @@ def test_v10_invalidates_v9_raw_receipt_claims_without_mutating_situations(
     path = tmp_path / "legacy.db"
     receipt_canary = "PR29_V9_ACTIVE_RECEIPT_CANARY_k7P2rN9xV4mQ8wD3"
     _ = create_v9_database(path)
-    _insert_v9_claim(path, receipt_canary)
+    insert_v9_claim(path, receipt_canary)
 
     with Store(path) as upgraded:
         assert capture_strings(
@@ -124,7 +84,7 @@ def test_pinned_v9_reader_fails_closed_then_retry_erases_and_clears_marker(
     path = tmp_path / "legacy-secret-path.db"
     receipt_canary = "PR29_PINNED_RECEIPT_CANARY_a8F4zR2nW7qL5cX9"
     _ = create_v9_database(path)
-    _insert_v9_claim(path, receipt_canary)
+    insert_v9_claim(path, receipt_canary)
 
     legacy_reader = sqlite3.connect(path)
     legacy_reader.execute("PRAGMA journal_mode = WAL").close()
@@ -191,55 +151,3 @@ def test_pinned_v9_reader_fails_closed_then_retry_erases_and_clears_marker(
         finally:
             current_reader.rollback()
             current_reader.close()
-
-
-def test_status_redacts_pending_receipt_erasure_then_retries_after_reader_closes(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "private-token-canary.db"
-    receipt_canary = "PR29_CLI_RECEIPT_TOKEN_CANARY_g3Q8vN5xK2mR7wL4"
-    _ = create_v9_database(path)
-    _insert_v9_claim(path, receipt_canary)
-    env = os.environ | {"PROACTIVE_DATABASE": str(path)}
-    command = [sys.executable, "-m", "proactive_mcp", "status"]
-
-    legacy_reader = sqlite3.connect(path)
-    try:
-        legacy_reader.execute("PRAGMA journal_mode = WAL").close()
-        legacy_reader.execute("BEGIN").close()
-        assert legacy_reader.execute(
-            "SELECT claim_token FROM situation_delivery_claims"
-        ).fetchone() == (receipt_canary,)
-        blocked = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-            timeout=15,
-        )
-        assert blocked.returncode == 2
-        assert blocked.stdout == ""
-        assert (
-            blocked.stderr
-            == "error: receipt erasure is blocked; close older processes and retry\n"
-        )
-        assert "Traceback" not in blocked.stderr
-        assert str(path) not in blocked.stderr
-        assert receipt_canary not in blocked.stderr
-        assert "ReceiptErasurePendingError" not in blocked.stderr
-    finally:
-        legacy_reader.rollback()
-        legacy_reader.close()
-
-    retried = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-        timeout=15,
-    )
-    assert retried.returncode == 0
-    assert retried.stderr == ""
-    assert json.loads(retried.stdout)["database"]["status"] == "healthy"

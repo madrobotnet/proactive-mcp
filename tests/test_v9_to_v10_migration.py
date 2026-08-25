@@ -30,6 +30,15 @@ LegacyRow: TypeAlias = tuple[
     str,
 ]
 _LEGACY_ROW_ADAPTER: Final[TypeAdapter[LegacyRow]] = TypeAdapter(LegacyRow)
+_PARENT_V9_SOURCE_ROW: Final[LegacyRow] = (
+    "gmail",
+    "authorized",
+    "2026-08-25T12:00:00+00:00",
+    "2026-08-25T12:00:00+00:00",
+    None,
+    "opaque-cursor",
+    "2026-08-25T12:00:00+00:00",
+)
 
 
 class _ScalarReader:
@@ -96,6 +105,7 @@ def test_fresh_and_v9_databases_reach_v10_without_losing_legacy_rows(
         before = _legacy_row(before_connection)
     finally:
         before_connection.close()
+    assert before == _PARENT_V9_SOURCE_ROW
 
     with Store(fresh_path) as fresh, Store(legacy_path) as upgraded:
         assert fresh.status().migration_version == 10

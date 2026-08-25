@@ -44,6 +44,7 @@ from proactive_mcp.sources import (
     run_google_read_smoke,
 )
 from proactive_mcp.store import ReceiptErasurePendingError, SourceErrorCode
+from proactive_mcp.store import UnsafeDatabasePathError as UnsafePathError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -71,7 +72,7 @@ _GOOGLE_ERRORS: Final = (
     OAuthClientConfigError,
     GoogleSourceConfigurationError,
 )
-_EXPECTED_ERRORS: Final = (*_GOOGLE_ERRORS, ReceiptErasurePendingError)
+_EXPECTED_ERRORS: Final = (*_GOOGLE_ERRORS, ReceiptErasurePendingError, UnsafePathError)
 
 
 class _CliArguments(BaseModel):

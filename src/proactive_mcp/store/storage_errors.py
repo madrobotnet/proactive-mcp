@@ -30,7 +30,10 @@ class UnsafeDatabasePathError(Exception):
 
     def __post_init__(self) -> None:
         """Initialize the base exception with a non-sensitive message."""
-        Exception.__init__(self, f"unsafe database path: {self.reason}")
+        Exception.__init__(
+            self,
+            "database path is unsafe; choose a private user-owned directory and retry",
+        )
 
 
 __all__ = ["ReceiptErasurePendingError", "UnsafeDatabasePathError"]
