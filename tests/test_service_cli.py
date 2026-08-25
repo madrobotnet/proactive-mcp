@@ -66,8 +66,14 @@ class _Harness:
 
 
 def _run_cli(harness: _Harness, action: str) -> subprocess.CompletedProcess[str]:
+    command = (
+        "import sys; "
+        "sys.platform = 'linux'; "
+        "from proactive_mcp.cli import entrypoint; "
+        "entrypoint()"
+    )
     return subprocess.run(
-        [sys.executable, "-m", "proactive_mcp", "service", action],
+        [sys.executable, "-c", command, "service", action],
         capture_output=True,
         text=True,
         env=harness.env,

@@ -8,7 +8,9 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Final, NoReturn
 
 from proactive_mcp import cli
@@ -50,7 +52,6 @@ from tests.situation_test_support import FakeClock, utc_datetime
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     import pytest
 
@@ -397,21 +398,24 @@ def test_sigint_stops_the_continuous_scheduler_without_waiting() -> None:
 
 
 def test_notify_service_ready_sends_systemd_readiness(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: a systemd notification socket subscribed before daemon startup.
-    notify_socket = tmp_path / "notify.sock"
-    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
-        receiver.bind(str(notify_socket))
-        receiver.settimeout(1)
-        monkeypatch.setenv("NOTIFY_SOCKET", str(notify_socket))
+    notify_socket = Path(tempfile.gettempdir()) / f"pmcp-{os.getpid()}.sock"
+    notify_socket.unlink(missing_ok=True)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
+            receiver.bind(str(notify_socket))
+            receiver.settimeout(1)
+            monkeypatch.setenv("NOTIFY_SOCKET", str(notify_socket))
 
-        # When: the daemon announces that startup ownership is persisted.
-        daemon_cli.notify_service_ready()
+            # When: the daemon announces that startup ownership is persisted.
+            daemon_cli.notify_service_ready()
 
-        # Then: systemd receives its readiness event synchronously.
-        assert receiver.recv(64) == b"READY=1"
+            # Then: systemd receives its readiness event synchronously.
+            assert receiver.recv(64) == b"READY=1"
+    finally:
+        notify_socket.unlink(missing_ok=True)
 
 
 def test_service_notify_failure_is_redacted_and_releases_heartbeat(

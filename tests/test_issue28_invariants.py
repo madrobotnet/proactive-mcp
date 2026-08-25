@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Final, Literal, NoReturn, TypeAlias
@@ -172,6 +173,7 @@ def test_service_layout_failure_serializes_only_closed_diagnostics(
 
     monkeypatch.setenv("OAUTH_VALUE", _CANARIES[4])
     monkeypatch.setenv("ACCESS_TOKEN", _CANARIES[5])
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr("proactive_mcp.cli.service._layout", fail_layout)
     # When: service status crosses the public CLI adapter.
     result = cli.main(["service", "status"])
