@@ -96,7 +96,7 @@ Google 동의 화면은 직접 승인해 주세요. 상태는 `not_configured`, 
 |:---|:---|
 | Grok CLI | 로컬 stdio MCP를 사용하고 OS 스케줄러로 선제 실행합니다. |
 | Codex CLI | 로컬 stdio MCP를 사용하고 OS 스케줄러로 선제 실행합니다. |
-| Hermes Agent | 로컬 stdio MCP를 사용하며, 선제 전달은 Hermes가 담당합니다. |
+| Hermes Agent | 일반 stdio MCP 연동만 실험적으로 가능하며 이번 클로즈드 알파에서는 지원하지 않습니다. |
 | Claude Code Desktop | 로컬 stdio MCP로 등록합니다. |
 
 ### 전달 계약

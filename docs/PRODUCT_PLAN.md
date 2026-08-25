@@ -12,7 +12,7 @@
 
 **proactive-mcp는 모든 AI 에이전트에게 "먼저 말 걸기" 능력을 부여하는 로컬 MCP 서버다.**
 
-AI 에이전트는 기본적으로 요청-응답 구조라서 사용자가 묻기 전에는 돕지 못한다. proactive-mcp는 사용자의 Gmail·Google Calendar를 백그라운드에서 감시하고, 에이전트와의 대화에서 저장된 메모리를 근거로, **지금 사용자에게 알릴 가치가 있는 상황(Situation)** 을 감지한다. 감지된 상황은 사용자가 이미 쓰고 있는 에이전트의 자체 채널(CLI 대화, Hermes Home Channel, Telegram 봇 등)을 통해 선제적으로 전달된다.
+AI 에이전트는 기본적으로 요청-응답 구조라서 사용자가 묻기 전에는 돕지 못한다. proactive-mcp는 사용자의 Gmail·Google Calendar를 백그라운드에서 감시하고, 에이전트와의 대화에서 저장된 메모리를 근거로, **지금 사용자에게 알릴 가치가 있는 상황(Situation)** 을 감지한다. 감지된 상황은 사용자가 이미 쓰고 있는 지원 대상 에이전트의 자체 채널을 통해 선제적으로 전달된다.
 
 핵심 원칙:
 
@@ -45,6 +45,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | 코드베이스 | 새 저장소, MCP-first. 기존 repo는 참고자료만 |
 | 언어/스택 | Python ≥3.11, 공식 MCP Python SDK, SQLite, uv |
 | 전달 구조 | 하이브리드 — 서버가 감시·판단, 주 전달은 각 에이전트의 자체 채널, 폴백은 OS 알림 |
+| Hermes Agent | 클로즈드 알파 공식 지원에서 제외. 일반 stdio MCP 상호운용은 실험용으로만 남기며, 결정적 receipt 확인이 검증될 때까지 설치·cron 경로를 제공하지 않음 |
 | 전달 영수증 | `proactive_check`는 짧은 lease로 상황을 예약하고, 호스트가 결과를 받은 뒤 `confirm_delivery`를 호출해야 `delivered`로 확정. 미확인 lease는 만료 후 pending으로 복귀 (2026-08-24 Owner 보안 수정 승인) |
 | MVP 범위 | 읽기 + 알림만. 외부 쓰기는 2단계 |
 | MVP Situation | Reply Deadline, Calendar Conflict, Personal Occasion 3종 |
@@ -61,8 +62,8 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 ```mermaid
 flowchart LR
     subgraph agents [에이전트들]
-        A1[Hermes + Native Cron]
-        A2[Grok / Codex + OS Scheduler]
+        A1[Grok + OS Scheduler]
+        A2[Codex + OS Scheduler]
         A3[Claude Code Desktop]
     end
     subgraph host [사용자 머신]
@@ -156,7 +157,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 |---|---|---|---|
 | Grok CLI | O — `grok mcp add` 또는 `~/.grok/config.toml`. `~/.claude.json` 설정도 자동 로드 | 없음 → OS 스케줄러 | M5 1순위 |
 | Codex CLI | O — `~/.codex/config.toml` | 없음 → OS 스케줄러 | M5 1순위 |
-| Hermes | O | Native Cron | Owner 전용 검증 |
+| Hermes | 실험용 stdio만 | 지원 스케줄러 없음 | 클로즈드 알파 지원 제외 |
 | Claude Code Desktop | O | 로컬 예약 작업(최소 간격 1분, 로컬 MCP 접근 가능) | 레시피 문서화만 (Owner 미설치, 실증 제외) |
 | ChatGPT 웹/데스크톱 | X — 웹은 원격 HTTPS 커넥터만. 데스크톱은 stdio를 표방하나 도구가 채팅 세션에 노출되지 않는 미해결 버그([openai/codex#38162](https://github.com/openai/codex/issues/38162)) | Tasks (클라우드 실행) | **V2 HTTP transport 대기** |
 | Claude 클라우드 Routines | X — 로컬 파일·프로세스 접근 없음 | O | **V2 HTTP transport 대기** |
@@ -268,7 +269,7 @@ CREATE TABLE memory_items (
 | **M2.5 메모리 모델 v2** | entity 테이블·별칭, 1차 카테고리 고정 enum + 하위 자유 경로 계층, 중복 병합과 모순 보존, `update`/`list_entities` 도구 — 설계 정본 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md) | 해당 문서 §8 완료 기준 충족 |
 | **M3 Situation 엔진** | 3종 감지기, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 상태 머신 | fake clock 결정론 테스트로 3종 감지·정책 검증 |
 | **M4 전달** | `proactive_check`/`confirm_delivery`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
-| **M5 연동 레시피** | §5.3 매트릭스 1순위(Grok CLI·Codex CLI·Hermes Cron) 연동 문서와 룰 템플릿, OS 스케줄러 등록 예시(cron·Windows 작업 스케줄러), Claude Code Desktop은 문서만 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 — 기본 조합은 Owner 머신의 Grok CLI + Codex CLI |
+| **M5 연동 레시피** | §5.3 매트릭스 1순위(Grok CLI·Codex CLI) 연동 문서와 룰 템플릿, OS 스케줄러 등록 예시(cron·Windows 작업 스케줄러), Claude Code Desktop은 문서만, Hermes는 실험용 stdio 외 지원 제외 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 — 기본 조합은 Owner 머신의 Grok CLI + Codex CLI |
 | **M6 클로즈드 알파 릴리스** | README 정비, GCP OAuth 설정 가이드, wheel 빌드와 테스터 배포 절차 (PyPI 미사용) | 새 환경에서 clean install → 온보딩 완료까지 15분 이내, 지정 테스터에게 전달 가능한 상태 |
 
 **M6 이후 — 공개 전환 (Owner 결정):** 지정 테스터의 1차 검증에서 문제가 없으면 저장소를 공개로 전환하고 PyPI `proactive-mcp` 0.1.0을 게시하며 홍보를 시작한다. PyPI 게시는 저장소가 private이어도 패키지를 공개하는 행위이므로, 반드시 공개 전환 시점에 함께 수행한다.

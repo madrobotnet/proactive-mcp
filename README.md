@@ -96,7 +96,7 @@ Integration recipes are available for:
 |:---|:---|
 | Grok CLI | Local stdio MCP plus an OS scheduler for proactive runs |
 | Codex CLI | Local stdio MCP plus an OS scheduler for proactive runs |
-| Hermes Agent | Local stdio MCP with Hermes-managed proactive delivery |
+| Hermes Agent | Experimental generic stdio MCP interoperability only; not supported in the closed alpha |
 | Claude Code Desktop | Local stdio MCP registration |
 
 ### The delivery contract

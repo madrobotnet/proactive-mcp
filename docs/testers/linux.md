@@ -12,6 +12,7 @@ Owner에게 Linux aarch64 archive, 다른 인증 채널의 archive SHA-256, 필�
 이 Linux PC에 proactive-mcp 클로즈드 알파를 설치하고, 지금 이 에이전트에 MCP로 등록해 주세요. 제가 명령을 외우거나 mcp add 명령과 설정 파일 편집을 직접 하지 않게 해 주세요.
 
 규칙:
+- Hermes Agent는 이번 클로즈드 알파 지원 대상이 아닙니다. 현재 에이전트가 Hermes라면 설치나 등록을 시작하지 말고 지원되는 에이전트로 돌아가세요.
 - 저장소 clone, PyPI, uvx, pip install proactive-mcp, 관리자 권한 사용, PROACTIVE_DATABASE 설정은 금지입니다.
 - Linux aarch64와 Python 3.11만 지원합니다. archive는 ~/Downloads/proactive-mcp-alpha-linux-aarch64-py311.tar.gz에 있습니다. sha256sum으로 다른 채널에서 받은 archive SHA-256과 먼저 비교하고, 다르면 추출하거나 설치하지 말고 멈추세요. 맞아도 ~/Downloads/proactive-mcp-alpha/가 이미 있으면 지우거나 덮어쓰지 말고 멈춰서 알려 주세요. 경로가 없을 때만 ~/Downloads에 풀어 새 ~/Downloads/proactive-mcp-alpha/를 만드세요.
 - 새 bundle 안에서 `sha256sum --check SHA256SUMS`를 실행하세요. 이어서 `comm -3 <(awk '{print $2}' SHA256SUMS | sort) <(find wheels -maxdepth 1 -type f -printf '%p\n' | sort)`를 실행해 출력이 없는지 확인하세요. checksum이 하나라도 실패하거나 목록 비교에 출력이 있으면 venv를 만들거나 바꾸기 전에 멈추세요.
