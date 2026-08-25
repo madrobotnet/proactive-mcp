@@ -47,8 +47,14 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 Command: TypeAlias = Literal[
-    "serve", "serve-scheduled", "status", "setup", "disconnect", "google-smoke",
-    "daemon", "service",
+    "serve",
+    "serve-scheduled",
+    "status",
+    "setup",
+    "disconnect",
+    "google-smoke",
+    "daemon",
+    "service",
 ]
 _CLIENT_SECRETS_ENV: Final = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
 _GOOGLE_ERRORS: Final = (

@@ -134,8 +134,7 @@ def _status(layout: _Layout) -> tuple[ServiceResponse, bool]:
     snapshot = _snapshot(layout)
     state: ServiceState = "active" if snapshot.active else "inactive"
     healthy = not snapshot.active or (
-        snapshot.heartbeat == "running"
-        and snapshot.main_pid == snapshot.heartbeat_pid
+        snapshot.heartbeat == "running" and snapshot.main_pid == snapshot.heartbeat_pid
     )
     code: ServiceCode | None = None if healthy else "heartbeat_unavailable"
     return _response(_Outcome("status", state, code), snapshot), healthy
@@ -179,7 +178,12 @@ def _snapshot(layout: _Layout) -> _Snapshot:
         except (ConfigError, UnsafeDatabasePathError, OSError, sqlite3.Error):
             heartbeat = None
     return _Snapshot(
-        managed, enabled, active, main_pid, heartbeat, heartbeat_pid,
+        managed,
+        enabled,
+        active,
+        main_pid,
+        heartbeat,
+        heartbeat_pid,
         _MANAGER.linger(),
     )
 

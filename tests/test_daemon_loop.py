@@ -1,4 +1,5 @@
 """Daemon state-machine scenarios. # noqa: SIZE_OK - one fixture surface."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

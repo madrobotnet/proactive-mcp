@@ -152,9 +152,7 @@ def open_watcher_daemon(store: Store, clock: Clock) -> WatcherDaemon:
                 EvaluationDependencies(
                     evaluator=runtime.engine,
                     sources=_DaemonSourceProvider(
-                        ScheduledSourceProvider(
-                            open_source_access(paths, store, clock)
-                        )
+                        ScheduledSourceProvider(open_source_access(paths, store, clock))
                     ),
                 )
             ),
@@ -206,9 +204,7 @@ def run_daemon(*, once: bool, poll_interval_minutes: float | None) -> int:
                         store.daemon.record_stop,
                     )
                     raise
-                _ = daemon.run_forever(
-                    DaemonSchedule(stopping_scheduler(), interval)
-                )
+                _ = daemon.run_forever(DaemonSchedule(stopping_scheduler(), interval))
     except ConfigError:
         return _emit_failure(DaemonFailureKind.CONFIG_INVALID)
     except UnsafeDatabasePathError:

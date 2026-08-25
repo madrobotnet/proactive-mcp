@@ -304,9 +304,7 @@ def test_headless_authorization_emits_single_url_and_success_when_consent_comple
     )
 
     # When: authorization completes and the credential is persisted.
-    authorized = authorizer.authorize(
-        FIXTURES / "installed-client.json", headless=True
-    )
+    authorized = authorizer.authorize(FIXTURES / "installed-client.json", headless=True)
     captured = capsys.readouterr()
 
     # Then: exactly one URL event and one success event are owned.

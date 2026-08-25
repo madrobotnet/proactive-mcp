@@ -59,10 +59,14 @@ class FakeUvRunner:
                         "[[packages]]",
                         'name = "dependency"',
                         'version = "1.0"',
-                        "".join(("wheels = [{ ",
-                                 f'url = "{_DEPENDENCY_URL}", ',
-                                 "hashes = { sha256 = ",
-                                 f'"{_DEPENDENCY_HASH}" }} }}]')),
+                        "".join(
+                            (
+                                "wheels = [{ ",
+                                f'url = "{_DEPENDENCY_URL}", ',
+                                "hashes = { sha256 = ",
+                                f'"{_DEPENDENCY_HASH}" }} }}]',
+                            )
+                        ),
                     )
                 ),
                 encoding="utf-8",
@@ -84,8 +88,13 @@ def _build(tmp_path: Path) -> tuple[Path, FakeUvRunner, FakeDownloader]:
     project = tmp_path / "project"
     project.mkdir(parents=True)
     _ = (project / "uv.lock").write_text(
-        "".join(("wheels = [{ ", f'url = "{_DEPENDENCY_URL}", ',
-                 f'hash = "sha256:{_DEPENDENCY_HASH}" }}]\n')),
+        "".join(
+            (
+                "wheels = [{ ",
+                f'url = "{_DEPENDENCY_URL}", ',
+                f'hash = "sha256:{_DEPENDENCY_HASH}" }}]\n',
+            )
+        ),
         encoding="utf-8",
     )
     runner = FakeUvRunner()
@@ -158,9 +167,10 @@ def test_builder_uses_frozen_target_specific_uv_commands(tmp_path: Path) -> None
     assert runner.calls[2].argv[version_index + 1] == "3.11"
     assert "aarch64-manylinux_2_28" in runner.calls[2].argv
     binary_index = runner.calls[2].argv.index("--only-binary")
-    assert runner.calls[2].argv[
-        binary_index : binary_index + 2
-    ] == ("--only-binary", ":all:")
+    assert runner.calls[2].argv[binary_index : binary_index + 2] == (
+        "--only-binary",
+        ":all:",
+    )
     assert [source.filename for source in downloader.sources] == [_DEPENDENCY_NAME]
 
 

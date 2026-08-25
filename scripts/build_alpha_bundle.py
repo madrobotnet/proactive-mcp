@@ -222,17 +222,44 @@ def build_bundle(
         built, requirements = work / "built", work / "requirements.txt"
         pylock = work / "pylock.alpha.toml"
         commands = (
-            ("build-project-wheel",
-             ("uv", "build", "--wheel", "--out-dir", str(built), ".")),
-            ("export-locked-requirements",
-             ("uv", "export", "--frozen", "--no-dev", "--no-emit-project",
-              "--no-hashes", "--format", "requirements-txt", "--output-file",
-              str(requirements))),
-            ("resolve-target-wheels",
-             ("uv", "pip", "compile", str(requirements), "--python-version",
-              "3.11", "--python-platform", "aarch64-manylinux_2_28",
-              "--only-binary", ":all:", "--format", "pylock.toml",
-              "--output-file", str(pylock))),
+            (
+                "build-project-wheel",
+                ("uv", "build", "--wheel", "--out-dir", str(built), "."),
+            ),
+            (
+                "export-locked-requirements",
+                (
+                    "uv",
+                    "export",
+                    "--frozen",
+                    "--no-dev",
+                    "--no-emit-project",
+                    "--no-hashes",
+                    "--format",
+                    "requirements-txt",
+                    "--output-file",
+                    str(requirements),
+                ),
+            ),
+            (
+                "resolve-target-wheels",
+                (
+                    "uv",
+                    "pip",
+                    "compile",
+                    str(requirements),
+                    "--python-version",
+                    "3.11",
+                    "--python-platform",
+                    "aarch64-manylinux_2_28",
+                    "--only-binary",
+                    ":all:",
+                    "--format",
+                    "pylock.toml",
+                    "--output-file",
+                    str(pylock),
+                ),
+            ),
         )
         for step, argv in commands:
             runner(RunSpec(step=step, argv=argv, cwd=config.project_root))
@@ -249,9 +276,16 @@ def build_bundle(
                 raise ManifestError(reason="downloaded-wheel-checksum-mismatch")
         metadata = {
             "bundle_format": 1,
-            "install_command": ["uv", "pip", "install", "--offline",
-                                "--no-index", "--find-links", "wheels",
-                                f"wheels/{project_wheels[0].name}"],
+            "install_command": [
+                "uv",
+                "pip",
+                "install",
+                "--offline",
+                "--no-index",
+                "--find-links",
+                "wheels",
+                f"wheels/{project_wheels[0].name}",
+            ],
             "lock_sha256": _sha256(config.project_root / "uv.lock"),
             "project_wheel": project_wheels[0].name,
             "target": {

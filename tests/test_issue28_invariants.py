@@ -53,9 +53,7 @@ _SOURCE_FIELDS: Final = {
     "byte_budget",
     "reason_counts",
 }
-SourceScenario: TypeAlias = Literal[
-    "normal", "truncated", "budget", "auth", "network"
-]
+SourceScenario: TypeAlias = Literal["normal", "truncated", "budget", "auth", "network"]
 _SERVICE_FIELDS: Final = {
     "action",
     "state",

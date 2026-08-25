@@ -70,12 +70,24 @@ class DaemonDiagnosticResponse(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
 
     phase: Literal[
-        "config", "database", "credential", "source_sync", "evaluation",
-        "notification", "heartbeat", "runtime_ownership", "service",
+        "config",
+        "database",
+        "credential",
+        "source_sync",
+        "evaluation",
+        "notification",
+        "heartbeat",
+        "runtime_ownership",
+        "service",
     ]
     code: Literal[
-        "invalid", "unsafe_path", "open_failed", "unavailable", "failed",
-        "ownership_conflict", "notify_failed",
+        "invalid",
+        "unsafe_path",
+        "open_failed",
+        "unavailable",
+        "failed",
+        "ownership_conflict",
+        "notify_failed",
     ]
 
 

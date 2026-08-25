@@ -104,7 +104,9 @@ def claim_for_delivery(
 
 
 def reserve_for_delivery(
-    connection: sqlite3.Connection, reader: SituationReader, claim: DeliveryClaim,
+    connection: sqlite3.Connection,
+    reader: SituationReader,
+    claim: DeliveryClaim,
     *,
     claim_token: str,
     expires_at: str,

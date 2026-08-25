@@ -1,4 +1,5 @@
 """Daemon CLI integration matrix. # noqa: SIZE_OK - one real CLI surface."""
+
 from __future__ import annotations
 
 import json
@@ -60,9 +61,7 @@ _PID = 7
 _CONFIG_MINUTES = 5
 _OVERRIDE_MINUTES = 60
 _QUERY_OFFSET = timedelta(minutes=16)
-_UNTRUSTED_ERROR_TEXT: Final = (
-    "phase-canary /private/path SELECT secret bearer token"
-)
+_UNTRUSTED_ERROR_TEXT: Final = "phase-canary /private/path SELECT secret bearer token"
 
 
 class _UntrustedPhaseError(RuntimeError):
@@ -297,9 +296,7 @@ def test_unsafe_database_path_exits_two(
     # Then: the unsafe path is a startup precondition, not infrastructure.
     assert result == 2
     assert captured.out == ""
-    assert json.loads(captured.err) == {
-        "phase": "database", "code": "unsafe_path"
-    }
+    assert json.loads(captured.err) == {"phase": "database", "code": "unsafe_path"}
     assert "Traceback" not in captured.err
     assert str(database) not in captured.err
 
@@ -627,9 +624,7 @@ def test_notification_failure_emits_only_phase_and_code(
     # Given: notification dispatch raises untrusted exception text.
     monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
 
-    def fail_notification(
-        _dispatcher: FallbackDispatcher, _now: datetime
-    ) -> NoReturn:
+    def fail_notification(_dispatcher: FallbackDispatcher, _now: datetime) -> NoReturn:
         raise _UntrustedPhaseError
 
     monkeypatch.setattr(FallbackDispatcher, "dispatch", fail_notification)

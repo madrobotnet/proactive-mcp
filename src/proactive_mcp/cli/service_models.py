@@ -17,12 +17,22 @@ __all__ = [
 
 ServiceAction: TypeAlias = Literal["install", "status", "remove"]
 ServiceState: TypeAlias = Literal[
-    "installed", "active", "inactive", "removed", "absent", "unsupported",
-    "failed", "unmanaged",
+    "installed",
+    "active",
+    "inactive",
+    "removed",
+    "absent",
+    "unsupported",
+    "failed",
+    "unmanaged",
 ]
 ServiceCode: TypeAlias = Literal[
-    "unsupported_platform", "binary_not_found", "unmanaged_unit",
-    "command_failed", "heartbeat_unavailable", "io_failed",
+    "unsupported_platform",
+    "binary_not_found",
+    "unmanaged_unit",
+    "command_failed",
+    "heartbeat_unavailable",
+    "io_failed",
 ]
 LingerState: TypeAlias = Literal["enabled", "disabled", "unknown", "not_applicable"]
 HeartbeatState: TypeAlias = Literal["running", "stopped", "stale", "never_started"]

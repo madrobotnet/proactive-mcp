@@ -151,10 +151,7 @@ class DaemonStatusStore:
                     now,
                     fallback_interval=fallback_interval,
                 )
-                and (
-                    incumbent_is_alive is None
-                    or incumbent_is_alive(incumbent.pid)
-                )
+                and (incumbent_is_alive is None or incumbent_is_alive(incumbent.pid))
             ):
                 return False
             _ = self._connection.execute(

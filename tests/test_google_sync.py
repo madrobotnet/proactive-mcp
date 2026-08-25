@@ -412,8 +412,7 @@ def test_sync_persists_normalized_transport_failure(tmp_path: Path) -> None:
     assert summary.gmail_error_code == "timeout"
     assert summary.gmail_diagnostics.outcome == "transport_error"
     assert {
-        item.reason: item.count
-        for item in summary.gmail_diagnostics.reason_counts
+        item.reason: item.count for item in summary.gmail_diagnostics.reason_counts
     } == {"timeout": 1}
     assert gmail_state.last_error_code == "timeout"
 
@@ -443,8 +442,7 @@ def test_invalid_grant_requires_reauthorization_for_both_sources(
     assert summary.calendar_error_code == "invalid_grant"
     assert summary.gmail_diagnostics.outcome == "auth_error"
     assert {
-        item.reason: item.count
-        for item in summary.gmail_diagnostics.reason_counts
+        item.reason: item.count for item in summary.gmail_diagnostics.reason_counts
     } == {"invalid_grant": 1}
     assert summary.gmail_count == 0
     assert summary.calendar_count == 0

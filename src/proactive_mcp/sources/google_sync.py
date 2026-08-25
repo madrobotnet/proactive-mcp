@@ -355,8 +355,7 @@ def _gmail_read_diagnostics(result: GmailInboxReadResult) -> SourceReadDiagnosti
         )
         if result.degradation_reason_counts
         else tuple(
-            SourceReadReasonCount(reason, count)
-            for reason, count in counts.items()
+            SourceReadReasonCount(reason, count) for reason, count in counts.items()
         )
     )
     return SourceReadDiagnostics(

@@ -26,8 +26,14 @@ class _ServiceResponse(BaseModel):
 
     action: Literal["install", "status", "remove"]
     state: Literal[
-        "installed", "active", "inactive", "removed", "absent", "unsupported",
-        "failed", "unmanaged",
+        "installed",
+        "active",
+        "inactive",
+        "removed",
+        "absent",
+        "unsupported",
+        "failed",
+        "unmanaged",
     ]
     unit: str
     managed: bool
@@ -37,10 +43,17 @@ class _ServiceResponse(BaseModel):
     heartbeat: Literal["running", "stopped", "stale", "never_started"] | None
     linger: Literal["enabled", "disabled", "unknown", "not_applicable"]
     guidance: Literal["none", "enable_linger"]
-    code: Literal[
-        "unsupported_platform", "binary_not_found", "unmanaged_unit",
-        "command_failed", "heartbeat_unavailable", "io_failed",
-    ] | None
+    code: (
+        Literal[
+            "unsupported_platform",
+            "binary_not_found",
+            "unmanaged_unit",
+            "command_failed",
+            "heartbeat_unavailable",
+            "io_failed",
+        ]
+        | None
+    )
 
 
 @dataclass(frozen=True, slots=True)

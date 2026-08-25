@@ -180,9 +180,7 @@ def test_concurrent_daily_and_scheduled_checks_lease_once_then_recover(
         assert harness.store.situations.count_deliveries() == 0
         recovered = harness.service.proactive_check()
 
-    assert tuple(item.id for item in recovered.situations) == (
-        winner.situations[0].id,
-    )
+    assert tuple(item.id for item in recovered.situations) == (winner.situations[0].id,)
     assert recovered.receipt_token is not None
     assert recovered.budget.used == 1
 
@@ -416,9 +414,10 @@ def test_proactive_check_excludes_gmail_after_newer_failed_generation(
     )
     assert recovery_generation.number == 3
     assert repeated.situations == ()
-    assert sum(
-        item.situation_type == "reply_deadline" for item in stored_after_recovery
-    ) == 1
+    assert (
+        sum(item.situation_type == "reply_deadline" for item in stored_after_recovery)
+        == 1
+    )
 
 
 def test_proactive_check_excludes_gmail_during_interrupted_newer_generation(

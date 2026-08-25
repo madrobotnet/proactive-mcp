@@ -137,9 +137,10 @@ def test_disconnect_google_sources_deletes_credential_then_auth_state(
     # Then: the credential is gone before both source states become unconfigured.
     assert CredentialStore(database_path.parent).load() is None
     with Store(database_path) as store:
-        assert tuple(
-            state.auth_state for state in store.list_source_sync()
-        ) == ("not_configured", "not_configured")
+        assert tuple(state.auth_state for state in store.list_source_sync()) == (
+            "not_configured",
+            "not_configured",
+        )
 
 
 def test_disconnect_google_sources_preserves_configured_state_on_delete_failure(
@@ -161,9 +162,10 @@ def test_disconnect_google_sources_preserves_configured_state_on_delete_failure(
 
     # Then: source state is preserved and the deletion tombstone remains.
     with Store(database_path) as store:
-        assert tuple(
-            state.auth_state for state in store.list_source_sync()
-        ) == ("configured", "configured")
+        assert tuple(state.auth_state for state in store.list_source_sync()) == (
+            "configured",
+            "configured",
+        )
     assert credential_store.state_path.exists()
 
 

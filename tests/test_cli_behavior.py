@@ -281,6 +281,7 @@ def test_google_smoke_adds_typed_counts_without_leaking_source_values(
                 credentials=FakeCredentials(),
             )
         ).sync()
+
     def read_smoke(_path: Path, *, enabled: bool) -> GoogleReadSummary:
         assert enabled
         return summary
@@ -446,9 +447,7 @@ def test_headless_setup_emits_no_success_when_client_config_is_invalid(
     _install_fake_authorizer(monkeypatch, FakeInstalledAppFlow(google_credential()))
 
     # When: setup --headless parses the untrusted file.
-    result = cli.main(
-        ["setup", "--headless", "--client-secrets", str(invalid_path)]
-    )
+    result = cli.main(["setup", "--headless", "--client-secrets", str(invalid_path)])
     captured = capsys.readouterr()
 
     # Then: neither a URL nor a success event is emitted.
@@ -513,9 +512,7 @@ def test_headless_setup_hides_untrusted_client_endpoints_when_authorization_comp
     _install_fake_authorizer(monkeypatch, FakeInstalledAppFlow(google_credential()))
 
     # When: setup --headless authorizes with the untrusted file.
-    result = cli.main(
-        ["setup", "--headless", "--client-secrets", str(client_file)]
-    )
+    result = cli.main(["setup", "--headless", "--client-secrets", str(client_file)])
     captured = capsys.readouterr()
 
     # Then: output stays single-owned and does not echo attacker hosts.
