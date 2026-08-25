@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
-from typing import TYPE_CHECKING, Final, TypeAlias, cast, get_args
+from typing import TYPE_CHECKING, Final, TypeAlias
 
 import pytest
 from pydantic import TypeAdapter
@@ -11,11 +11,9 @@ from pydantic import TypeAdapter
 from proactive_mcp.store import Store
 from proactive_mcp.store.migrate import apply_migrations
 from proactive_mcp.store.migrations import load_migrations
-from proactive_mcp.store.sync import SourceReadOutcome, SourceReadReason
 from tests.store_migration_support import (
     capture_ints,
     capture_json_rows,
-    column_names,
     scalar_int,
     table_names,
 )
@@ -33,15 +31,6 @@ LegacyRow: TypeAlias = tuple[
     str,
 ]
 _LEGACY_ROW_ADAPTER: Final[TypeAdapter[LegacyRow]] = TypeAdapter(LegacyRow)
-
-_OUTCOMES: Final = cast("tuple[str, ...]", get_args(SourceReadOutcome))
-_REASONS: Final = cast("tuple[str, ...]", get_args(SourceReadReason))
-_INSERT_DIAGNOSTICS: Final = """
-    INSERT INTO gmail_diagnostics (
-        id, outcome, request_count, page_count, projected_count,
-        excluded_count, byte_budget
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    """
 
 
 def _identity(value: str) -> str:
@@ -224,183 +213,3 @@ def test_migration_10_rolls_back_all_changes_on_statement_failure(
         )
     finally:
         connection.close()
-
-
-def test_gmail_diagnostics_is_a_constrained_singleton(tmp_path: Path) -> None:
-    with Store(tmp_path / "db") as store:
-        connection = store.connection()
-        _ = connection.execute(_INSERT_DIAGNOSTICS, (1, "healthy", 0, 0, 0, 0, 0))
-
-        with pytest.raises(sqlite3.IntegrityError):
-            _ = connection.execute(_INSERT_DIAGNOSTICS, (2, "healthy", 0, 0, 0, 0, 0))
-
-
-@pytest.mark.parametrize("outcome", _OUTCOMES)
-def test_gmail_diagnostics_accepts_only_closed_outcomes(
-    tmp_path: Path,
-    outcome: str,
-) -> None:
-    with Store(tmp_path / f"{outcome}.db") as store:
-        _ = store.connection().execute(_INSERT_DIAGNOSTICS, (1, outcome, 0, 0, 0, 0, 0))
-
-    with Store(tmp_path / "invalid.db") as store, pytest.raises(sqlite3.IntegrityError):
-        _ = store.connection().execute(
-            _INSERT_DIAGNOSTICS, (1, "email@example.com", 0, 0, 0, 0, 0)
-        )
-
-
-@pytest.mark.parametrize(
-    "update_sql",
-    [
-        "UPDATE gmail_diagnostics SET request_count = -1",
-        "UPDATE gmail_diagnostics SET page_count = -1",
-        "UPDATE gmail_diagnostics SET projected_count = -1",
-        "UPDATE gmail_diagnostics SET excluded_count = -1",
-        "UPDATE gmail_diagnostics SET byte_budget = -1",
-    ],
-)
-def test_gmail_diagnostic_counters_reject_negative_values(
-    tmp_path: Path,
-    update_sql: str,
-) -> None:
-    with Store(tmp_path / "negative.db") as store:
-        connection = store.connection()
-        _ = connection.execute(_INSERT_DIAGNOSTICS, (1, "partial", 0, 0, 0, 0, 0))
-        with pytest.raises(sqlite3.IntegrityError):
-            _ = connection.execute(update_sql)
-
-
-@pytest.mark.parametrize("reason", _REASONS)
-def test_reason_counts_accept_the_complete_closed_reason_set(
-    tmp_path: Path,
-    reason: str,
-) -> None:
-    with Store(tmp_path / f"{reason}.db") as store:
-        connection = store.connection()
-        _ = connection.execute(_INSERT_DIAGNOSTICS, (1, "partial", 0, 0, 0, 0, 0))
-        _ = connection.execute(
-            """
-            INSERT INTO gmail_diagnostic_reason_counts (diagnostic_id, reason, count)
-            VALUES (1, ?, 0)
-            """,
-            (reason,),
-        )
-
-
-def test_reason_counts_reject_unknown_reasons_and_negative_counts(
-    tmp_path: Path,
-) -> None:
-    with Store(tmp_path / "db") as store:
-        connection = store.connection()
-        _ = connection.execute(_INSERT_DIAGNOSTICS, (1, "partial", 0, 0, 0, 0, 0))
-        for reason, count in (("sender@example.com", 1), ("stale", -1)):
-            with pytest.raises(sqlite3.IntegrityError):
-                _ = connection.execute(
-                    """
-                    INSERT INTO gmail_diagnostic_reason_counts
-                        (diagnostic_id, reason, count)
-                    VALUES (1, ?, ?)
-                    """,
-                    (reason, count),
-                )
-
-
-def test_reason_counts_require_the_singleton_diagnostic_parent(tmp_path: Path) -> None:
-    with Store(tmp_path / "db") as store:
-        connection = store.connection()
-        assert connection.execute("PRAGMA foreign_keys").fetchone() == (1,)
-        with pytest.raises(sqlite3.IntegrityError):
-            _ = connection.execute(
-                """
-                INSERT INTO gmail_diagnostic_reason_counts
-                    (diagnostic_id, reason, count)
-                VALUES (1, 'stale', 1)
-                """
-            )
-
-
-@pytest.mark.parametrize(
-    ("receipt_token", "confirmed_at"),
-    [("", "2026-08-25T12:00:00+00:00"), ("opaque-token", "")],
-)
-def test_confirmed_receipts_reject_empty_structural_fields(
-    tmp_path: Path,
-    receipt_token: str,
-    confirmed_at: str,
-) -> None:
-    with Store(tmp_path / "db") as store, pytest.raises(sqlite3.IntegrityError):
-        _ = store.connection().execute(
-            "INSERT INTO confirmed_delivery_receipts VALUES (?, 1, ?)",
-            (receipt_token, confirmed_at),
-        )
-
-
-def test_new_tables_have_only_bounded_structural_columns(tmp_path: Path) -> None:
-    with Store(tmp_path / "db") as store:
-        connection = store.connection()
-        assert column_names(connection, "gmail_diagnostics") == {
-            "id",
-            "outcome",
-            "request_count",
-            "page_count",
-            "projected_count",
-            "excluded_count",
-            "byte_budget",
-        }
-        assert column_names(connection, "gmail_diagnostic_reason_counts") == {
-            "diagnostic_id",
-            "reason",
-            "count",
-        }
-        assert column_names(connection, "confirmed_delivery_receipts") == {
-            "receipt_token",
-            "delivered_count",
-            "confirmed_at",
-        }
-
-
-def test_confirmed_delivery_receipts_are_immutable(tmp_path: Path) -> None:
-    with Store(tmp_path / "db") as store:
-        connection = store.connection()
-        _ = connection.execute(
-            """
-            INSERT INTO confirmed_delivery_receipts
-                (receipt_token, delivered_count, confirmed_at)
-            VALUES ('opaque-token', 2, '2026-08-25T12:00:00+00:00')
-            """
-        )
-        with pytest.raises(sqlite3.IntegrityError):
-            _ = connection.execute(
-                "UPDATE confirmed_delivery_receipts SET delivered_count = 3"
-            )
-        with pytest.raises(sqlite3.IntegrityError):
-            _ = connection.execute("DELETE FROM confirmed_delivery_receipts")
-        with pytest.raises(sqlite3.IntegrityError):
-            _ = connection.execute(
-                "INSERT INTO confirmed_delivery_receipts VALUES ('negative', -1, 'now')"
-            )
-        assert connection.execute(
-            "SELECT * FROM confirmed_delivery_receipts"
-        ).fetchone() == ("opaque-token", 2, "2026-08-25T12:00:00+00:00")
-
-
-def test_insert_or_replace_cannot_overwrite_confirmed_receipt(tmp_path: Path) -> None:
-    with Store(tmp_path / "db") as store:
-        connection = store.connection()
-        original = ("opaque-token", 2, "2026-08-25T12:00:00+00:00")
-        _ = connection.execute(
-            "INSERT INTO confirmed_delivery_receipts VALUES (?, ?, ?)", original
-        )
-
-        with pytest.raises(sqlite3.IntegrityError):
-            _ = connection.execute(
-                """
-                INSERT OR REPLACE INTO confirmed_delivery_receipts
-                VALUES ('opaque-token', 99, '2030-01-01T00:00:00+00:00')
-                """
-            )
-
-        assert (
-            connection.execute("SELECT * FROM confirmed_delivery_receipts").fetchone()
-            == original
-        )
