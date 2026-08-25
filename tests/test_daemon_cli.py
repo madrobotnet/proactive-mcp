@@ -1,36 +1,25 @@
-"""Daemon CLI integration matrix. # noqa: SIZE_OK - one real CLI surface."""
-
 from __future__ import annotations
 
-import json
 import os
 import signal
-import socket
 import subprocess
 import sys
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Final, NoReturn, Self
+from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from proactive_mcp import cli
 from proactive_mcp.cli import daemon as daemon_cli
 from proactive_mcp.cli.daemon import DaemonOnceResponse
 from proactive_mcp.config import load_config
 from proactive_mcp.delivery.daemon import DaemonDependencies, WatcherDaemon
-from proactive_mcp.delivery.evaluation import (
-    EvaluationPass,
-    EvaluationService,
-    PreparedSources,
-    SkippedSources,
-)
-from proactive_mcp.delivery.fallback import FallbackDispatcher
+from proactive_mcp.delivery.evaluation import EvaluationPass, PreparedSources
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.scheduler import EventScheduler
 from proactive_mcp.server.situation_tools import open_situation_service
 from proactive_mcp.server.status import status_response
 from proactive_mcp.situations.engine import EvaluationResult
 from proactive_mcp.situations.inputs import EngineInputs
-from proactive_mcp.sources.lazy_sync import ScheduledSourceProvider, SourceAccess
+from proactive_mcp.sources.lazy_sync import SourceAccess
 from proactive_mcp.store import (
     DaemonStatusStore,
     SourceFreshness,
@@ -50,7 +39,6 @@ from tests.daemon_test_support import (
 from tests.situation_test_support import FakeClock, utc_datetime
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     import pytest
@@ -62,38 +50,9 @@ _PID = 7
 _CONFIG_MINUTES = 5
 _OVERRIDE_MINUTES = 60
 _QUERY_OFFSET = timedelta(minutes=16)
-_UNTRUSTED_ERROR_TEXT: Final = "phase-canary /private/path SELECT secret bearer token"
 
 
-class _UntrustedPhaseError(RuntimeError):
-    def __init__(self) -> None:
-        super().__init__(_UNTRUSTED_ERROR_TEXT)
-
-
-@dataclass(slots=True)
-class _RecordingNotifySocket:
-    connected: str | bytes | None = None
-    payload: bytes | None = None
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        _exc_type: object,
-        _exc_value: object,
-        _traceback: object,
-    ) -> None:
-        return None
-
-    def connect(self, address: str | bytes) -> None:
-        self.connected = address
-
-    def sendall(self, payload: bytes) -> None:
-        self.payload = payload
-
-
-def _keep_daemon_row_running(_heartbeat: DaemonStatusStore) -> None:
+def _keep_daemon_row_running(*_args: object, **_kwargs: object) -> None:
     """Leave the liveness row running after the CLI wait ends."""
 
 
@@ -220,8 +179,6 @@ def test_once_exits_zero_on_an_ok_pass(
     assert result == 0
     assert payload.sources == "prepared"
     assert payload.gmail == "ok"
-    assert payload.gmail_diagnostics.outcome == "healthy"
-    assert payload.gmail_diagnostics.request_count == 0
     assert payload.calendar == "ok"
     assert payload.warning_count == 0
 
@@ -245,10 +202,10 @@ def test_once_exits_one_on_infrastructure_failure(
     result = cli.main(["daemon", "--once"])
     captured = capsys.readouterr()
 
-    # Then: the database phase is actionable without exception data.
-    assert result == 2
+    # Then: the failure is infrastructure, with no traceback or exception dump.
+    assert result == 1
     assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "database", "code": "open_failed"}
+    assert captured.err
     assert "Traceback" not in captured.err
     assert "No space left on device" not in captured.err
 
@@ -273,7 +230,7 @@ def test_malformed_config_exits_two(
     # Then: a precondition error is reported without a traceback.
     assert result == 2
     assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "config", "code": "invalid"}
+    assert captured.err
     assert "Traceback" not in captured.err
 
 
@@ -320,7 +277,6 @@ def test_unsafe_database_path_exits_two(
     # Then: the unsafe path is a startup precondition, not infrastructure.
     assert result == 2
     assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "database", "code": "unsafe_path"}
     assert "Traceback" not in captured.err
     assert str(database) not in captured.err
 
@@ -420,61 +376,6 @@ def test_sigint_stops_the_continuous_scheduler_without_waiting() -> None:
         _ = signal.signal(signal.SIGTERM, previous_term)
 
 
-def test_notify_service_ready_sends_systemd_readiness(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given: a systemd notification socket subscribed before daemon startup.
-    notifier = _RecordingNotifySocket()
-
-    def open_notifier(
-        family: socket.AddressFamily,
-        kind: socket.SocketKind,
-    ) -> _RecordingNotifySocket:
-        assert family == unix_family
-        assert kind == socket.SOCK_DGRAM
-        return notifier
-
-    unix_family = getattr(socket, "AF_UNIX", 1)
-    monkeypatch.setattr(socket, "AF_UNIX", unix_family, raising=False)
-    monkeypatch.setenv("NOTIFY_SOCKET", "/run/user/1000/notify")
-    monkeypatch.setattr(socket, "socket", open_notifier)
-
-    # When: the daemon announces that startup ownership is persisted.
-    daemon_cli.notify_service_ready()
-
-    # Then: systemd receives its readiness event synchronously.
-    assert notifier.connected == "/run/user/1000/notify"
-    assert notifier.payload == b"READY=1"
-
-
-def test_service_notify_failure_is_redacted_and_releases_heartbeat(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Given: systemd readiness notification fails with untrusted details.
-    database = tmp_path / "proactive.db"
-    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
-
-    def fail_notify() -> NoReturn:
-        raise _UntrustedPhaseError
-
-    monkeypatch.setattr(daemon_cli, "notify_service_ready", fail_notify)
-
-    # When: the continuous daemon reaches its readiness boundary.
-    result = cli.main(["daemon"])
-    captured = capsys.readouterr()
-
-    # Then: the failure is bounded and the aborted owner is stopped.
-    with Store(database) as store:
-        liveness = store.daemon.status().liveness
-    assert result == 2
-    assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "service", "code": "notify_failed"}
-    assert "canary" not in captured.err
-    assert liveness == "stopped"
-
-
 def test_once_subprocess_exits_without_hanging_and_stays_pii_free(
     tmp_path: Path,
 ) -> None:
@@ -491,8 +392,6 @@ def test_once_subprocess_exits_without_hanging_and_stays_pii_free(
     assert "@" not in combined
     payload = DaemonOnceResponse.model_validate_json(result.stdout)
     assert payload.sources == "not_configured"
-    assert payload.gmail_diagnostics.outcome == "stale"
-    assert "path" not in payload.gmail_diagnostics.model_dump()
 
 
 def test_poll_interval_override_is_visible_to_status_at_sixteen_minutes(
@@ -599,200 +498,3 @@ def test_once_with_override_stops_instead_of_holding_the_cadence(
     assert status.daemon.liveness == "stopped"
     assert status.daemon.status == "not_running"
     assert reader.reads == [1]
-
-
-def test_source_sync_failure_emits_only_phase_and_code(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Given: source preparation raises untrusted exception text.
-    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
-
-    def fail_source(_provider: ScheduledSourceProvider) -> NoReturn:
-        raise _UntrustedPhaseError
-
-    monkeypatch.setattr(ScheduledSourceProvider, "prepare_sources", fail_source)
-
-    # When: the daemon runs one pass.
-    result = cli.main(["daemon", "--once"])
-    captured = capsys.readouterr()
-
-    # Then: source failure identity is bounded and safe.
-    assert result == 2
-    assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "source_sync", "code": "failed"}
-    assert "canary" not in captured.err
-
-
-def test_evaluation_failure_emits_only_phase_and_code(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Given: evaluation raises untrusted exception text.
-    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
-
-    def fail_evaluation(_service: EvaluationService) -> NoReturn:
-        raise _UntrustedPhaseError
-
-    monkeypatch.setattr(EvaluationService, "run_once", fail_evaluation)
-
-    # When: the daemon runs one pass.
-    result = cli.main(["daemon", "--once"])
-    captured = capsys.readouterr()
-
-    # Then: evaluation failure identity is bounded and safe.
-    assert result == 2
-    assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "evaluation", "code": "failed"}
-    assert "canary" not in captured.err
-
-
-def test_notification_failure_emits_only_phase_and_code(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Given: notification dispatch raises untrusted exception text.
-    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
-
-    def fail_notification(_dispatcher: FallbackDispatcher, _now: datetime) -> NoReturn:
-        raise _UntrustedPhaseError
-
-    monkeypatch.setattr(FallbackDispatcher, "dispatch", fail_notification)
-
-    # When: the daemon runs one pass.
-    result = cli.main(["daemon", "--once"])
-    captured = capsys.readouterr()
-
-    # Then: notification failure identity is bounded and safe.
-    assert result == 2
-    assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "notification", "code": "failed"}
-    assert "canary" not in captured.err
-
-
-def test_heartbeat_failure_emits_only_phase_and_code(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Given: the heartbeat store raises untrusted exception text.
-    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
-
-    def fail_heartbeat(
-        _heartbeat: DaemonStatusStore,
-        _pid: int,
-        *,
-        poll_interval: timedelta | None = None,
-    ) -> NoReturn:
-        del poll_interval
-        raise _UntrustedPhaseError
-
-    monkeypatch.setattr(DaemonStatusStore, "try_record_start", fail_heartbeat)
-
-    # When: the daemon starts one pass.
-    result = cli.main(["daemon", "--once"])
-    captured = capsys.readouterr()
-
-    # Then: heartbeat failure identity is bounded and safe.
-    assert result == 2
-    assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "heartbeat", "code": "failed"}
-    assert "canary" not in captured.err
-
-
-def test_credential_failure_emits_only_phase_and_code(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Given: secure credential storage is unavailable for this pass.
-    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
-
-    def unavailable(_provider: ScheduledSourceProvider) -> SkippedSources:
-        return SkippedSources("credential_storage_unavailable")
-
-    monkeypatch.setattr(ScheduledSourceProvider, "prepare_sources", unavailable)
-
-    # When: the daemon runs one pass.
-    result = cli.main(["daemon", "--once"])
-    captured = capsys.readouterr()
-
-    # Then: credential failure identity is bounded and safe.
-    assert result == 2
-    assert captured.out == ""
-    assert json.loads(captured.err) == {"phase": "credential", "code": "unavailable"}
-
-
-def test_runtime_ownership_conflict_emits_only_phase_and_code(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # Given: another live daemon owns the singleton runtime row.
-    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
-
-    def reject(
-        _heartbeat: DaemonStatusStore,
-        _pid: int,
-        *,
-        poll_interval: timedelta | None = None,
-        incumbent_is_alive: Callable[[int], bool] | None = None,
-    ) -> bool:
-        del poll_interval, incumbent_is_alive
-        return False
-
-    monkeypatch.setattr(DaemonStatusStore, "try_record_start", reject)
-
-    # When: the challenger starts one pass.
-    result = cli.main(["daemon", "--once"])
-    captured = capsys.readouterr()
-
-    # Then: ownership rejection is failure, never misleading success.
-    assert result == 2
-    assert captured.out == ""
-    assert json.loads(captured.err) == {
-        "phase": "runtime_ownership",
-        "code": "ownership_conflict",
-    }
-
-
-def test_continuous_daemon_reclaims_dead_owner_after_systemd_restart(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given: a crashed daemon left a fresh running row behind.
-    database = tmp_path / "proactive.db"
-    clock = FakeClock(_START)
-    with Store(database, clock=clock) as crashed:
-        assert crashed.daemon.try_record_start(
-            pid=4242,
-            poll_interval=timedelta(minutes=_CONFIG_MINUTES),
-        )
-    scheduler = RecordingScheduler(stop_after=1)
-    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
-    monkeypatch.setattr(daemon_cli, "daemon_clock", lambda: clock)
-    monkeypatch.setattr(daemon_cli, "stopping_scheduler", lambda: scheduler)
-
-    def process_is_dead(_pid: int) -> bool:
-        return False
-
-    monkeypatch.setattr(
-        daemon_cli,
-        "_process_is_alive",
-        process_is_dead,
-        raising=False,
-    )
-
-    # When: systemd starts a replacement before the old heartbeat expires.
-    result = cli.main(["daemon"])
-    with Store(database, clock=clock) as store:
-        status = store.daemon.status()
-
-    # Then: the dead owner is replaced and the new daemon runs one clean cycle.
-    assert result == 0
-    assert status.pid == os.getpid()
-    assert status.liveness == "stopped"
-    assert status.cycle_count == 1

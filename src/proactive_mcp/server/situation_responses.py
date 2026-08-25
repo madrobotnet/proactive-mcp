@@ -16,14 +16,6 @@ from proactive_mcp.store import (  # noqa: TC001 - resolved at runtime by Pydant
     SourceErrorCode,
     SourceFreshnessStatus,
 )
-from proactive_mcp.store.sync import (
-    GMAIL_READ_BYTE_BUDGET,
-    SourceReadDiagnostics,
-    SourceReadOutcome,
-    SourceReadReason,
-    SourceReadReasonCount,
-    source_failure_diagnostics,
-)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -46,7 +38,6 @@ __all__ = [
     "UNTRUSTED_MEMORY_NOTICE",
     "BudgetResponse",
     "ConfirmDeliveryResponse",
-    "GmailFreshnessResponse",
     "GoogleFreshnessResponse",
     "ListSituationsResponse",
     "MuteResponse",
@@ -54,15 +45,12 @@ __all__ = [
     "SituationEvidenceResponse",
     "SituationResponse",
     "SourceFreshnessResponse",
-    "SourceReadDiagnosticsResponse",
     "UntrustedMemoryText",
     "UntrustedQuotedText",
     "budget_response",
     "freshness_response",
-    "gmail_freshness_diagnostics",
     "google_freshness_response",
     "situation_response",
-    "source_read_diagnostics_response",
 ]
 
 
@@ -78,32 +66,12 @@ class SourceFreshnessResponse(BaseModel):
     error_code: SourceErrorCode | None
 
 
-class SourceReadDiagnosticsResponse(BaseModel):
-    """PII-free bounded counters and outcome for one Gmail read."""
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
-
-    outcome: SourceReadOutcome
-    request_count: int
-    page_count: int
-    projected_count: int
-    excluded_count: int
-    byte_budget: int
-    reason_counts: dict[SourceReadReason, int]
-
-
-class GmailFreshnessResponse(SourceFreshnessResponse):
-    """Legacy Gmail freshness plus additive bounded read diagnostics."""
-
-    diagnostics: SourceReadDiagnosticsResponse
-
-
 class GoogleFreshnessResponse(BaseModel):
     """Freshness of both read-only Google sources, always reported together."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    gmail: GmailFreshnessResponse
+    gmail: SourceFreshnessResponse
     calendar: SourceFreshnessResponse
 
 
@@ -176,8 +144,8 @@ class ProactiveCheckResponse(BaseModel):
     situations: tuple[SituationResponse, ...]
     receipt_token: str | None = Field(
         description=(
-            "Opaque receipt. Confirm via confirm_delivery exactly once only when "
-            "situations is nonempty and this receipt_token is non-null."
+            "Opaque short-lived receipt. After this result reaches the host, pass "
+            "it to confirm_delivery; otherwise the situations remain pending."
         )
     )
     freshness: GoogleFreshnessResponse
@@ -225,77 +193,13 @@ def freshness_response(freshness: SourceFreshness) -> SourceFreshnessResponse:
     )
 
 
-def source_read_diagnostics_response(
-    diagnostics: SourceReadDiagnostics,
-) -> SourceReadDiagnosticsResponse:
-    """Serialize closed diagnostic reasons as a structured count map."""
-    return SourceReadDiagnosticsResponse(
-        outcome=diagnostics.outcome,
-        request_count=diagnostics.request_count,
-        page_count=diagnostics.page_count,
-        projected_count=diagnostics.projected_count,
-        excluded_count=diagnostics.excluded_count,
-        byte_budget=diagnostics.byte_budget,
-        reason_counts={item.reason: item.count for item in diagnostics.reason_counts},
-    )
-
-
-def gmail_freshness_diagnostics(
-    freshness: SourceFreshness,
-) -> SourceReadDiagnostics:
-    """Derive Gmail diagnostics from existing migration-9 freshness state."""
-    match freshness.status:
-        case "ok":
-            return _status_diagnostics("healthy")
-        case "stale":
-            return _status_diagnostics("stale", "stale")
-        case "not_configured":
-            return _status_diagnostics("stale", "not_configured")
-        case "never_synced":
-            return _status_diagnostics("stale", "never_synced")
-        case "needs_reauth":
-            reason = freshness.error_code or "invalid_grant"
-            return _status_diagnostics("auth_error", reason)
-        case "error":
-            return source_failure_diagnostics(freshness.error_code or "unknown")
-
-
-def _status_diagnostics(
-    outcome: SourceReadOutcome,
-    reason: SourceReadReason | None = None,
-) -> SourceReadDiagnostics:
-    reason_counts = () if reason is None else (SourceReadReasonCount(reason, 1),)
-    return SourceReadDiagnostics(
-        outcome=outcome,
-        request_count=0,
-        page_count=0,
-        projected_count=0,
-        excluded_count=0,
-        byte_budget=GMAIL_READ_BYTE_BUDGET,
-        reason_counts=reason_counts,
-    )
-
-
 def google_freshness_response(
     gmail: SourceFreshness,
     calendar: SourceFreshness,
-    gmail_diagnostics: SourceReadDiagnostics | None = None,
 ) -> GoogleFreshnessResponse:
     """Serialize both Google sources in their stable reporting order."""
-    diagnostics = (
-        gmail_freshness_diagnostics(gmail)
-        if gmail_diagnostics is None
-        else gmail_diagnostics
-    )
     return GoogleFreshnessResponse(
-        gmail=GmailFreshnessResponse(
-            status=gmail.status,
-            last_success_at=_timestamp(gmail.last_success_at),
-            last_attempt_at=_timestamp(gmail.last_attempt_at),
-            age_seconds=gmail.age_seconds,
-            error_code=gmail.error_code,
-            diagnostics=source_read_diagnostics_response(diagnostics),
-        ),
+        gmail=freshness_response(gmail),
         calendar=freshness_response(calendar),
     )
 

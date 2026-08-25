@@ -2,7 +2,7 @@
 
 ## 1. 받은 것
 
-Owner에게 Linux aarch64 archive, 다른 인증 채널의 archive SHA-256, 필요하면 OAuth JSON을 각각 받으세요. archive는 `~/Downloads/proactive-mcp-alpha-linux-aarch64-py311.tar.gz`에 저장합니다. 알파에서는 저장소 clone, PyPI, `uvx`를 사용하지 않습니다.
+Owner에게 wheel, 다른 인증 채널의 SHA-256, 필요하면 OAuth JSON을 각각 받으세요. 알파에서는 저장소 clone, PyPI, `uvx`를 사용하지 않습니다.
 
 ## 2. 에이전트에게 붙여 넣기
 
@@ -12,11 +12,9 @@ Owner에게 Linux aarch64 archive, 다른 인증 채널의 archive SHA-256, 필�
 이 Linux PC에 proactive-mcp 클로즈드 알파를 설치하고, 지금 이 에이전트에 MCP로 등록해 주세요. 제가 명령을 외우거나 mcp add 명령과 설정 파일 편집을 직접 하지 않게 해 주세요.
 
 규칙:
-- Hermes Agent는 이번 클로즈드 알파 지원 대상이 아닙니다. 현재 에이전트가 Hermes라면 설치나 등록을 시작하지 말고 지원되는 에이전트로 돌아가세요.
 - 저장소 clone, PyPI, uvx, pip install proactive-mcp, 관리자 권한 사용, PROACTIVE_DATABASE 설정은 금지입니다.
-- Linux aarch64와 Python 3.11만 지원합니다. archive는 ~/Downloads/proactive-mcp-alpha-linux-aarch64-py311.tar.gz에 있습니다. sha256sum으로 다른 채널에서 받은 archive SHA-256과 먼저 비교하고, 다르면 추출하거나 설치하지 말고 멈추세요. 맞아도 ~/Downloads/proactive-mcp-alpha/가 이미 있으면 지우거나 덮어쓰지 말고 멈춰서 알려 주세요. 경로가 없을 때만 ~/Downloads에 풀어 새 ~/Downloads/proactive-mcp-alpha/를 만드세요.
-- 새 bundle 안에서 `sha256sum --check SHA256SUMS`를 실행하세요. 이어서 `comm -3 <(awk '{print $2}' SHA256SUMS | sort) <(find wheels -maxdepth 1 -type f -printf '%p\n' | sort)`를 실행해 출력이 없는지 확인하세요. checksum이 하나라도 실패하거나 목록 비교에 출력이 있으면 venv를 만들거나 바꾸기 전에 멈추세요.
-- Python 3.11과 uv가 없으면 사용자 권한으로 설치하세요. `bundle-metadata.json`의 `project_wheel` 값을 읽고 `wheels/` 아래의 단일 파일명인지 확인한 뒤, 그 파일이 `SHA256SUMS`에 정확히 한 번 있는지 확인하세요. 모든 확인이 끝난 뒤에만 ~/venvs/proactive 전용 venv를 만들고, `uv pip install --offline --no-index --find-links ~/Downloads/proactive-mcp-alpha/wheels ~/Downloads/proactive-mcp-alpha/wheels/<project_wheel>`처럼 metadata가 지정한 정확한 wheel 경로로 설치하세요. `proactive-mcp`라는 패키지 이름만 넘기거나 네트워크, 따로 받은 wheel을 설치에 쓰지 마세요.
+- wheel은 ~/Downloads/proactive_mcp-0.1.0-py3-none-any.whl에 있습니다. sha256sum으로 다른 채널에서 받은 SHA-256과 비교하고, 다르면 설치를 멈추세요.
+- Python 3.11과 uv가 없으면 사용자 권한으로 설치하세요. ~/venvs/proactive 전용 venv를 만들고 wheel만 설치하세요.
 - OAuth JSON이 있으면 ~/.proactive-mcp를 mode 0700으로 만들고 client_secret.json을 mode 0600으로 설치한 뒤 권한을 확인하세요. 기존 파일을 단순히 mv해서 넓은 권한을 보존하지 마세요. 없으면 제가 BYO인지 확인한 뒤 docs/SETUP_GOOGLE.md를 안내하세요.
 - 이 에이전트에 MCP를 등록하세요. 일상용은 serve, 스케줄용은 serve-scheduled입니다. 등록 설정에는 ~/를 쓰지 말고 /home/사용자명/venvs/proactive/bin/proactive-mcp 같은 절대 경로만 쓰세요.
 - 이 호스트의 세션 시작 규칙에 "새 세션마다 proactive_check를 한 번 호출하고, 결과를 받은 뒤 receipt_token이 있을 때만 confirm_delivery를 정확히 한 번 호출한다"를 넣고 새 세션에서 실제 호출을 확인하세요.
@@ -32,7 +30,7 @@ Owner에게 Linux aarch64 archive, 다른 인증 채널의 archive SHA-256, 필�
 
 ## 3. 성공 기준
 
-`database.status=healthy`, `migration_version=9`, Gmail과 Calendar가 모두 `ok`이면 성공입니다. 읽기 전용 권한은 정확히 `gmail.readonly`와 `calendar.readonly`입니다. 세션 시작 규칙과 예약 전달 작업에서 에이전트가 `proactive_check`를 실제 호출하고 `receipt_token`이 있을 때만 `confirm_delivery`를 한 번 호출해야 합니다. continuous watcher도 등록되어 실행 중이어야 합니다. 등록하지 못한 경우에는 주기 sync와 OS 알림 폴백이 없다는 설명을 듣고 degraded mode에 명시적으로 동의해야 하며 그때만 `overall=degraded`를 허용합니다.
+`database.status=healthy`, `migration_version=9`, Gmail과 Calendar가 모두 `ok`이면 성공입니다. 읽기 전용 권한은 정확히 `gmail.readonly`와 `calendar.readonly`입니다. 세션 시작 규칙과 예약 전달 작업에서 에이전트가 `proactive_check`를 실제 호출하고, `receipt_token`이 있을 때만 `confirm_delivery`를 한 번 호출해야 합니다. continuous watcher도 등록되어 실행 중이어야 합니다. 등록하지 못한 경우에는 주기 sync와 OS 알림 폴백이 없다는 설명을 듣고 degraded mode에 명시적으로 동의해야 하며, 그때만 `overall=degraded`를 허용합니다.
 
 ## 4. 보고
 
@@ -41,35 +39,3 @@ Owner에게 Linux aarch64 archive, 다른 인증 채널의 archive SHA-256, 필�
 ## 5. 되돌리기 프롬프트
 
 제거가 필요하면 에이전트에게 다음과 같이 요청하세요. "먼저 proactive-mcp 자격 증명을 삭제하고 성공을 확인해 주세요. 그다음 이 에이전트의 MCP 등록과 상태 폴더를 정리해 주세요. 자격 증명 삭제가 실패하면 상태 폴더는 지우지 말고 알려 주세요."
-
-에이전트는 먼저 예약 작업을 중지한 뒤 아래 credential-first 블록을 그대로 실행해야 합니다. `disconnect`가 실패하면 `set -e`가 이후 삭제를 막습니다. 이 경우 `~/.proactive-mcp`와 그 안의 tombstone을 그대로 두고 Google 계정 권한을 취소한 뒤 실패를 보고하세요.
-
-```bash
-set -euo pipefail
-PROACTIVE_BIN="$HOME/venvs/proactive/bin/proactive-mcp"
-"$PROACTIVE_BIN" service remove
-"$PROACTIVE_BIN" disconnect
-```
-
-`{"google":"disconnected"}`가 출력된 경우에만 현재 에이전트와 일치하는 MCP 제거 블록 하나를 실행하세요.
-
-```bash
-# Grok CLI
-grok mcp remove --scope user proactive
-grok mcp remove --scope user proactive_scheduled
-```
-
-```bash
-# Codex CLI
-codex mcp remove proactive
-codex mcp remove proactive_scheduled
-```
-
-그다음에만 proactive-mcp 전용 상태, venv, 추출한 bundle을 삭제합니다. 다른 MCP 프로필이나 설정은 삭제하지 마세요.
-
-```bash
-rm -rf \
-  "$HOME/.proactive-mcp" \
-  "$HOME/venvs/proactive" \
-  "$HOME/Downloads/proactive-mcp-alpha"
-```

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final, Literal, TypeAlias, final
+from typing import TYPE_CHECKING, Literal, TypeAlias, final
 
 from typing_extensions import override
 
@@ -19,12 +19,7 @@ from .credentials import (
     CredentialStore,
     MissingRefreshTokenError,
 )
-from .gmail import (
-    DEFAULT_MAX_PAGES,
-    DEFAULT_MAX_PROJECTED_THREADS,
-    GmailAdapter,
-    GmailHttpResponse,
-)
+from .gmail import GmailAdapter, GmailHttpResponse
 from .google_sync import (
     CalendarEventsReader,
     GmailProfileReader,
@@ -76,9 +71,6 @@ _MAX_GMAIL_THREAD_BYTES = 1_000_000
 _MAX_CALENDAR_PAGE_BYTES = 2_000_000
 _MAX_SOURCE_SYNC_BYTES = 8_000_000
 _MAX_SOURCE_SYNC_REQUESTS = 64
-_MAX_GMAIL_SYNC_REQUESTS: Final[int] = (
-    1 + DEFAULT_MAX_PAGES + DEFAULT_MAX_PROJECTED_THREADS
-)
 
 
 @final
@@ -90,12 +82,9 @@ class _SourceReadBudget:
     bytes_remaining: int
     requests_remaining: int
 
-    def __init__(
-        self,
-        request_capacity: int = _MAX_SOURCE_SYNC_REQUESTS,
-    ) -> None:
+    def __init__(self) -> None:
         self.bytes_remaining = _MAX_SOURCE_SYNC_BYTES
-        self.requests_remaining = request_capacity
+        self.requests_remaining = _MAX_SOURCE_SYNC_REQUESTS
 
     def request_limit(self, endpoint_limit: int) -> int:
         if self.requests_remaining <= 0 or self.bytes_remaining <= 0:
@@ -122,22 +111,12 @@ def configure_google_sources(
         store.set_google_auth_state("configured")
 
 
-def disconnect_google_sources(database_path: Path) -> None:
-    """Delete Google credentials before clearing persisted source auth state."""
-    paths = ProactivePaths.for_database(database_path)
-    CredentialStore(paths.state_directory).delete()
-    with Store(paths.database) as store:
-        store.set_google_auth_state("not_configured")
-
-
 @dataclass(frozen=True, slots=True)
 class _GmailReadTransport:
     """Adapt the shared transport to Gmail's nominal response contract."""
 
     transport: GoogleAuthenticatedGetTransport
-    budget: _SourceReadBudget = field(
-        default_factory=lambda: _SourceReadBudget(_MAX_GMAIL_SYNC_REQUESTS)
-    )
+    budget: _SourceReadBudget = field(default_factory=_SourceReadBudget)
 
     def request(
         self,
@@ -279,6 +258,5 @@ __all__ = [
     "MissingRefreshTokenError",
     "OAuthClientConfigError",
     "configure_google_sources",
-    "disconnect_google_sources",
     "run_google_read_smoke",
 ]

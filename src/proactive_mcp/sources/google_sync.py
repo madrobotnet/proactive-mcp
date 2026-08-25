@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias
 
 from typing_extensions import override
 
@@ -13,13 +12,6 @@ from proactive_mcp.situations.inputs import EngineInputs, SourceSnapshot
 from proactive_mcp.sources.calendar import CalendarError
 from proactive_mcp.sources.credentials import CredentialStorageError
 from proactive_mcp.sources.gmail import GmailError
-from proactive_mcp.store.sync import (
-    GMAIL_READ_BYTE_BUDGET,
-    SourceReadDiagnostics,
-    SourceReadReason,
-    SourceReadReasonCount,
-    source_failure_diagnostics,
-)
 
 if TYPE_CHECKING:
     from proactive_mcp.sources.calendar import CalendarReadResult
@@ -101,16 +93,6 @@ class GoogleReadDependencies:
     credentials: GoogleCredentialStore
 
 
-_LEGACY_GMAIL_DIAGNOSTICS: Final = SourceReadDiagnostics(
-    outcome="stale",
-    request_count=0,
-    page_count=0,
-    projected_count=0,
-    excluded_count=0,
-    byte_budget=GMAIL_READ_BYTE_BUDGET,
-)
-
-
 @dataclass(frozen=True, slots=True)
 class GoogleReadSummary:
     """PII-free observable outcome of one Google read operation."""
@@ -122,7 +104,6 @@ class GoogleReadSummary:
     calendar_ids: tuple[str, ...]
     calendar_error_code: SourceErrorCode | None
     credential_cleanup_failed: bool = False
-    gmail_diagnostics: SourceReadDiagnostics = _LEGACY_GMAIL_DIAGNOSTICS
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,13 +113,6 @@ class _SourceReadOutcome:
     count: int
     ids: tuple[str, ...]
     error_code: SourceSyncFailureCode | None
-
-
-@dataclass(frozen=True, slots=True)
-class _GmailReadOutcome(_SourceReadOutcome):
-    """Internal Gmail outcome with its bounded read diagnostics."""
-
-    diagnostics: SourceReadDiagnostics
 
 
 class GoogleSyncService:
@@ -182,19 +156,17 @@ class GoogleSyncService:
                 warning_codes=(f"gmail_{error.error_code}",),
                 error_code=error.error_code,
             )
-            gmail_diagnostics = source_failure_diagnostics(error.error_code)
         else:
             gmail_snapshot = SourceSnapshot(
                 generation=gmail_generation,
                 items=gmail_result.threads,
-                complete=gmail_result.coverage_complete,
+                complete=gmail_result.is_complete,
                 sync_cursor=gmail_result.provider_history_cursor,
                 warning_codes=tuple(gmail_result.degradation_reasons),
                 resolve_absent=gmail_result.allows_absent_resolution,
                 resolution_scope_ids=gmail_result.resolution_safe_thread_ids,
                 resolution_excluded_ids=(gmail_result.resolution_excluded_thread_ids),
             )
-            gmail_diagnostics = _gmail_read_diagnostics(gmail_result)
         try:
             calendar_result = self._dependencies.calendar.list_events()
         except InvalidGrantError:
@@ -221,7 +193,6 @@ class GoogleSyncService:
         return EngineInputs(
             gmail_threads=gmail_snapshot,
             calendar_events=calendar_snapshot,
-            gmail_diagnostics=gmail_diagnostics,
         )
 
     def _invalid_grant_inputs(
@@ -246,24 +217,14 @@ class GoogleSyncService:
                 warning_codes=("calendar_invalid_grant",),
                 error_code="invalid_grant",
             ),
-            gmail_diagnostics=source_failure_diagnostics("invalid_grant"),
         )
 
-    def _sync_gmail(self) -> _GmailReadOutcome:
+    def _sync_gmail(self) -> _SourceReadOutcome:
         try:
             result = self._dependencies.gmail.read_inbox_threads()
         except (GmailError, GoogleTransportError) as error:
-            self._dependencies.store.record_sync_failure(
-                "gmail",
-                error_code=error.error_code,
-            )
-            return _GmailReadOutcome(
-                count=0,
-                ids=(),
-                error_code=error.error_code,
-                diagnostics=source_failure_diagnostics(error.error_code),
-            )
-        if result.coverage_complete:
+            return self._record_failure("gmail", error.error_code)
+        if result.is_complete:
             self._dependencies.store.record_sync_success(
                 "gmail",
                 sync_cursor=result.provider_history_cursor,
@@ -275,11 +236,10 @@ class GoogleSyncService:
                 error_code="degraded",
             )
             error_code = "degraded"
-        return _GmailReadOutcome(
+        return _SourceReadOutcome(
             count=len(result.threads),
             ids=tuple(thread.thread_id for thread in result.threads),
             error_code=error_code,
-            diagnostics=_gmail_read_diagnostics(result),
         )
 
     def _sync_calendar(self) -> _SourceReadOutcome:
@@ -325,12 +285,11 @@ class GoogleSyncService:
             calendar_ids=(),
             calendar_error_code="invalid_grant",
             credential_cleanup_failed=cleanup_failed,
-            gmail_diagnostics=source_failure_diagnostics("invalid_grant"),
         )
 
 
 def _summary(
-    gmail: _GmailReadOutcome,
+    gmail: _SourceReadOutcome,
     calendar: _SourceReadOutcome,
 ) -> GoogleReadSummary:
     """Translate internal source outcomes to a redacted, public result."""
@@ -341,31 +300,6 @@ def _summary(
         calendar_count=calendar.count,
         calendar_ids=calendar.ids,
         calendar_error_code=calendar.error_code,
-        gmail_diagnostics=gmail.diagnostics,
-    )
-
-
-def _gmail_read_diagnostics(result: GmailInboxReadResult) -> SourceReadDiagnostics:
-    """Summarize bounded Gmail work without retaining source values."""
-    counts: Counter[SourceReadReason] = Counter(result.degradation_reasons)
-    reason_counts = (
-        tuple(
-            SourceReadReasonCount(reason, count)
-            for reason, count in result.degradation_reason_counts
-        )
-        if result.degradation_reason_counts
-        else tuple(
-            SourceReadReasonCount(reason, count) for reason, count in counts.items()
-        )
-    )
-    return SourceReadDiagnostics(
-        outcome="healthy" if result.coverage_complete else "partial",
-        request_count=result.request_count,
-        page_count=result.page_count,
-        projected_count=result.projected_thread_count,
-        excluded_count=result.excluded_thread_count,
-        byte_budget=GMAIL_READ_BYTE_BUDGET,
-        reason_counts=reason_counts,
     )
 
 

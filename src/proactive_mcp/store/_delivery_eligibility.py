@@ -12,19 +12,6 @@ if TYPE_CHECKING:
     from ._situation_reader import SituationReader
 
 _RESERVED_NON_REPLY_SLOTS: Final[int] = 1
-CURRENT_SOURCE_ELIGIBILITY: Final = """
-                  AND (
-                      situation_type != 'reply_deadline' OR NOT EXISTS (
-                          SELECT 1 FROM source_detection_generations
-                          WHERE source = 'gmail'
-                      ) OR EXISTS (
-                          SELECT 1 FROM source_detection_generations
-                          WHERE source = 'gmail'
-                            AND issued_generation = applied_generation
-                            AND status = 'complete'
-                      )
-                  )
-                  """
 # Only interpolates the shared column projection; values still bind through ?.
 _SELECT_CONSUMABLE_NON_REPLY: Final = f"""
             SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))

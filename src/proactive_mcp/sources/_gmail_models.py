@@ -128,20 +128,11 @@ class GmailInboxReadResult:
     fetched_at: str
     provider_history_cursor: str
     page_count: int
-    coverage_complete: bool
+    is_complete: bool
     degradation_reasons: tuple[GmailDegradationReason, ...]
-    request_count: int = 0
-    projected_thread_count: int = 0
-    excluded_thread_count: int = 0
     allows_absent_resolution: bool = False
     resolution_safe_thread_ids: frozenset[str] = frozenset()
     resolution_excluded_thread_ids: frozenset[str] = frozenset()
-    degradation_reason_counts: tuple[tuple[GmailDegradationReason, int], ...] = ()
-
-    @property
-    def is_complete(self) -> bool:
-        """Return the compatibility alias for provider coverage completeness."""
-        return self.coverage_complete
 
 
 __all__ = [

@@ -249,27 +249,6 @@ def test_page_cap_returns_bounded_partial_result() -> None:
     assert result.degradation_reasons == ("pagination_limit",)
 
 
-def test_inbox_result_exposes_bounded_request_and_thread_counts() -> None:
-    # Given: one listed thread has one projectable detail response.
-    thread_url = f"{GMAIL_THREADS_URL}/thread-deadline"
-    transport = FakeGmailTransport(
-        {
-            GMAIL_PROFILE_URL: {None: (200, _fixture("profile.json"))},
-            GMAIL_THREADS_URL: {None: (200, _fixture("threads_deadline.json"))},
-            thread_url: {None: (200, _fixture("thread_deadline.json"))},
-        }
-    )
-
-    # When: the adapter returns its in-memory projection result.
-    result = _adapter(transport).read_inbox_threads()
-
-    # Then: bounded work and coverage are exposed as counts.
-    assert result.request_count == 3
-    assert result.page_count == 1
-    assert result.projected_thread_count == 1
-    assert result.excluded_thread_count == 0
-
-
 def test_logs_and_errors_omit_email_pii(caplog: pytest.LogCaptureFixture) -> None:
     transport = FakeGmailTransport(
         {

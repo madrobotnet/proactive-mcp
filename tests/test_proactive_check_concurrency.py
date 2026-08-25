@@ -107,6 +107,4 @@ def test_a_second_instance_never_redelivers_a_claimed_situation(
     # Then: the claim is not re-offered to the other instance (§5.1).
     assert len(claimed.situations) == 1
     assert repeated.situations == ()
-    assert repeated.receipt_token is None
-    assert repeated.held_count == 1
-    assert repeated.all_clear is False
+    assert repeated.held_count == 0

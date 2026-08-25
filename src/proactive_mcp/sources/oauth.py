@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Final, Protocol, TypedDict, final
+from typing import TYPE_CHECKING, ClassVar, Final, Protocol, TypedDict
 
 from google_auth_oauthlib.flow import InstalledAppFlow, WSGITimeoutError
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
@@ -17,7 +16,6 @@ from proactive_mcp.sources.credentials import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
 _LOOPBACK_HOST: Final[str] = "127.0.0.1"
@@ -26,8 +24,6 @@ _AUTHORIZATION_TIMEOUT_SECONDS: Final[int] = 300
 _GOOGLE_AUTHORIZATION_ENDPOINT: Final[str] = "https://accounts.google.com/o/oauth2/auth"
 _GOOGLE_OAUTH_ENDPOINT: Final[str] = "https://oauth2.googleapis.com/token"
 _SUPPORTED_REDIRECT_URIS: Final[tuple[str, ...]] = ("http://127.0.0.1",)
-HEADLESS_AUTHORIZATION_URL_EVENT: Final = "oauth.authorization_url"
-HEADLESS_SETUP_SUCCESS_EVENT: Final = "Google read-only sources configured."
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,39 +131,6 @@ _CLIENT_CONFIG_ADAPTER: Final[TypeAdapter[_InstalledClientWire]] = TypeAdapter(
 )
 
 
-def write_headless_authorization_url(url: str) -> None:
-    """Emit the single owned authorization URL event."""
-    if not url.startswith(_GOOGLE_AUTHORIZATION_ENDPOINT):
-        return
-    _ = sys.stdout.write(f"{HEADLESS_AUTHORIZATION_URL_EVENT} {url}\n")
-
-
-def write_headless_setup_success() -> None:
-    """Emit the single owned setup success event."""
-    _ = sys.stdout.write(f"{HEADLESS_SETUP_SUCCESS_EVENT}\n")
-
-
-@final
-class _OwnedAuthorizationPrompt:
-    """Capture oauthlib's URL once so this package owns presentation.
-
-    Mutation is required because oauthlib calls format() for both its logger
-    and its print.
-    """
-
-    __slots__ = ("_emitted",)
-    _emitted: bool
-
-    def __init__(self) -> None:
-        self._emitted = False
-
-    def format(self, **kwargs: str) -> str:
-        if not self._emitted:
-            write_headless_authorization_url(kwargs["url"])
-            self._emitted = True
-        return ""
-
-
 @dataclass(frozen=True, slots=True)
 class _GoogleLocalInstalledAppFlow:
     """Adapt the untyped oauthlib flow to the local typed flow contract."""
@@ -189,15 +152,14 @@ class _GoogleLocalInstalledAppFlow:
         prompt: str | None = None,
     ) -> GoogleCredential:
         """Run the oauthlib loopback server with the bounded setup options."""
-        runner: Callable[..., GoogleCredential] = self.flow.run_local_server
-        return runner(
+        _ = self.flow.run_local_server(
             host=host,
             port=port,
             open_browser=open_browser,
             timeout_seconds=timeout_seconds,
             prompt=prompt,
-            authorization_prompt_message=_OwnedAuthorizationPrompt(),
         )
+        return self.credentials
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,7 +228,6 @@ class GoogleOAuthAuthorizer:
         except WSGITimeoutError:
             raise GoogleOAuthAuthorizationTimeoutError from None
         self.credential_store.save(credentials)
-        write_headless_setup_success()
         return credentials
 
 
@@ -283,14 +244,10 @@ def _load_client_config(client_secrets_path: Path) -> GoogleClientConfig:
 
 
 __all__ = [
-    "HEADLESS_AUTHORIZATION_URL_EVENT",
-    "HEADLESS_SETUP_SUCCESS_EVENT",
     "GoogleClientConfig",
     "GoogleOAuthAuthorizationTimeoutError",
     "GoogleOAuthAuthorizer",
     "InstalledAppFlowFactory",
     "LocalInstalledAppFlow",
     "OAuthClientConfigError",
-    "write_headless_authorization_url",
-    "write_headless_setup_success",
 ]

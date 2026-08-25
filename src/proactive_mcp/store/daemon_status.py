@@ -18,7 +18,6 @@ from ._sqlite_transaction import ImmediateTransaction
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Callable
 
     from proactive_mcp.clock import Clock
 
@@ -109,7 +108,6 @@ class DaemonStatusStore:
         pid: int,
         *,
         poll_interval: timedelta | None = None,
-        incumbent_is_alive: Callable[[int], bool] | None = None,
     ) -> bool:
         """Atomically claim the daemon row, returning whether this run owns it.
 
@@ -144,14 +142,10 @@ class DaemonStatusStore:
                 if interval_seconds is None
                 else timedelta(seconds=interval_seconds)
             )
-            if (
-                incumbent.state == "running"
-                and not self._expired(
-                    incumbent,
-                    now,
-                    fallback_interval=fallback_interval,
-                )
-                and (incumbent_is_alive is None or incumbent_is_alive(incumbent.pid))
+            if incumbent.state == "running" and not self._expired(
+                incumbent,
+                now,
+                fallback_interval=fallback_interval,
             ):
                 return False
             _ = self._connection.execute(

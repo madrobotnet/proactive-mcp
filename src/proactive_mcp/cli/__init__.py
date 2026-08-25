@@ -19,14 +19,9 @@ from typing import (
 from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp.cli.daemon import run_daemon
-from proactive_mcp.cli.service import ServiceAction, run_service
 from proactive_mcp.config import ConfigError
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server import build_status, create_server, server
-from proactive_mcp.server.situation_responses import (
-    SourceReadDiagnosticsResponse,
-    source_read_diagnostics_response,
-)
 from proactive_mcp.sources import (
     CredentialScopeError,
     CredentialStorageError,
@@ -38,7 +33,6 @@ from proactive_mcp.sources import (
     MissingRefreshTokenError,
     OAuthClientConfigError,
     configure_google_sources,
-    disconnect_google_sources,
     run_google_read_smoke,
 )
 from proactive_mcp.store import SourceErrorCode  # noqa: TC001
@@ -47,14 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 Command: TypeAlias = Literal[
-    "serve",
-    "serve-scheduled",
-    "status",
-    "setup",
-    "disconnect",
-    "google-smoke",
-    "daemon",
-    "service",
+    "serve", "serve-scheduled", "status", "setup", "google-smoke", "daemon"
 ]
 _CLIENT_SECRETS_ENV: Final = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
 _GOOGLE_ERRORS: Final = (
@@ -81,7 +68,6 @@ class _CliArguments(BaseModel):
     confirm_real_account_read: bool = False
     once: bool = False
     poll_interval_minutes: float | None = None
-    service_action: ServiceAction = "status"
 
 
 class _GoogleSmokeSourceResponse(BaseModel):
@@ -93,28 +79,14 @@ class _GoogleSmokeSourceResponse(BaseModel):
     error_code: SourceErrorCode | None
 
 
-class _GoogleSmokeGmailResponse(_GoogleSmokeSourceResponse):
-    """Legacy Gmail smoke fields plus additive bounded diagnostics."""
-
-    diagnostics: SourceReadDiagnosticsResponse
-
-
 class _GoogleSmokeResponse(BaseModel):
     """PII-free observable output of an explicitly enabled Google smoke read."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    gmail: _GoogleSmokeGmailResponse
+    gmail: _GoogleSmokeSourceResponse
     calendar: _GoogleSmokeSourceResponse
     credential_cleanup_failed: bool
-
-
-class _GoogleDisconnectResponse(BaseModel):
-    """Machine-readable confirmation for credential-first rollback."""
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
-
-    google: Literal["disconnected"] = "disconnected"
 
 
 def run_server() -> None:
@@ -149,12 +121,7 @@ def run_setup(arguments: _CliArguments) -> None:
             headless=arguments.headless,
         ),
     )
-
-
-def run_disconnect() -> None:
-    """Delete stored Google authorization before any state-directory cleanup."""
-    disconnect_google_sources(_database_path())
-    _ = sys.stdout.write(f"{_GoogleDisconnectResponse().model_dump_json()}\n")
+    _ = sys.stdout.write("Google read-only sources configured.\n")
 
 
 def run_google_smoke(arguments: _CliArguments) -> None:
@@ -169,10 +136,9 @@ def run_google_smoke(arguments: _CliArguments) -> None:
 def _smoke_response(summary: GoogleReadSummary) -> _GoogleSmokeResponse:
     """Serialize only redacted source counts and normalized error codes."""
     return _GoogleSmokeResponse(
-        gmail=_GoogleSmokeGmailResponse(
+        gmail=_GoogleSmokeSourceResponse(
             count=summary.gmail_count,
             error_code=summary.gmail_error_code,
-            diagnostics=source_read_diagnostics_response(summary.gmail_diagnostics),
         ),
         calendar=_GoogleSmokeSourceResponse(
             count=summary.calendar_count,
@@ -216,10 +182,6 @@ def _parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="path to an installed-app OAuth client secret file",
     )
-    _ = subparsers.add_parser(
-        "disconnect",
-        help="delete stored Google authorization before local state cleanup",
-    )
     smoke = subparsers.add_parser(
         "google-smoke",
         help="perform an explicitly confirmed real-account read-only Google smoke test",
@@ -242,10 +204,6 @@ def _parser() -> argparse.ArgumentParser:
         metavar="MINUTES",
         help="override the configured watcher poll interval",
     )
-    service = subparsers.add_parser("service", help="manage the watcher service")
-    service_actions = service.add_subparsers(dest="service_action", required=True)
-    for action in ("install", "status", "remove"):
-        _ = service_actions.add_parser(action)
     return parser
 
 
@@ -265,14 +223,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     once=arguments.once,
                     poll_interval_minutes=arguments.poll_interval_minutes,
                 )
-            case "disconnect":
-                run_disconnect()
             case "serve":
                 run_server()
             case "serve-scheduled":
                 run_scheduled_server()
-            case "service":
-                return run_service(arguments.service_action)
             case "status":
                 _status()
             case "setup":

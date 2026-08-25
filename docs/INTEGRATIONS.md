@@ -4,9 +4,9 @@ Named closed-alpha testers start by pasting the OS-specific block from [docs/tes
 
 The closed alpha ships as a private wheel, not through PyPI. `uvx proactive-mcp` in older notes or `docs/PRODUCT_PLAN.md` §12 is the post-publication path, not today's tester path. Source-tree commands remain below only as agent and developer reference.
 
-The detailed Grok, Codex, and Claude Desktop material is retained as an [agent reference and appendix](#agent-reference-and-appendices). The Hermes appendix records why it is not a closed-alpha tester path.
+The detailed Grok, Codex, Hermes, and Claude Desktop material is retained as an [agent reference and appendix](#agent-reference-and-appendices). It records the exact commands, configuration shapes, safety boundaries, and troubleshooting facts an agent needs when carrying out the tester sheet.
 
-**Verified on:** uv 0.11.29, grok 0.2.112, codex-cli 0.149.0, Linux (aarch64). Hermes Agent v0.20.0 was used only for unsupported compatibility diagnosis. Claude Code Desktop was not installed in the verification environment, so that section is marked and sourced accordingly.
+**Verified on:** uv 0.11.29, grok 0.2.112, codex-cli 0.149.0, Hermes Agent v0.20.0, Linux (aarch64). Claude Code Desktop was not installed in the verification environment, so that section is marked and sourced accordingly.
 
 ## Contents
 
@@ -21,7 +21,7 @@ The detailed Grok, Codex, and Claude Desktop material is retained as an [agent r
 - [Agent reference and appendices](#agent-reference-and-appendices)
   - [Grok CLI](#appendix-a-grok-cli)
   - [Codex CLI](#appendix-b-codex-cli)
-  - [Hermes Agent (experimental, unsupported)](#appendix-c-hermes-agent-experimental-unsupported)
+  - [Hermes (Native Cron)](#appendix-c-hermes-native-cron)
   - [Claude Code Desktop (documentation only)](#appendix-d-claude-code-desktop-documentation-only)
   - [OS scheduler handoff](#appendix-e-os-scheduler-handoff)
   - [Linux and macOS: cron](#linux-and-macos-cron)
@@ -37,7 +37,7 @@ A platform can deliver proactive messages when two things are true, per `docs/PR
 |---|---|---|---|
 | Grok CLI | Yes | None, use OS scheduler | Full recipe |
 | Codex CLI | Yes | None, use OS scheduler | Full recipe |
-| Hermes | Experimental only | None supported | Excluded from the closed alpha; no recipe |
+| Hermes | Yes | Native Cron | Full recipe |
 | Claude Code Desktop | Yes | Local scheduled tasks, one-minute minimum | Documentation only, not demonstrated |
 
 ### Deliberately out of scope
@@ -178,13 +178,13 @@ uv run --directory /home/you/src/proactive-mcp proactive-mcp serve
 The agent records absolute paths for `uv` and the agent binaries, since schedulers get a minimal `PATH`:
 
 ```bash
-command -v uv grok codex
+command -v uv grok codex hermes
 ```
 
 The CLI surface is small. An agent or developer can confirm it with `uv run proactive-mcp --help`:
 
 ```text
-proactive-mcp {serve,serve-scheduled,status,setup,disconnect,google-smoke,daemon,service}
+proactive-mcp {serve,serve-scheduled,status,setup,google-smoke,daemon}
 proactive-mcp daemon [--once] [--poll-interval-minutes MINUTES]
 ```
 
@@ -440,13 +440,73 @@ Then start an interactive `codex` session and confirm exactly one `proactive_che
 | `codex exec` fails outside a git repo | Add `--skip-git-repo-check`. |
 | Agent tries to run a shell command or edit a file | Keep `--sandbox read-only`. This job needs no shell at all, so an attempt means the prompt drifted. Local database writes by the MCP server itself are normal and aren't affected by the sandbox. |
 
-## Appendix C: Hermes Agent (experimental, unsupported)
+## Appendix C: Hermes (Native Cron)
 
-Hermes Agent is not supported in the closed alpha. Generic local stdio MCP interoperability remains possible, but deterministic receipt confirmation was not reproducible across otherwise equivalent live one-shot sessions. Do not install Hermes profile helpers or cron jobs, and do not rely on Hermes for proactive delivery.
+Verified against Hermes Agent v0.20.0. MCP registration was checked against `hermes mcp add --help`, the cron flags against `hermes cron create --help`.
 
-The host-neutral MCP server contracts remain available for experimentation outside the alpha. That does not make Hermes a supported delivery host: one live run confirmed the returned receipt through the host-follow-up path, while another direct `proactive_check` produced no confirmation. Read-only diagnosis found deterministic result shapes, plugin registration, and persisted-result ownership, so no safe product-side correction was identified.
+### 1. Registration
 
-If you experiment manually, treat the connection as unsupported and non-delivery-critical. Remove the manual registration before returning to a supported alpha setup. Issue #28 retains the diagnostic evidence; this appendix intentionally provides no installation or scheduler recipe.
+```bash
+hermes mcp add proactive \
+  --command uv \
+  --args run --directory /home/you/src/proactive-mcp proactive-mcp serve
+```
+
+`--args` must be the last option, since it consumes the rest of the line. This writes into `~/.hermes/config.yaml` under `mcp_servers`:
+
+```yaml
+mcp_servers:
+  proactive:
+    command: uv
+    args: ["run", "--directory", "/home/you/src/proactive-mcp", "proactive-mcp", "serve"]
+```
+
+Narrow the tool surface with `hermes mcp configure proactive` if you'd rather expose only `proactive_check`, `confirm_delivery`, and the memory tools.
+
+### 2. Watcher daemon, or degraded mode
+
+```bash
+uv run --directory /home/you/src/proactive-mcp proactive-mcp daemon
+```
+
+Degraded alternative: run only the MCP server. `proactive_check` lazy-syncs inline when data is old, so scheduled Hermes runs still deliver. **Limitation:** no OS notification fallback, so nothing catches a critical situation that Hermes never picks up. A short cron interval softens this, because the job itself is a reliable collector, but a collector is not a fallback.
+
+### 3. Session-start rule
+
+Add [the rule](#the-session-start-rule) to your Hermes system prompt. Hermes injects `AGENTS.md` and `CLAUDE.md` from the `--workdir` directory into the job, which is why scheduled jobs below point at the empty [neutral agent directory](#the-neutral-agent-directory): a repository's project instructions would ride along and can divert the run. Interactive project work is the opposite case, and there merging the rule into the repository `AGENTS.md` is the point.
+
+### 4. Scheduled trigger: Native Cron
+
+```bash
+hermes cron create "every 15m" \
+  "Call the MCP tool proactive_check exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Then report each returned situation clearly in this channel, including freshness and warnings. If freshness is stale or warnings indicate a source problem, say so instead of reporting that nothing is pending. If nothing is returned and freshness is healthy, report that there are no pending situations. Do not call any other write action." \
+  --name "proactive check" \
+  --workdir /home/you/.proactive-mcp/agent-cwd
+```
+
+The schedule argument accepts `30m`, `every 2h`, or plain cron syntax like `0 9 * * *`. Useful flags from `hermes cron create --help`: `--deliver` picks the delivery target (`origin`, `local`, `telegram`, `discord`, `signal`, or `platform:chat_id`), `--name` labels the job, `--model` and `--provider` pin inference. Don't use `--no-agent`: that skips the LLM and runs a script instead, and no shell command can call an MCP tool.
+
+### Verification
+
+```bash
+hermes mcp test proactive
+hermes cron list
+hermes cron status
+hermes cron run <JOB_ID>
+hermes cron runs <JOB_ID> --limit 5
+```
+
+`hermes cron run` queues the job for the next scheduler tick; `hermes cron tick` runs due jobs once and exits, which is the fastest way to test without waiting. Then check `runs` for a successful attempt, and confirm the message actually arrived in your channel.
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `hermes mcp test proactive` fails | Wrong `--directory`, or `uv` missing from Hermes' `PATH`. Use the absolute `uv` path. |
+| Job listed but never runs | `hermes cron status` tells you whether the scheduler is running. Also check the job isn't paused: `hermes cron resume <JOB_ID>`. |
+| Job runs, no message arrives | Delivery target. Re-create with an explicit `--deliver`, or read `hermes cron runs` for the attempt outcome. |
+| Tool never called | The prompt must be self-contained and name `proactive_check`. A cron job carries no conversation history. |
+| Duplicate notifications | Confirm the job calls `confirm_delivery` with the returned receipt. If it already does, you probably have two jobs or another agent is collecting. Check `hermes cron list`. |
 
 ## Appendix D: Claude Code Desktop (documentation only)
 
@@ -1240,16 +1300,16 @@ Per platform, in order:
 
 | | Grok CLI | Codex CLI | Hermes | Claude Desktop |
 |---|---|---|---|---|
-| Registered | `grok mcp list` | `codex mcp list` | Not an alpha path | server in tool list |
-| Server healthy | `grok mcp doctor proactive` | full `proactive` is `prompt`; `proactive_scheduled` uses `serve-scheduled` and is `approve` | Not verified for supported delivery | `get_status` from a chat |
-| Daemon or degraded | `status` shows daemon state, or the missing-fallback warning is understood and accepted | same | n/a | same |
-| Session-start rule | `AGENTS.md` at project root | `AGENTS.md` at workspace root | n/a | project instructions |
-| Neutral working directory | `--cwd ~/.proactive-mcp/agent-cwd` in the one-shot and the wrapper | `-C ~/.proactive-mcp/agent-cwd`, plus `--skip-git-repo-check` | n/a | n/a, tasks run in their own folder |
-| Scheduled trigger | `deliveries.total` rises by one, state moves to `delivered`, fixed OS notification appears | same, and every `codex exec` approves only `proactive_scheduled` | n/a | local scheduled task, ≥1 min |
-| Quiet run | second run with nothing pending logs `result=no_delivery`, or `result=status_warning` with its own fixed text when a source is stale | same | n/a | n/a |
-| Dedupe | situation delivered once, never twice; one scheduled collector only | same | n/a | same |
-| Logs clean | no payloads on disk, no agent output captured, only fixed marker fields | no payloads on disk, no agent output captured, only fixed marker fields | n/a | no payloads on disk |
+| Registered | `grok mcp list` | `codex mcp list` | `hermes mcp list` | server in tool list |
+| Server healthy | `grok mcp doctor proactive` | full `proactive` is `prompt`; `proactive_scheduled` uses `serve-scheduled` and is `approve` | `hermes mcp test proactive` | `get_status` from a chat |
+| Daemon or degraded | `status` shows daemon state, or the missing-fallback warning is understood and accepted | same | same | same |
+| Session-start rule | `AGENTS.md` at project root | `AGENTS.md` at workspace root | system prompt, self-contained job prompt | project instructions |
+| Neutral working directory | `--cwd ~/.proactive-mcp/agent-cwd` in the one-shot and the wrapper | `-C ~/.proactive-mcp/agent-cwd`, plus `--skip-git-repo-check` | `--workdir` points at the neutral directory | n/a, tasks run in their own folder |
+| Scheduled trigger | `deliveries.total` rises by one, state moves to `delivered`, fixed OS notification appears | same, and every `codex exec` approves only `proactive_scheduled` | `hermes cron list` and delivered channel message | local scheduled task, ≥1 min |
+| Quiet run | second run with nothing pending logs `result=no_delivery`, or `result=status_warning` with its own fixed text when a source is stale | same | n/a, the job reports in-channel | n/a |
+| Dedupe | situation delivered once, never twice; one scheduled collector only | same | same | same |
+| Logs clean | no payloads on disk, no agent output captured, only fixed marker fields | no payloads on disk, no agent output captured, only fixed marker fields | no payloads on disk | no payloads on disk |
 
 Auditing a wrapper you inherited? Five things disqualify it: it reads or matches agent output instead of the delivery counter, it diffs `budget.used`, it starts the agent inside a repository, it approves the full `proactive` profile, or it runs `codex exec` without the narrow scheduled-profile override. Extract each POSIX wrapper and check it with `sh -n` before you install it.
 
-Commands that were **not** executable in the verification environment, and are therefore sourced rather than tested: everything Claude Code Desktop-specific (not installed; sourced from Anthropic's local MCP guide and §5.3), and all Windows PowerShell snippets (verified on Linux; cmdlet shapes come from Microsoft's `Register-ScheduledTask` reference). Grok, Codex, and `proactive-mcp` commands and flags were read from the installed binaries' own `--help` output at the versions listed at the top of this file. Hermes was installed for diagnosis, but live receipt confirmation was not deterministic, so it has no supported command path here.
+Commands that were **not** executable in the verification environment, and are therefore sourced rather than tested: everything Claude Code Desktop-specific (not installed; sourced from Anthropic's local MCP guide and §5.3), and all Windows PowerShell snippets (verified on Linux; cmdlet shapes come from Microsoft's `Register-ScheduledTask` reference). Grok, Codex, Hermes, and `proactive-mcp` commands and flags were read from the installed binaries' own `--help` output at the versions listed at the top of this file.

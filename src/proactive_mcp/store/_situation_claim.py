@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 from ._delivery_eligibility import (
-    CURRENT_SOURCE_ELIGIBILITY,
     reserved_non_reply_slots_for_claim,
     reserved_non_reply_slots_for_reservation,
 )
@@ -27,7 +26,9 @@ _MAX_DELIVERY_CANDIDATES: Final[int] = 100
 
 
 def claim_for_delivery(
-    connection: sqlite3.Connection, reader: SituationReader, claim: DeliveryClaim
+    connection: sqlite3.Connection,
+    reader: SituationReader,
+    claim: DeliveryClaim,
 ) -> tuple[Situation, ...]:
     """Atomically enforce suppression and claim only rows this call owns."""
     claimed: list[Situation] = []
@@ -44,13 +45,12 @@ def claim_for_delivery(
             if not claim.allow_noncritical and candidate.priority != "critical":
                 continue
             cursor = connection.execute(
-                f"""
+                """
                 UPDATE situations
                 SET state = 'delivered', delivered_at = ?, updated_at = ?,
                     snoozed_until = NULL, snooze_cooldown_exempt = 0
                 WHERE id = ? AND state = 'pending'
                   AND (expires_at IS NULL OR expires_at > ?)
-                  {CURRENT_SOURCE_ELIGIBILITY}
                   AND NOT EXISTS (
                       SELECT 1 FROM situation_type_mutes
                       WHERE situation_type = situations.situation_type
@@ -77,7 +77,7 @@ def claim_for_delivery(
                              AND deliveries.priority != 'critical'
                              AND delivered.situation_type = 'reply_deadline'
                        ) < MAX(0, ? - ?))
-                """,  # noqa: S608
+                """,
                 (
                     claim.delivered_at,
                     claim.delivered_at,
@@ -128,14 +128,13 @@ def reserve_for_delivery(
             if not claim.allow_noncritical and candidate.priority != "critical":
                 continue
             cursor = connection.execute(
-                f"""
+                """
                 INSERT INTO situation_delivery_claims(
                     claim_token, situation_id, claimed_at, expires_at
                 )
                 SELECT ?, id, ?, ? FROM situations
                 WHERE id = ? AND state = 'pending'
                   AND (expires_at IS NULL OR expires_at > ?)
-                  {CURRENT_SOURCE_ELIGIBILITY}
                   AND NOT EXISTS (
                       SELECT 1 FROM situation_delivery_claims
                       WHERE situation_id = situations.id
@@ -181,7 +180,7 @@ def reserve_for_delivery(
                               AND claimed.priority != 'critical'
                               AND claimed.situation_type = 'reply_deadline')
                        ) < MAX(0, ? - ?))
-                """,  # noqa: S608
+                """,
                 (
                     claim_token,
                     claim.delivered_at,
@@ -223,30 +222,30 @@ def confirm_delivery(
             "DELETE FROM situation_delivery_claims WHERE expires_at <= ?",
             (confirmed_at,),
         )
-        while situation_ids := reader.delivery_claim_ids(claim_token):
-            for situation_id in situation_ids:
-                cursor = connection.execute(
-                    """
-                    UPDATE situations
-                    SET state = 'delivered', delivered_at = ?, updated_at = ?,
-                        snoozed_until = NULL, snooze_cooldown_exempt = 0
-                    WHERE id = ? AND state = 'pending'
-                    """,
-                    (confirmed_at, confirmed_at, situation_id),
-                )
-                if cursor.rowcount == 0:
-                    raise DeliveryReceiptError
-                situation = reader.get_situation(situation_id)
-                if situation is None:
-                    raise SituationNotFoundError(situation_id)
-                record_delivery(connection, situation, confirmed_at)
-                delivered.append(situation)
-                _ = connection.execute(
-                    "DELETE FROM situation_delivery_claims WHERE situation_id = ?",
-                    (situation_id,),
-                )
-        if not delivered:
+        situation_ids = reader.delivery_claim_ids(claim_token)
+        if not situation_ids:
             raise DeliveryReceiptError
+        for situation_id in situation_ids:
+            cursor = connection.execute(
+                """
+                UPDATE situations
+                SET state = 'delivered', delivered_at = ?, updated_at = ?,
+                    snoozed_until = NULL, snooze_cooldown_exempt = 0
+                WHERE id = ? AND state = 'pending'
+                """,
+                (confirmed_at, confirmed_at, situation_id),
+            )
+            if cursor.rowcount == 0:
+                continue
+            situation = reader.get_situation(situation_id)
+            if situation is None:
+                raise SituationNotFoundError(situation_id)
+            record_delivery(connection, situation, confirmed_at)
+            delivered.append(situation)
+        _ = connection.execute(
+            "DELETE FROM situation_delivery_claims WHERE claim_token = ?",
+            (claim_token,),
+        )
     return tuple(delivered)
 
 

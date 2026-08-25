@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final
 from urllib.parse import quote
@@ -127,7 +126,6 @@ class GmailAdapter:
         profile = self.read_profile()
         listed = self.list_threads()
         snapshots: list[InboxThreadSnapshot] = []
-        detail_request_count = 0
         reasons: list[GmailDegradationReason] = list(listed.degradation_reasons)
         source_is_complete = listed.is_complete
         excluded_thread_ids: set[str] = set()
@@ -142,7 +140,6 @@ class GmailAdapter:
                 thread.id for thread in listed.threads[len(projected_threads) :]
             )
         for thread in projected_threads:
-            detail_request_count += 1
             try:
                 response_body = _get(
                     self._transport,
@@ -178,32 +175,28 @@ class GmailAdapter:
             )
             if snapshot is None:
                 reasons.append("thread_without_projectable_message")
+                source_is_complete = False
                 excluded_thread_ids.add(thread.id)
             else:
                 snapshots.append(snapshot)
                 reasons.extend(snapshot.degradation_reasons)
-                if not snapshot.resolution_safe:
+                if not snapshot.is_complete:
                     excluded_thread_ids.add(thread.id)
         unique_reasons = tuple(dict.fromkeys(reasons))
-        reason_counts: Counter[GmailDegradationReason] = Counter(reasons)
         return GmailInboxReadResult(
             threads=tuple(snapshots),
             fetched_at=listed.fetched_at,
             provider_history_cursor=profile.history_id,
             page_count=listed.page_count,
-            coverage_complete=source_is_complete,
-            request_count=1 + listed.page_count + detail_request_count,
-            projected_thread_count=len(snapshots),
-            excluded_thread_count=len(excluded_thread_ids),
+            is_complete=source_is_complete,
             degradation_reasons=unique_reasons,
-            degradation_reason_counts=tuple(reason_counts.items()),
             allows_absent_resolution=(
                 listed.is_complete
                 and listed.skipped_count == 0
                 and len(projected_threads) == len(listed.threads)
             ),
             resolution_safe_thread_ids=frozenset(
-                item.thread_id for item in snapshots if item.resolution_safe
+                item.thread_id for item in snapshots if item.is_complete
             ),
             resolution_excluded_thread_ids=frozenset(excluded_thread_ids),
         )

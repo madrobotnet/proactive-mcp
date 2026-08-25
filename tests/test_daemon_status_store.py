@@ -168,35 +168,6 @@ def test_second_live_claimant_does_not_overwrite_the_owner(tmp_path: Path) -> No
     assert after.liveness == "running"
 
 
-def test_dead_incumbent_can_be_reclaimed_with_explicit_process_probe(
-    tmp_path: Path,
-) -> None:
-    # Given: a fresh running row whose process has crashed without recording stop.
-    clock = FakeClock(utc_datetime(2026, 8, 21, 16))
-    database = tmp_path / "db"
-    with (
-        Store(database, clock=clock) as crashed,
-        Store(database, clock=clock) as replacement,
-    ):
-        assert crashed.daemon.try_record_start(
-            pid=4242,
-            poll_interval=timedelta(minutes=5),
-        )
-
-        # When: the replacement proves the incumbent PID no longer exists.
-        claimed = replacement.daemon.try_record_start(
-            pid=5353,
-            poll_interval=timedelta(minutes=5),
-            incumbent_is_alive=lambda _pid: False,
-        )
-        status = replacement.daemon.status()
-
-    # Then: crash recovery is immediate without weakening the default fence.
-    assert claimed is True
-    assert status.pid == 5353
-    assert status.liveness == "running"
-
-
 def test_non_owner_heartbeat_does_not_mutate_the_owner(tmp_path: Path) -> None:
     # Given: one process owns the liveness row.
     started = utc_datetime(2026, 8, 21, 16)
