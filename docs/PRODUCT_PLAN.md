@@ -12,7 +12,7 @@
 
 **proactive-mcp는 모든 AI 에이전트에게 "먼저 말 걸기" 능력을 부여하는 로컬 MCP 서버다.**
 
-AI 에이전트는 기본적으로 요청-응답 구조라서 사용자가 묻기 전에는 돕지 못한다. proactive-mcp는 사용자의 Gmail·Google Calendar를 백그라운드에서 감시하고, 에이전트와의 대화에서 저장된 메모리를 근거로, **지금 사용자에게 알릴 가치가 있는 상황(Situation)** 을 감지한다. 감지된 상황은 사용자가 이미 쓰고 있는 지원 대상 에이전트의 자체 채널을 통해 선제적으로 전달된다.
+AI 에이전트는 기본적으로 요청-응답 구조라서 사용자가 묻기 전에는 돕지 못한다. proactive-mcp는 사용자의 Gmail·Google Calendar를 백그라운드에서 감시하고 에이전트와의 대화에서 저장된 메모리를 근거로, **지금 사용자에게 알릴 가치가 있는 상황(Situation)** 을 감지한다. 감지된 상황은 사용자가 이미 쓰고 있는 지원 대상 에이전트의 자체 채널을 통해 선제적으로 전달된다.
 
 핵심 원칙:
 
@@ -45,7 +45,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | 코드베이스 | 새 저장소, MCP-first. 기존 repo는 참고자료만 |
 | 언어/스택 | Python ≥3.11, 공식 MCP Python SDK, SQLite, uv |
 | 전달 구조 | 하이브리드 — 서버가 감시·판단, 주 전달은 각 에이전트의 자체 채널, 폴백은 OS 알림 |
-| Hermes Agent | 클로즈드 알파 공식 지원에서 제외. 일반 stdio MCP 상호운용은 실험용으로만 남기며, 결정적 receipt 확인이 검증될 때까지 설치·cron 경로를 제공하지 않음 |
+| Hermes Agent | 클로즈드 알파 공식 지원에서 제외. 일반 stdio MCP 상호운용은 실험용으로만 남기며 결정적 receipt 확인이 검증될 때까지 설치·cron 경로를 제공하지 않음 |
 | 전달 영수증 | `proactive_check`는 짧은 lease로 상황을 예약하고, 호스트가 결과를 받은 뒤 `confirm_delivery`를 호출해야 `delivered`로 확정. 미확인 lease는 만료 후 pending으로 복귀 (2026-08-24 Owner 보안 수정 승인) |
 | MVP 범위 | 읽기 + 알림만. 외부 쓰기는 2단계 |
 | MVP Situation | Reply Deadline, Calendar Conflict, Personal Occasion 3종 |

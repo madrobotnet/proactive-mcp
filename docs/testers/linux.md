@@ -31,7 +31,7 @@ Owner에게 Linux aarch64 archive, 다른 인증 채널의 archive SHA-256, 필�
 
 ## 3. 성공 기준
 
-`database.status=healthy`, `migration_version=9`, Gmail과 Calendar가 모두 `ok`이면 성공입니다. 읽기 전용 권한은 정확히 `gmail.readonly`와 `calendar.readonly`입니다. 세션 시작 규칙과 예약 전달 작업에서 에이전트가 `proactive_check`를 실제 호출하고, `receipt_token`이 있을 때만 `confirm_delivery`를 한 번 호출해야 합니다. continuous watcher도 등록되어 실행 중이어야 합니다. 등록하지 못한 경우에는 주기 sync와 OS 알림 폴백이 없다는 설명을 듣고 degraded mode에 명시적으로 동의해야 하며, 그때만 `overall=degraded`를 허용합니다.
+`database.status=healthy`, `migration_version=9`, Gmail과 Calendar가 모두 `ok`이면 성공입니다. 읽기 전용 권한은 정확히 `gmail.readonly`와 `calendar.readonly`입니다. 세션 시작 규칙과 예약 전달 작업에서 에이전트가 `proactive_check`를 실제 호출하고 `receipt_token`이 있을 때만 `confirm_delivery`를 한 번 호출해야 합니다. continuous watcher도 등록되어 실행 중이어야 합니다. 등록하지 못한 경우에는 주기 sync와 OS 알림 폴백이 없다는 설명을 듣고 degraded mode에 명시적으로 동의해야 하며 그때만 `overall=degraded`를 허용합니다.
 
 ## 4. 보고
 
