@@ -120,7 +120,7 @@ class SituationReader:
             LIMIT 100
             """,
             (claim_token,),
-        )
+        ).fetchall()
         return tuple(self._ints)
 
     def count_pending_unclaimed(self, now: str) -> int:

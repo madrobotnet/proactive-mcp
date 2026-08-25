@@ -121,6 +121,14 @@ class DeliveryReservation:
     expires_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class DeliveryConfirmation:
+    """Durable result of confirming or replaying one delivery receipt."""
+
+    status: Literal["confirmed", "already_confirmed"]
+    delivered_count: int
+
+
 SITUATION_ADAPTER: Final[TypeAdapter[Situation]] = TypeAdapter(Situation)
 SITUATION_EVIDENCE_ADAPTER: Final[TypeAdapter[SituationEvidence]] = TypeAdapter(
     SituationEvidence

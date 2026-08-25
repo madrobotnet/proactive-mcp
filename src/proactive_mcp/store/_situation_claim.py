@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from ._delivery_eligibility import (
     CURRENT_SOURCE_ELIGIBILITY,
@@ -10,6 +10,7 @@ from ._delivery_eligibility import (
     reserved_non_reply_slots_for_reservation,
 )
 from ._situation_models import (
+    DeliveryConfirmation,
     DeliveryReceiptError,
     DeliveryReservation,
     Situation,
@@ -215,39 +216,61 @@ def confirm_delivery(
     claim_token: str,
     *,
     confirmed_at: str,
-) -> tuple[Situation, ...]:
-    """Record delivery only after the host returns the opaque receipt token."""
-    delivered: list[Situation] = []
+) -> DeliveryConfirmation:
+    """Confirm one active lease or replay its immutable result."""
     with ImmediateTransaction(connection):
+        receipt = cast(
+            "tuple[int] | None",
+            connection.execute(
+                """
+                SELECT delivered_count FROM confirmed_delivery_receipts
+                WHERE receipt_token = ?
+                """,
+                (claim_token,),
+            ).fetchone(),
+        )
+        if receipt is not None:
+            return DeliveryConfirmation("already_confirmed", receipt[0])
+
         _ = connection.execute(
             "DELETE FROM situation_delivery_claims WHERE expires_at <= ?",
             (confirmed_at,),
         )
-        while situation_ids := reader.delivery_claim_ids(claim_token):
-            for situation_id in situation_ids:
-                cursor = connection.execute(
-                    """
-                    UPDATE situations
-                    SET state = 'delivered', delivered_at = ?, updated_at = ?,
-                        snoozed_until = NULL, snooze_cooldown_exempt = 0
-                    WHERE id = ? AND state = 'pending'
-                    """,
-                    (confirmed_at, confirmed_at, situation_id),
-                )
-                if cursor.rowcount == 0:
-                    raise DeliveryReceiptError
-                situation = reader.get_situation(situation_id)
-                if situation is None:
-                    raise SituationNotFoundError(situation_id)
-                record_delivery(connection, situation, confirmed_at)
-                delivered.append(situation)
-                _ = connection.execute(
-                    "DELETE FROM situation_delivery_claims WHERE situation_id = ?",
-                    (situation_id,),
-                )
-        if not delivered:
+        situation_ids = reader.delivery_claim_ids(claim_token)
+        if not situation_ids:
             raise DeliveryReceiptError
-    return tuple(delivered)
+
+        for situation_id in situation_ids:
+            cursor = connection.execute(
+                """
+                UPDATE situations
+                SET state = 'delivered', delivered_at = ?, updated_at = ?,
+                    snoozed_until = NULL, snooze_cooldown_exempt = 0
+                WHERE id = ? AND state = 'pending'
+                """,
+                (confirmed_at, confirmed_at, situation_id),
+            )
+            if cursor.rowcount == 0:
+                raise DeliveryReceiptError
+            situation = reader.get_situation(situation_id)
+            if situation is None:
+                raise SituationNotFoundError(situation_id)
+            record_delivery(connection, situation, confirmed_at)
+
+        _ = connection.execute(
+            "DELETE FROM situation_delivery_claims WHERE claim_token = ?",
+            (claim_token,),
+        )
+        delivered_count = len(situation_ids)
+        _ = connection.execute(
+            """
+            INSERT INTO confirmed_delivery_receipts(
+                receipt_token, delivered_count, confirmed_at
+            ) VALUES (?, ?, ?)
+            """,
+            (claim_token, delivered_count, confirmed_at),
+        )
+        return DeliveryConfirmation("confirmed", delivered_count)
 
 
 def record_delivery(

@@ -16,6 +16,7 @@ from ._lazy_sync_lease import InvalidLazySyncLeaseDurationError, LazySyncLease
 from ._situation_models import (
     ACTIVE_SITUATION_STATES,
     DeliveryClaim,
+    DeliveryConfirmation,
     DeliveryReceiptError,
     DeliveryReservation,
     Detection,
@@ -90,6 +91,7 @@ __all__ = [
     "DatabaseStatus",
     "DelayedSourceGenerationError",
     "DeliveryClaim",
+    "DeliveryConfirmation",
     "DeliveryReceiptError",
     "DeliveryReservation",
     "Detection",

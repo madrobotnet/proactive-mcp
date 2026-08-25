@@ -197,10 +197,11 @@ class ListSituationsResponse(BaseModel):
 
 
 class ConfirmDeliveryResponse(BaseModel):
-    """Result of consuming one short-lived host receipt token."""
+    """Typed result of confirming or replaying a host receipt."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
+    status: Literal["confirmed", "already_confirmed"]
     delivered_count: int
 
 

@@ -151,8 +151,11 @@ class SituationToolService:
 
     def confirm_delivery(self, receipt_token: str) -> ConfirmDeliveryResponse:
         """Confirm that the MCP host received a proactive-check result."""
-        delivered = self._situations.confirm_delivery(receipt_token)
-        return ConfirmDeliveryResponse(delivered_count=len(delivered))
+        confirmation = self._situations.confirm_delivery(receipt_token)
+        return ConfirmDeliveryResponse(
+            status=confirmation.status,
+            delivered_count=confirmation.delivered_count,
+        )
 
     def acknowledge_situation(self, situation_id: int) -> SituationResponse:
         """Record that the user handled one delivered situation."""

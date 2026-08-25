@@ -267,7 +267,7 @@ async def test_valid_scheduled_confirm_delivers_the_exact_leased_count(
 
 
 @pytest.mark.anyio
-async def test_replayed_receipt_token_is_rejected_without_extra_mutation(
+async def test_replayed_receipt_token_returns_typed_success_without_extra_mutation(
     tmp_path: Path,
 ) -> None:
     # Given: one already-consumed scheduled receipt.
@@ -276,18 +276,21 @@ async def test_replayed_receipt_token_is_rejected_without_extra_mutation(
         checked = await session.call_tool("proactive_check")
         payload = ProactiveCheckResponse.model_validate_json(json_text(checked))
         assert payload.receipt_token is not None
-        _ = await session.call_tool(
+        first_result = await session.call_tool(
             "confirm_delivery",
             {"receipt_token": payload.receipt_token},
         )
         # When: the host replays the same token.
-        replayed = await session.call_tool(
+        replay_result = await session.call_tool(
             "confirm_delivery",
             {"receipt_token": payload.receipt_token},
         )
 
-    # Then: replay is rejected and the delivery event count stays exact.
-    assert replayed.is_error is True
+    first = ConfirmDeliveryResponse.model_validate_json(json_text(first_result))
+    replay = ConfirmDeliveryResponse.model_validate_json(json_text(replay_result))
+    # Then: replay succeeds from the immutable result and history stays exact.
+    assert (first.status, first.delivered_count) == ("confirmed", 1)
+    assert (replay.status, replay.delivered_count) == ("already_confirmed", 1)
     assert _delivery_counts(tmp_path).events == 1
 
 

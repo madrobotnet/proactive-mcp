@@ -14,6 +14,7 @@ from ._situation_claim import (
 from ._situation_models import (
     SITUATION_EVIDENCE_ADAPTER,
     DeliveryClaim,
+    DeliveryConfirmation,
     DeliveryReservation,
     Detection,
     DetectionApplySummary,
@@ -213,8 +214,8 @@ class SituationConsistencyStore:
         claim_token: str,
         *,
         confirmed_at: str,
-    ) -> tuple[Situation, ...]:
-        """Consume one unexpired host receipt and record delivery."""
+    ) -> DeliveryConfirmation:
+        """Confirm one unexpired host receipt or replay its result."""
         return confirm_delivery(
             self._connection,
             self._reader,

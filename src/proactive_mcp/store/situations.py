@@ -11,6 +11,7 @@ from ._situation_consistency import (
 )
 from ._situation_models import (
     DeliveryClaim,
+    DeliveryConfirmation,
     DeliveryReservation,
     Detection,
     DetectionApplySummary,
@@ -175,8 +176,8 @@ class SituationStore:
             expires_at=_utc_iso(expires_at),
         )
 
-    def confirm_delivery(self, claim_token: str) -> tuple[Situation, ...]:
-        """Confirm that a host received one leased proactive result."""
+    def confirm_delivery(self, claim_token: str) -> DeliveryConfirmation:
+        """Confirm a leased proactive result or replay its receipt."""
         return self._consistency.confirm_delivery(
             claim_token,
             confirmed_at=self._now_iso(),

@@ -24,6 +24,8 @@ from tests.situation_test_support import FakeClock, utc_datetime
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from proactive_mcp.store import DeliveryConfirmation
+
 
 def _detection(
     key: str,
@@ -39,6 +41,10 @@ def _detection(
         evidence=SituationEvidence(facts={"source_id": key}),
         expires_at=expires_at,
     )
+
+
+def _receipt_token(label: str) -> str:
+    return f"test-receipt:{label}:{len(label)}"
 
 
 def _delivery_claim(clock: FakeClock, daily_budget: int) -> DeliveryClaim:
@@ -258,7 +264,7 @@ def test_receipt_confirmation_rolls_back_after_first_row_update_failure(
         delivered = store.situations.confirm_delivery(reservation.claim_token)
 
     # Then: the retry consumes the token only after all three rows succeed.
-    assert len(delivered) == 3
+    assert (delivered.status, delivered.delivered_count) == ("confirmed", 3)
 
 
 def test_receipt_confirmation_rejects_partial_success_without_consuming_token(
@@ -301,3 +307,218 @@ def test_receipt_confirmation_rejects_partial_success_without_consuming_token(
     assert delivered_count == 1
     assert history_count == 1
     assert reserved_count == 3
+
+
+def test_receipt_confirmation_characterizes_first_success(tmp_path: Path) -> None:
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with Store(tmp_path / "situations.db", clock=clock) as store:
+        _ = store.situations.upsert_detections((_detection("first-success"),))
+        reservation = store.situations.reserve_for_delivery(
+            _delivery_claim(clock, 1),
+            claim_token=_receipt_token("first-success"),
+            expires_at=clock.now() + timedelta(minutes=2),
+        )
+
+        delivered = store.situations.confirm_delivery(reservation.claim_token)
+
+        assert (delivered.status, delivered.delivered_count) == ("confirmed", 1)
+        assert store.situations.count_situations("delivered") == 1
+
+
+def test_receipt_confirmation_characterizes_unknown_token(tmp_path: Path) -> None:
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with (
+        Store(tmp_path / "situations.db", clock=clock) as store,
+        pytest.raises(DeliveryReceiptError),
+    ):
+        _ = store.situations.confirm_delivery(_receipt_token("unknown"))
+
+
+def test_receipt_confirmation_characterizes_expired_token(tmp_path: Path) -> None:
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with Store(tmp_path / "situations.db", clock=clock) as store:
+        _ = store.situations.upsert_detections((_detection("expired-token"),))
+        reservation = store.situations.reserve_for_delivery(
+            _delivery_claim(clock, 1),
+            claim_token=_receipt_token("expired"),
+            expires_at=clock.now() + timedelta(minutes=2),
+        )
+        clock.advance(timedelta(minutes=2))
+
+        with pytest.raises(DeliveryReceiptError):
+            _ = store.situations.confirm_delivery(reservation.claim_token)
+
+        assert store.situations.count_situations("pending") == 1
+
+
+def test_receipt_confirmation_characterizes_one_history_mutation(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with Store(tmp_path / "situations.db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            tuple(
+                replace(
+                    _detection(f"history-{index}"),
+                    situation_type="calendar_conflict",
+                )
+                for index in range(3)
+            )
+        )
+        reservation = store.situations.reserve_for_delivery(
+            _delivery_claim(clock, 3),
+            claim_token=_receipt_token("history"),
+            expires_at=clock.now() + timedelta(minutes=2),
+        )
+
+        delivered = store.situations.confirm_delivery(reservation.claim_token)
+
+        assert (delivered.status, delivered.delivered_count) == ("confirmed", 3)
+        assert store.situations.count_deliveries() == 3
+
+
+def test_receipt_confirmation_replay_returns_immutable_result(tmp_path: Path) -> None:
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with Store(tmp_path / "situations.db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            tuple(
+                replace(
+                    _detection(f"replay-{index}"),
+                    situation_type="calendar_conflict",
+                )
+                for index in range(3)
+            )
+        )
+        reservation = store.situations.reserve_for_delivery(
+            _delivery_claim(clock, 3),
+            claim_token=_receipt_token("same-process-replay"),
+            expires_at=clock.now() + timedelta(minutes=2),
+        )
+
+        first = store.situations.confirm_delivery(reservation.claim_token)
+        replay = store.situations.confirm_delivery(reservation.claim_token)
+
+        assert (first.status, first.delivered_count) == ("confirmed", 3)
+        assert (replay.status, replay.delivered_count) == ("already_confirmed", 3)
+        assert store.situations.count_deliveries() == 3
+
+
+def test_receipt_confirmation_replay_survives_store_reopen(tmp_path: Path) -> None:
+    path = tmp_path / "situations.db"
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with Store(path, clock=clock) as store:
+        _ = store.situations.upsert_detections((_detection("reopen-replay"),))
+        reservation = store.situations.reserve_for_delivery(
+            _delivery_claim(clock, 1),
+            claim_token=_receipt_token("reopen-replay"),
+            expires_at=clock.now() + timedelta(minutes=2),
+        )
+        first = store.situations.confirm_delivery(reservation.claim_token)
+
+    with Store(path, clock=clock) as reopened:
+        replay = reopened.situations.confirm_delivery(reservation.claim_token)
+        assert reopened.situations.count_deliveries() == 1
+
+    assert (first.status, first.delivered_count) == ("confirmed", 1)
+    assert (replay.status, replay.delivered_count) == ("already_confirmed", 1)
+
+
+def _confirm_at_barrier(
+    path: Path,
+    clock: FakeClock,
+    claim_token: str,
+    barrier: Barrier,
+) -> DeliveryConfirmation:
+    with Store(path, clock=clock) as store:
+        assert barrier.wait(timeout=10) >= 0
+        return store.situations.confirm_delivery(claim_token)
+
+
+def test_two_stores_concurrently_confirm_one_lease_once(tmp_path: Path) -> None:
+    path = tmp_path / "situations.db"
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with Store(path, clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            tuple(
+                replace(
+                    _detection(f"concurrent-{index}"),
+                    situation_type="calendar_conflict",
+                )
+                for index in range(3)
+            )
+        )
+        reservation = store.situations.reserve_for_delivery(
+            _delivery_claim(clock, 3),
+            claim_token=_receipt_token("concurrent-replay"),
+            expires_at=clock.now() + timedelta(minutes=2),
+        )
+    barrier = Barrier(2)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(
+            executor.submit(
+                _confirm_at_barrier,
+                path,
+                clock,
+                reservation.claim_token,
+                barrier,
+            )
+            for _ in range(2)
+        )
+        confirmations = tuple(future.result(timeout=10) for future in futures)
+
+    assert sorted(item.status for item in confirmations) == [
+        "already_confirmed",
+        "confirmed",
+    ]
+    assert {item.delivered_count for item in confirmations} == {3}
+    with Store(path, clock=clock) as store:
+        assert store.situations.count_situations("delivered") == 3
+        assert store.situations.count_deliveries() == 3
+
+
+def test_receipt_insert_failure_rolls_back_every_confirmation_mutation(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    start = clock.now().replace(hour=0)
+    end = start + timedelta(days=1)
+    with Store(tmp_path / "situations.db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            tuple(
+                replace(
+                    _detection(f"insert-failure-{index}"),
+                    situation_type="calendar_conflict",
+                )
+                for index in range(3)
+            )
+        )
+        reservation = store.situations.reserve_for_delivery(
+            _delivery_claim(clock, 3),
+            claim_token=_receipt_token("insert-failure"),
+            expires_at=clock.now() + timedelta(minutes=2),
+        )
+        _ = store.connection().execute(
+            """
+            CREATE TEMP TRIGGER fail_confirmed_receipt_insert
+            BEFORE INSERT ON confirmed_delivery_receipts
+            BEGIN
+                SELECT RAISE(ABORT, 'injected receipt failure');
+            END
+            """
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="injected receipt failure"):
+            _ = store.situations.confirm_delivery(reservation.claim_token)
+
+        assert store.situations.count_situations("pending") == 3
+        assert store.situations.count_situations("delivered") == 0
+        assert store.situations.count_deliveries() == 0
+        assert store.situations.count_reserved_between(start, end, clock.now()) == 3
+        _ = store.connection().execute("DROP TRIGGER fail_confirmed_receipt_insert")
+        confirmation = store.situations.confirm_delivery(reservation.claim_token)
+
+        assert (confirmation.status, confirmation.delivered_count) == (
+            "confirmed",
+            3,
+        )

@@ -226,7 +226,7 @@ def test_one_row_receipt_confirmation_reports_one_delivery(tmp_path: Path) -> No
     assert delivery_events == 1
 
 
-def test_receipt_confirmation_rejects_same_token_replay(tmp_path: Path) -> None:
+def test_receipt_confirmation_replay_returns_typed_success(tmp_path: Path) -> None:
     # Given: one receipt already consumed by a successful confirmation.
     with open_harness(tmp_path, _NOON) as harness:
         _ = harness.store.situations.upsert_detections(
@@ -234,11 +234,17 @@ def test_receipt_confirmation_rejects_same_token_replay(tmp_path: Path) -> None:
         )
         reservation = harness.service.proactive_check()
         assert reservation.receipt_token is not None
-        _ = harness.service.confirm_delivery(reservation.receipt_token)
+        first = harness.service.confirm_delivery(reservation.receipt_token)
 
-        # When/Then: replay cannot deliver or charge the same row again.
-        with pytest.raises(DeliveryReceiptError):
-            _ = harness.service.confirm_delivery(reservation.receipt_token)
+        # When: the host replays the same token.
+        replay = harness.service.confirm_delivery(reservation.receipt_token)
+
+        # Then: both calls succeed with one immutable delivery result.
+        assert (first.status, first.delivered_count) == ("confirmed", 1)
+        assert (replay.status, replay.delivered_count) == (
+            "already_confirmed",
+            1,
+        )
         assert harness.store.situations.count_deliveries() == 1
 
 
