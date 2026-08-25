@@ -31,7 +31,7 @@ from proactive_mcp.store import (
     Store,
     UnsafeDatabasePathError,
 )
-from tests.test_google_oauth import (
+from tests.google_oauth_support import (
     FIXTURES,
     ErrorInstalledAppFlow,
     FakeFlowFactory,
