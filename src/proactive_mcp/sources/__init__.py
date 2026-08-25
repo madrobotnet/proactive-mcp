@@ -46,6 +46,8 @@ from .oauth import (
 )
 from .transport import GoogleAuthenticatedGetTransport
 
+GoogleSourceConfigurationError.__module__ = __name__
+
 if TYPE_CHECKING:
     from datetime import timedelta
     from pathlib import Path

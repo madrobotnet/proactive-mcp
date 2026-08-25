@@ -1,3 +1,4 @@
+import pickle
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -9,6 +10,9 @@ from proactive_mcp.sources import (
     GoogleOAuthAuthorizer,
     GoogleSetupOptions,
 )
+from proactive_mcp.sources._google_setup import (
+    GoogleSourceConfigurationError as ExtractedGoogleSourceConfigurationError,
+)
 from proactive_mcp.sources.credentials import CredentialStore
 from tests.cli_oauth_test_support import (
     FIXTURES,
@@ -19,6 +23,16 @@ from tests.cli_oauth_test_support import (
     count_setup_success_events,
     google_credential,
 )
+
+
+def test_configuration_error_retains_public_module_identity_after_extraction() -> None:
+    exception_type = sources.GoogleSourceConfigurationError
+
+    serialized_type = pickle.dumps(exception_type)
+
+    assert exception_type.__module__ == "proactive_mcp.sources"
+    assert exception_type is ExtractedGoogleSourceConfigurationError
+    assert pickle.loads(serialized_type) is exception_type  # noqa: S301
 
 
 def test_setup_emits_no_success_when_database_open_fails_after_credential_save(
