@@ -181,10 +181,12 @@ into the agent. They do not paste shell or PowerShell into a terminal. They do
 not need a repository, `git`, a package index, `mcp add`, or manual MCP JSON.
 The agent carries out the OS-specific handoff: checksum verification, Python and
 uv checks, virtual environment creation, wheel installation, OAuth JSON
-placement and permissions, MCP registration, setup, smoke checks,
-`daemon --once`, and status verification. It then installs and verifies the
-host-specific session-start rule, a scheduled agent invocation through
-`serve-scheduled`, and the platform-appropriate continuous watcher: Windows
+placement and permissions, MCP registration, Google read-only linking, a
+confirmed real-account read, one-shot watch, and status verification. The
+tester paste names outcomes, not CLI verbs; the agent looks those up from
+`--help`, including the real-account confirm flag. It then installs and
+verifies the host-specific session-start rule, a scheduled agent invocation
+through `serve-scheduled`, and the platform-appropriate continuous watcher: Windows
 Task Scheduler, a Linux user service, or a macOS LaunchAgent. A scheduler must
 launch the agent so it can call `proactive_check` and conditionally
 `confirm_delivery`; invoking the proactive-mcp CLI alone does not deliver a
