@@ -247,8 +247,8 @@ fi
 # Also clean legacy user-scope entries if they exist; absence is harmless here.
 grok mcp remove --scope user proactive 2>/dev/null || true
 grok mcp remove --scope user proactive_scheduled 2>/dev/null || true
-# Restore any pre-install Claude/user registration from its backup rather than
-# deleting unrelated settings.
+# Restore any pre-install Claude/Cursor/user registration from its backup rather
+# than deleting unrelated settings.
 ```
 
 ```bash

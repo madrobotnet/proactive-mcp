@@ -166,7 +166,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 
 | 플랫폼 | stdio 로컬 | 스케줄 트리거 | 판정 |
 |---|---|---|---|
-| Grok CLI | O — 일상용·예약용 별도 project 디렉터리에 각각 project-scope 등록. user/Claude 설정도 병합되므로 inherited full 등록 제거와 wrapper의 모든 nested Claude project entry를 포함한 raw source 중복 검사와 scope/command/list/handshake/3-tool gate 필수 | 없음 → OS 스케줄러 | 격리 보장 시 M5 1순위; 불가하면 Codex 예약 collector |
+| Grok CLI | O — 일상용·예약용 별도 project 디렉터리에 각각 project-scope 등록. user/Claude/Cursor 설정도 병합되므로 inherited full 등록 제거와 wrapper의 여섯 raw file(모든 nested Claude project entry 및 user/project Cursor 포함) 중복 검사와 scope/command/list/handshake/3-tool gate 필수 | 없음 → OS 스케줄러 | 격리 보장 시 M5 1순위; 불가하면 Codex 예약 collector |
 | Codex CLI | O — `~/.codex/config.toml` | 없음 → OS 스케줄러 | M5 1순위 |
 | Hermes | Owner 검증용 stdio만 | Hermes Native Cron | Owner 전용 상호운용 검증, 테스터 경로 제외 |
 | Claude Code Desktop | O | 로컬 예약 작업(최소 간격 1분, 로컬 MCP 접근 가능) | 레시피 문서화만 (Owner 미설치, 실증 제외) |
