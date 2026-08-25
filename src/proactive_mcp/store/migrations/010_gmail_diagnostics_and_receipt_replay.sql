@@ -1,22 +1,56 @@
--- Bounded Gmail read diagnostics and replay-safe confirmed delivery receipts.
+-- Bounded Gmail diagnostics and digest-only replay-safe delivery receipts.
+-- Migration 010 has not shipped: v9 receipt leases are intentionally invalidated
+-- here so their raw tokens are never copied into the hardened schema. Situations
+-- owned by those short-lived leases remain pending and can be offered again.
+PRAGMA secure_delete = ON;
+DROP TABLE situation_delivery_claims;
+
+CREATE TABLE situation_delivery_claims (
+    receipt_digest BLOB NOT NULL
+        CHECK(typeof(receipt_digest) = 'blob' AND length(receipt_digest) = 32),
+    situation_id INTEGER NOT NULL UNIQUE REFERENCES situations(id)
+        CHECK(typeof(situation_id) = 'integer'),
+    claimed_at TEXT NOT NULL
+        CHECK(typeof(claimed_at) = 'text' AND length(claimed_at) > 0),
+    expires_at TEXT NOT NULL
+        CHECK(typeof(expires_at) = 'text' AND length(expires_at) > 0),
+    PRIMARY KEY(receipt_digest, situation_id),
+    CHECK(expires_at > claimed_at)
+) WITHOUT ROWID;
+CREATE INDEX idx_situation_delivery_claims_expiry
+ON situation_delivery_claims(expires_at);
+
 CREATE TABLE gmail_diagnostics (
-    id INTEGER PRIMARY KEY CHECK(id = 1),
+    id INTEGER PRIMARY KEY
+        CHECK(typeof(id) = 'integer' AND id = 1),
     outcome TEXT NOT NULL CHECK(
-        outcome IN ('healthy', 'partial', 'stale', 'auth_error', 'transport_error')
+        typeof(outcome) = 'text'
+        AND outcome IN ('healthy', 'partial', 'stale', 'auth_error', 'transport_error')
     ),
-    request_count INTEGER NOT NULL CHECK(request_count >= 0),
-    page_count INTEGER NOT NULL CHECK(page_count >= 0),
-    projected_count INTEGER NOT NULL CHECK(projected_count >= 0),
-    excluded_count INTEGER NOT NULL CHECK(excluded_count >= 0),
-    byte_budget INTEGER NOT NULL CHECK(byte_budget >= 0)
-);
+    request_count INTEGER NOT NULL CHECK(
+        typeof(request_count) = 'integer' AND request_count BETWEEN 0 AND 221
+    ),
+    page_count INTEGER NOT NULL CHECK(
+        typeof(page_count) = 'integer' AND page_count BETWEEN 0 AND 20
+    ),
+    projected_count INTEGER NOT NULL CHECK(
+        typeof(projected_count) = 'integer' AND projected_count BETWEEN 0 AND 200
+    ),
+    excluded_count INTEGER NOT NULL CHECK(
+        typeof(excluded_count) = 'integer' AND excluded_count BETWEEN 0 AND 2000
+    ),
+    byte_budget INTEGER NOT NULL CHECK(
+        typeof(byte_budget) = 'integer' AND byte_budget BETWEEN 0 AND 8000000
+    )
+) WITHOUT ROWID;
 
 CREATE TABLE gmail_diagnostic_reason_counts (
     diagnostic_id INTEGER NOT NULL DEFAULT 1
         REFERENCES gmail_diagnostics(id) ON DELETE CASCADE
-        CHECK(diagnostic_id = 1),
+        CHECK(typeof(diagnostic_id) = 'integer' AND diagnostic_id = 1),
     reason TEXT NOT NULL CHECK(
-        reason IN (
+        typeof(reason) = 'text'
+        AND reason IN (
             'body_snippet_fallback',
             'body_truncated',
             'degraded',
@@ -43,21 +77,27 @@ CREATE TABLE gmail_diagnostic_reason_counts (
             'unknown'
         )
     ),
-    count INTEGER NOT NULL CHECK(count >= 0),
+    count INTEGER NOT NULL CHECK(
+        typeof(count) = 'integer' AND count BETWEEN 0 AND 200
+    ),
     PRIMARY KEY(diagnostic_id, reason)
-);
+) WITHOUT ROWID;
 
 CREATE TABLE confirmed_delivery_receipts (
-    receipt_token TEXT PRIMARY KEY NOT NULL CHECK(length(receipt_token) > 0),
-    delivered_count INTEGER NOT NULL CHECK(delivered_count >= 0),
-    confirmed_at TEXT NOT NULL CHECK(length(confirmed_at) > 0)
-);
+    receipt_digest BLOB PRIMARY KEY NOT NULL
+        CHECK(typeof(receipt_digest) = 'blob' AND length(receipt_digest) = 32),
+    delivered_count INTEGER NOT NULL CHECK(
+        typeof(delivered_count) = 'integer' AND delivered_count BETWEEN 0 AND 100
+    ),
+    confirmed_at TEXT NOT NULL
+        CHECK(typeof(confirmed_at) = 'text' AND length(confirmed_at) > 0)
+) WITHOUT ROWID;
 
 CREATE TRIGGER confirmed_delivery_receipts_no_duplicate
 BEFORE INSERT ON confirmed_delivery_receipts
 WHEN EXISTS (
     SELECT 1 FROM confirmed_delivery_receipts
-    WHERE receipt_token = NEW.receipt_token
+    WHERE receipt_digest = NEW.receipt_digest
 )
 BEGIN
     SELECT RAISE(ABORT, 'confirmed delivery receipts are immutable');

@@ -26,6 +26,38 @@ if TYPE_CHECKING:
     from proactive_mcp.store import DeliveryConfirmation
 
 
+def _database_artifacts(path: Path) -> bytes:
+    return b"".join(
+        artifact.read_bytes()
+        for artifact in path.parent.glob(f"{path.name}*")
+        if artifact.is_file()
+    )
+
+
+def test_raw_receipt_is_absent_from_active_and_confirmed_storage(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "situations.db"
+    receipt_canary = "PR29_RAW_RECEIPT_CANARY_7bJ4wP9mQ2xN6kR8sT3vY5zA1cD0eF"
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    with Store(path, clock=clock) as store:
+        _ = store.situations.upsert_detections((_detection("token-minimization"),))
+        reservation = store.situations.reserve_for_delivery(
+            _delivery_claim(clock, 1),
+            claim_token=receipt_canary,
+            expires_at=clock.now() + timedelta(minutes=2),
+        )
+        active_dump = "\n".join(store.connection().iterdump())
+        assert receipt_canary not in active_dump
+        assert receipt_canary.encode() not in _database_artifacts(path)
+
+        confirmation = store.situations.confirm_delivery(reservation.claim_token)
+        confirmed_dump = "\n".join(store.connection().iterdump())
+        assert (confirmation.status, confirmation.delivered_count) == ("confirmed", 1)
+        assert receipt_canary not in confirmed_dump
+        assert receipt_canary.encode() not in _database_artifacts(path)
+
+
 def test_receipt_confirmation_characterizes_first_success(tmp_path: Path) -> None:
     clock = FakeClock(utc_datetime(2026, 8, 21, 12))
     with Store(tmp_path / "situations.db", clock=clock) as store:

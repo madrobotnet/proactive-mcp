@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import TYPE_CHECKING, Final, cast
 
 from ._delivery_eligibility import (
@@ -113,6 +114,7 @@ def reserve_for_delivery(
     expires_at: str,
 ) -> DeliveryReservation:
     """Lease bounded pending rows without recording delivery history."""
+    receipt_digest = _receipt_digest(claim_token)
     reserved: list[Situation] = []
     with ImmediateTransaction(connection):
         _ = connection.execute(
@@ -131,7 +133,7 @@ def reserve_for_delivery(
             cursor = connection.execute(
                 f"""
                 INSERT INTO situation_delivery_claims(
-                    claim_token, situation_id, claimed_at, expires_at
+                    receipt_digest, situation_id, claimed_at, expires_at
                 )
                 SELECT ?, id, ?, ? FROM situations
                 WHERE id = ? AND state = 'pending'
@@ -184,7 +186,7 @@ def reserve_for_delivery(
                        ) < MAX(0, ? - ?))
                 """,  # noqa: S608
                 (
-                    claim_token,
+                    receipt_digest,
                     claim.delivered_at,
                     expires_at,
                     candidate.id,
@@ -218,15 +220,16 @@ def confirm_delivery(
     confirmed_at: str,
 ) -> DeliveryConfirmation:
     """Confirm one active lease or replay its immutable result."""
+    receipt_digest = _receipt_digest(claim_token)
     with ImmediateTransaction(connection):
         receipt = cast(
             "tuple[int] | None",
             connection.execute(
                 """
                 SELECT delivered_count FROM confirmed_delivery_receipts
-                WHERE receipt_token = ?
+                WHERE receipt_digest = ?
                 """,
-                (claim_token,),
+                (receipt_digest,),
             ).fetchone(),
         )
         if receipt is not None:
@@ -236,7 +239,7 @@ def confirm_delivery(
             "DELETE FROM situation_delivery_claims WHERE expires_at <= ?",
             (confirmed_at,),
         )
-        situation_ids = reader.delivery_claim_ids(claim_token)
+        situation_ids = reader.delivery_claim_ids(receipt_digest)
         if not situation_ids:
             raise DeliveryReceiptError
 
@@ -258,19 +261,24 @@ def confirm_delivery(
             record_delivery(connection, situation, confirmed_at)
 
         _ = connection.execute(
-            "DELETE FROM situation_delivery_claims WHERE claim_token = ?",
-            (claim_token,),
+            "DELETE FROM situation_delivery_claims WHERE receipt_digest = ?",
+            (receipt_digest,),
         )
         delivered_count = len(situation_ids)
         _ = connection.execute(
             """
             INSERT INTO confirmed_delivery_receipts(
-                receipt_token, delivered_count, confirmed_at
+                receipt_digest, delivered_count, confirmed_at
             ) VALUES (?, ?, ?)
             """,
-            (claim_token, delivered_count, confirmed_at),
+            (receipt_digest, delivered_count, confirmed_at),
         )
         return DeliveryConfirmation("confirmed", delivered_count)
+
+
+def _receipt_digest(receipt_token: str) -> bytes:
+    """Minimize one untrusted receipt to its fixed-size lookup digest."""
+    return sha256(receipt_token.encode()).digest()
 
 
 def record_delivery(

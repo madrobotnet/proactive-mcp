@@ -82,6 +82,14 @@ SourceReadReason: TypeAlias = Literal[
     "unknown",
 ]
 GMAIL_READ_BYTE_BUDGET: Final[int] = 8_000_000
+_DIAGNOSTIC_COUNT_MAXIMA: Final[tuple[int, ...]] = (
+    221,
+    20,
+    200,
+    2_000,
+    GMAIL_READ_BYTE_BUDGET,
+)
+_MAX_DIAGNOSTIC_REASON_COUNT: Final[int] = 200
 _SOURCE_ERROR_OUTCOMES: Final[dict[SourceErrorCode, SourceReadOutcome]] = {
     "invalid_grant": "auth_error",
     "scope_mismatch": "auth_error",
@@ -570,12 +578,15 @@ def _validate_diagnostics(diagnostics: SourceReadDiagnostics) -> None:
     reasons = tuple(item.reason for item in diagnostics.reason_counts)
     if (
         diagnostics.outcome not in _SOURCE_READ_OUTCOMES
-        or any(type(value) is not int or value < 0 for value in counts)
+        or any(
+            type(value) is not int or not 0 <= value <= maximum
+            for value, maximum in zip(counts, _DIAGNOSTIC_COUNT_MAXIMA, strict=True)
+        )
         or len(reasons) != len(set(reasons))
         or any(
             item.reason not in _SOURCE_READ_REASONS
             or type(item.count) is not int
-            or item.count < 0
+            or not 0 <= item.count <= _MAX_DIAGNOSTIC_REASON_COUNT
             for item in diagnostics.reason_counts
         )
     ):

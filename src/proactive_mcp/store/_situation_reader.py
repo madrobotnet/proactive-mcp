@@ -109,17 +109,17 @@ class SituationReader:
         )
         return self._ints[0] if self._ints else 0
 
-    def delivery_claim_ids(self, claim_token: str) -> tuple[int, ...]:
-        """Return the bounded situation ids owned by one receipt token."""
+    def delivery_claim_ids(self, receipt_digest: bytes) -> tuple[int, ...]:
+        """Return the bounded situation ids owned by one receipt digest."""
         self._ints.clear()
         _ = self._connection.execute(
             """
             SELECT _proactive_capture_situation_int(situation_id)
             FROM situation_delivery_claims
-            WHERE claim_token = ? ORDER BY situation_id ASC
+            WHERE receipt_digest = ? ORDER BY situation_id ASC
             LIMIT 100
             """,
-            (claim_token,),
+            (receipt_digest,),
         ).fetchall()
         return tuple(self._ints)
 

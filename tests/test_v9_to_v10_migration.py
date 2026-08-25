@@ -14,6 +14,7 @@ from proactive_mcp.store.migrations import load_migrations
 from tests.store_migration_support import (
     capture_ints,
     capture_json_rows,
+    capture_strings,
     scalar_int,
     table_names,
 )
@@ -150,6 +151,67 @@ def test_fresh_and_v9_databases_reach_v10_without_losing_legacy_rows(
             "gmail_diagnostic_reason_counts",
             "confirmed_delivery_receipts",
         }
+
+
+def test_v10_invalidates_v9_raw_receipt_claims_without_mutating_situations(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy.db"
+    receipt_canary = "PR29_V9_ACTIVE_RECEIPT_CANARY_k7P2rN9xV4mQ8wD3"
+    _ = _create_v9_database(path)
+    connection = sqlite3.connect(path)
+    try:
+        _ = connection.execute(
+            """
+            INSERT INTO situations (
+                situation_type, dedupe_key, state, priority, title, why_now,
+                evidence, detected_at, updated_at
+            ) VALUES (
+                'reply_deadline', 'v9-active-claim', 'pending', 'routine',
+                'fixture', 'fixture', '{}', ?, ?
+            )
+            """,
+            ("2026-08-25T12:00:00+00:00", "2026-08-25T12:00:00+00:00"),
+        )
+        situation_id = scalar_int(
+            connection,
+            "SELECT id FROM situations WHERE dedupe_key = 'v9-active-claim'",
+        )
+        _ = connection.execute(
+            """
+            INSERT INTO situation_delivery_claims (
+                claim_token, situation_id, claimed_at, expires_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                receipt_canary,
+                situation_id,
+                "2026-08-25T12:00:00+00:00",
+                "2026-08-25T12:02:00+00:00",
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with Store(path) as upgraded:
+        assert capture_strings(
+            upgraded.connection(),
+            "SELECT _cap_str(state) FROM situations WHERE dedupe_key = ?",
+            ("v9-active-claim",),
+        ) == ["pending"]
+        assert (
+            scalar_int(
+                upgraded.connection(), "SELECT COUNT(*) FROM situation_delivery_claims"
+            )
+            == 0
+        )
+        assert receipt_canary not in "\n".join(upgraded.connection().iterdump())
+
+    assert all(
+        receipt_canary.encode() not in artifact.read_bytes()
+        for artifact in tmp_path.iterdir()
+    )
 
 
 def test_two_concurrent_v9_opens_apply_migration_once(tmp_path: Path) -> None:
