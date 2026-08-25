@@ -71,8 +71,8 @@ def run_service(action: ServiceAction) -> int:
             ),
             success=False,
         )
-    layout = _layout()
     try:
+        layout = _layout()
         match action:
             case "install":
                 response, success = _install(layout)
