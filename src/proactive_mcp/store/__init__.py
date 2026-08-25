@@ -72,6 +72,7 @@ from .situations import SituationStore
 from .sync import (
     SourceAuthState,
     SourceErrorCode,
+    SourceHealthSnapshot,
     SourceName,
     SourceReadDiagnostics,
     SourceReadReasonCount,
@@ -136,6 +137,7 @@ __all__ = [
     "SourceGeneration",
     "SourceGenerationState",
     "SourceGenerationStatus",
+    "SourceHealthSnapshot",
     "SourceName",
     "SourceReadDiagnostics",
     "SourceReadReasonCount",

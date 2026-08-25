@@ -161,6 +161,15 @@ class SourceSyncState:
     updated_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class SourceHealthSnapshot:
+    """Google source states and accepted Gmail diagnostics from one read."""
+
+    gmail: SourceSyncState
+    calendar: SourceSyncState
+    gmail_diagnostics: SourceReadDiagnostics | None
+
+
 _SOURCE_SYNC_STATE_ADAPTER: Final[TypeAdapter[SourceSyncState]] = TypeAdapter(
     SourceSyncState
 )
@@ -241,8 +250,60 @@ class SyncStore:
         if diagnostics is not None:
             self._write_gmail_diagnostics(diagnostics)
 
+    def source_health_snapshot(self) -> SourceHealthSnapshot:
+        """Return source state and diagnostics from one SQLite read snapshot."""
+        self._states.clear()
+        self._diagnostics.clear()
+        _ = self._connection.execute(
+            """
+            SELECT SUM(captured) FROM (
+                SELECT
+                    CASE source WHEN 'gmail' THEN 0 ELSE 1 END AS ordering,
+                    _proactive_capture_source_sync_state(json_object(
+                        'source', source,
+                        'auth_state', auth_state,
+                        'last_success_at', last_success_at,
+                        'last_attempt_at', last_attempt_at,
+                        'last_error_code', last_error_code,
+                        'sync_cursor', sync_cursor,
+                        'updated_at', updated_at
+                    )) AS captured
+                FROM source_sync_state
+                UNION ALL
+                SELECT 2, _proactive_capture_gmail_diagnostics(json_object(
+                    'outcome', outcome,
+                    'request_count', request_count,
+                    'page_count', page_count,
+                    'projected_count', projected_count,
+                    'excluded_count', excluded_count,
+                    'byte_budget', byte_budget,
+                    'reason_counts', json(COALESCE((
+                        SELECT json_group_array(json_object(
+                            'reason', reason,
+                            'count', count
+                        ))
+                        FROM (
+                            SELECT reason, count
+                            FROM gmail_diagnostic_reason_counts
+                            WHERE diagnostic_id = gmail_diagnostics.id
+                            ORDER BY reason
+                        )
+                    ), '[]'))
+                ))
+                FROM gmail_diagnostics WHERE id = 1
+                ORDER BY ordering
+            )
+            """
+        )
+        persisted = {state.source: state for state in self._states}
+        return SourceHealthSnapshot(
+            gmail=persisted.get("gmail", _unconfigured_state("gmail")),
+            calendar=persisted.get("calendar", _unconfigured_state("calendar")),
+            gmail_diagnostics=None if not self._diagnostics else self._diagnostics[0],
+        )
+
     def gmail_diagnostics(self) -> SourceReadDiagnostics | None:
-        """Return latest accepted Gmail diagnostics, or the v9-compatible default."""
+        """Return the latest accepted Gmail diagnostics, when present."""
         self._diagnostics.clear()
         _ = self._connection.execute(
             """

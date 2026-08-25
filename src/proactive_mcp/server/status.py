@@ -158,11 +158,11 @@ def status_response(
     """Build one status document from persisted state, reading no source."""
     now = clock.now()
     runtime = SituationRuntime.from_config(store, clock, paths.config)
-    gmail_state, calendar_state = store.list_source_sync()
+    sources = store.source_health_snapshot()
     google = google_freshness_response(
-        evaluate_source_freshness(gmail_state, now),
-        evaluate_source_freshness(calendar_state, now),
-        store.gmail_diagnostics(),
+        evaluate_source_freshness(sources.gmail, now),
+        evaluate_source_freshness(sources.calendar, now),
+        sources.gmail_diagnostics,
     )
     poll_interval = (
         store.daemon.status().poll_interval or runtime.config.daemon.poll_interval

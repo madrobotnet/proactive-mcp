@@ -384,7 +384,7 @@ def test_once_skip_keeps_latest_accepted_nonzero_diagnostics(
         (),
         freshness,
         freshness,
-        gmail_diagnostics=diagnostics,
+        accepted_gmail_diagnostics=diagnostics,
     )
     completed = DaemonPass(EvaluationPass(result, SkippedSources(reason), ()), ())
 

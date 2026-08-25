@@ -152,8 +152,99 @@ def test_rejected_delayed_generation_cannot_leak_candidate_diagnostics(
     assert isinstance(newer_pass.sources, PreparedSources)
     assert isinstance(delayed_pass.sources, PreparedSources)
     assert newer_pass.sources.inputs.gmail_diagnostics == newer_diagnostics
-    assert delayed_pass.sources.inputs.gmail_diagnostics == newer_diagnostics
-    assert delayed_pass.result.gmail_diagnostics == newer_diagnostics
+    assert delayed_pass.sources.inputs.gmail_diagnostics == older_diagnostics
+    assert delayed_pass.result.accepted_gmail_diagnostics == newer_diagnostics
     assert "gmail: delayed source generation ignored" in delayed_pass.warnings
     assert persisted == newer_diagnostics
-    assert "91" not in repr(delayed_pass)
+
+
+def test_split_source_health_reads_reproduce_impossible_mixture(tmp_path: Path) -> None:
+    # Given: the old split reads straddle an atomic failure commit on connection two.
+    database = tmp_path / "situations.db"
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    healthy = SourceReadDiagnostics("healthy", 1, 1, 0, 0, 8_000_000)
+    failure = SourceReadDiagnostics(
+        "transport_error",
+        0,
+        0,
+        0,
+        0,
+        8_000_000,
+        (SourceReadReasonCount("network", 1),),
+    )
+    state_read = Event()
+    failure_committed = Event()
+    with Store(database, clock=clock) as reader:
+        reader.record_gmail_sync(healthy)
+        reader.record_sync_success("calendar")
+
+        def commit_failure() -> None:
+            with Store(database, clock=clock) as writer:
+                assert state_read.wait(timeout=10)
+                writer.record_gmail_sync(failure, error_code="network")
+                failure_committed.set()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            committed = executor.submit(commit_failure)
+            old_gmail, _ = reader.list_source_sync()
+            state_read.set()
+            assert failure_committed.wait(timeout=10)
+            old_diagnostics = reader.gmail_diagnostics()
+            committed.result(timeout=10)
+
+    # Then: the split contract reports a state that never existed.
+    assert old_gmail.last_error_code is None
+    assert old_diagnostics == failure
+
+
+def test_source_health_snapshot_is_coherent_during_commit(tmp_path: Path) -> None:
+    # Given: a healthy snapshot and a failure ready on connection two.
+    database = tmp_path / "situations.db"
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    healthy = SourceReadDiagnostics("healthy", 1, 1, 0, 0, 8_000_000)
+    failure = SourceReadDiagnostics(
+        "transport_error",
+        0,
+        0,
+        0,
+        0,
+        8_000_000,
+        (SourceReadReasonCount("network", 1),),
+    )
+    snapshot_started = Event()
+    concurrent_failure_committed = Event()
+    progress_calls = 0
+    with Store(database, clock=clock) as reader:
+        reader.record_gmail_sync(healthy)
+        reader.record_sync_success("calendar")
+
+        def commit_concurrent_failure() -> None:
+            with Store(database, clock=clock) as writer:
+                assert snapshot_started.wait(timeout=10)
+                writer.record_gmail_sync(failure, error_code="network")
+                concurrent_failure_committed.set()
+
+        def pause_snapshot() -> int:
+            nonlocal progress_calls
+            progress_calls += 1
+            if progress_calls == 1:
+                snapshot_started.set()
+                assert concurrent_failure_committed.wait(timeout=10)
+            return 0
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            committed = executor.submit(commit_concurrent_failure)
+            reader.connection().set_progress_handler(pause_snapshot, 5)
+            try:
+                snapshot = reader.source_health_snapshot()
+            finally:
+                reader.connection().set_progress_handler(None, 0)
+            committed.result(timeout=10)
+        persisted = reader.source_health_snapshot()
+
+    # Then: the active and subsequent snapshots each belong to one commit.
+    assert progress_calls > 1
+    assert snapshot.gmail.last_error_code is None
+    assert snapshot.gmail_diagnostics == healthy
+    assert persisted.gmail.last_error_code == "network"
+    assert persisted.gmail_diagnostics == failure

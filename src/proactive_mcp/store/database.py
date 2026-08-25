@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from .sync import (
         SourceAuthState,
         SourceErrorCode,
+        SourceHealthSnapshot,
         SourceName,
         SourceReadDiagnostics,
         SourceSyncFailureCode,
@@ -207,6 +208,10 @@ class Store:
     def source_generation_state(self, source: SourceName) -> SourceGenerationState:
         """Return issued and accepted detector generation progress."""
         return self._require().sync.source_generation_state(source)
+
+    def source_health_snapshot(self) -> SourceHealthSnapshot:
+        """Return source states and Gmail diagnostics from one read snapshot."""
+        return self._require().sync.source_health_snapshot()
 
     def gmail_diagnostics(self) -> SourceReadDiagnostics | None:
         """Return the latest accepted bounded Gmail diagnostics, when present."""

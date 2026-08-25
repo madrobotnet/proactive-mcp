@@ -94,11 +94,13 @@ class SituationToolService:
             completed = self._dependencies.evaluation.run_once()
             gmail_freshness = completed.result.gmail_freshness
             calendar_freshness = completed.result.calendar_freshness
+            gmail_diagnostics = completed.result.accepted_gmail_diagnostics
             warnings = completed.warnings
         else:
-            gmail_state, calendar_state = self._dependencies.store.list_source_sync()
-            gmail_freshness = evaluate_source_freshness(gmail_state, now)
-            calendar_freshness = evaluate_source_freshness(calendar_state, now)
+            sources = self._dependencies.store.source_health_snapshot()
+            gmail_freshness = evaluate_source_freshness(sources.gmail, now)
+            calendar_freshness = evaluate_source_freshness(sources.calendar, now)
+            gmail_diagnostics = sources.gmail_diagnostics
             warnings = tuple(
                 f"{source}: source is {freshness.status}"
                 for source, freshness in (
@@ -119,7 +121,7 @@ class SituationToolService:
             freshness=google_freshness_response(
                 gmail_freshness,
                 calendar_freshness,
-                self._dependencies.store.gmail_diagnostics(),
+                gmail_diagnostics,
             ),
             budget=budget_response(attention.budget_usage(now)),
             held_count=held_count,
