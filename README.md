@@ -33,7 +33,7 @@ proactive-mcp doesn't push every new event into your chat. Deterministic detecto
 
 | Situation | Example |
 |:---|:---|
-| `reply_deadline` | A message appears to need a reply before a stated deadline. |
+| `reply_deadline` | A message is a conservative reply candidate, not a verdict that the user must act. |
 | `calendar_conflict` | Two accepted or owned timed events overlap. |
 | `personal_occasion` | A saved personal date is approaching and relevant now. |
 
@@ -55,7 +55,7 @@ flowchart LR
 1. A watcher synchronizes Gmail and Calendar with read-only OAuth scopes.
 2. The situation engine evaluates deterministic rules against source snapshots and local memory.
 3. The agent calls `proactive_check` and receives any returned situations.
-4. If the response has a receipt token, the same session calls `confirm_delivery` exactly once, then presents the situations.
+4. The host reviews the whole lease and filters candidates for this user. Uncertain candidates may remain unconfirmed or be snoozed. Only when choosing confirmation after review does the host confirm the entire reviewed lease exactly once, including confidently dropped candidates.
 5. Acknowledgement, snooze, mute, resolution, cooldown, and daily budget rules prevent repeated or noisy delivery.
 
 ### Trust boundaries
@@ -77,7 +77,7 @@ flowchart LR
 After public release, open the local agent you already use and paste this request:
 
 ```text
-Install proactive-mcp with uvx, register it as a local stdio MCP server for this agent with absolute paths, complete its read-only Google setup, start the recommended watcher, and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md before changing configuration. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
+Install proactive-mcp with uvx, register it as a local stdio MCP server for this agent with absolute paths, complete its read-only Google setup, start the recommended watcher, and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
 ```
 
 You approve the Google consent screen. The expected status progression is `not_configured`, then `never_synced`, then `ok` after the first successful read. For BYO Google OAuth details, see [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
@@ -88,7 +88,7 @@ Repository collaborators can ask their existing agent to install from its checko
 
 ## Connect an agent
 
-Your agent registers the local stdio MCP server, including the interactive `serve` profile and, where needed, the restricted `serve-scheduled` profile. Don't manually run an MCP add command or edit MCP JSON for the primary path. The exact host recipes, command shapes, and configuration examples are agent-facing references in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
+Your agent registers the local stdio MCP server. It loads `serve` only in interactive everyday conversations and `serve-scheduled` only in separate scheduled conversations. It never loads both profiles into one conversation. Don't manually run an MCP add command or edit MCP JSON for the primary path. The exact host recipes, command shapes, and configuration examples are agent-facing references in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 
 Integration recipes are available for:
 
@@ -96,17 +96,20 @@ Integration recipes are available for:
 |:---|:---|
 | Grok CLI | Local stdio MCP plus an OS scheduler for proactive runs |
 | Codex CLI | Local stdio MCP plus an OS scheduler for proactive runs |
-| Hermes Agent | Experimental generic stdio MCP interoperability only; not supported in the closed alpha |
+| Hermes Agent | Owner-only interoperability validation with Hermes Native Cron; not a tester path |
 | Claude Code Desktop | Local stdio MCP registration |
 
 ### The delivery contract
 
 When an agent calls `proactive_check`:
 
-1. Read `warnings` first. Stale-source warnings are not an all-clear.
-2. If the response has a `receipt_token`, call `confirm_delivery` with it exactly once after receiving the tool result.
-3. Present every returned situation through the agent's existing channel.
-4. Never confirm a response without a receipt token.
+1. Read `warnings` first. Stale-source warnings are not an all-clear. A `reply_deadline` is a conservative candidate, not an action verdict.
+2. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user.
+3. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user.
+4. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them from the interactive profile. Never silently discard uncertainty as non-actionable.
+5. After reviewing every row, only when choosing confirmation, use a non-null `receipt_token` to call `confirm_delivery` exactly once for the entire reviewed lease. That confirmation includes candidates the host confidently and silently dropped. Never confirm a tokenless response.
+6. Keep MCP tool names, descriptions, fields, and values in English. Speak to the user in the user's language.
+7. Keep interactive everyday and scheduled work in separate conversations. Load only `serve` in the former and only `serve-scheduled` in the latter, never both.
 
 This receipt rule keeps delivery history accurate across crashes, retries, and multiple agents.
 
@@ -125,7 +128,7 @@ The Owner sends the OS tester sheet alongside the wheel. Open [`docs/testers/REA
 
 - The wheel checksum matches the Owner's value.
 - `--help` shows `serve`, `serve-scheduled`, `status`, `setup`, `disconnect`, `google-smoke`, `daemon`, and `service`.
-- `status` reports migration version `9` and the expected database path.
+- `status` reports migration version `10` and the expected database path.
 - Gmail and Calendar become `ok` after a successful read.
 - The agent can call `get_status`, memory tools, and `proactive_check`.
 - No database, credentials, raw logs, message content, or screenshots are attached to a public issue.

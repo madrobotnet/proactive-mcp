@@ -1,24 +1,22 @@
 # Windows Owner smoke test
 
-Run the current M5 smoke on Windows with PowerShell, Grok CLI, and Codex CLI.
-Those two CLIs are the supported platform set for this milestone
-(`docs/PRODUCT_PLAN.md` §5.3). Cursor was removed from that set by Owner
-decision [#20](https://github.com/madrobotnet/proactive-mcp/issues/20): its
-Automations run as cloud agents, and a cloud agent can't spawn the local stdio
-server or read the local SQLite file. Every remaining mention of Cursor in this
-document sits inside a section marked historical, and those sections record what
-already happened rather than telling you what to run.
+This file separates current tester guidance from historical Owner evidence.
 
-Two ways in:
+- **Current path:** closed-alpha testers use only
+  [부록: 클로즈드 알파 테스터 경로 (M6)](#부록-클로즈드-알파-테스터-경로-m6),
+  which points to the single paste block in
+  [`docs/testers/windows.md`](testers/windows.md).
+- **Historical record, don't run:** [준비 절차](#준비-절차) through the end of
+  [M5 문제 발생 시](#m5-문제-발생-시) records completed checkout-based Owner
+  smoke work. This includes M2.5, M4, and M5. The superseded Owner A1 through A8
+  workflow inside the collapsed M6 details block is historical too. Those
+  commands, prompts, outputs, and acceptance statements remain unchanged as
+  evidence.
 
-- **Owner smoke, from the checkout.** Start with [준비 절차](#준비-절차) and work
-  forward. The M1.5 through M4 sections preserve acceptance evidence exactly as
-  it was captured; for current support validation, jump to
-  [M5 연동 레시피 실증](#m5-연동-레시피-실증-issue-6).
-- **Closed-alpha tester, from a wheel.** Do not follow this Owner runbook.
-  Open [`docs/testers/windows.md`](testers/windows.md) and paste its single
-  block into the local agent you already use. The appendix only explains this
-  boundary and retains the superseded manual workflow as Owner reference.
+Grok CLI and Codex CLI remain the primary supported hosts. Cursor was removed
+by Owner decision [#20](https://github.com/madrobotnet/proactive-mcp/issues/20).
+Hermes Native Cron is an Owner-only validation path documented in
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md), not a Windows tester path.
 
 Don't install from PyPI: the repo is private and `proactive-mcp` is not
 published (`docs/PRODUCT_PLAN.md` §12). `uvx proactive-mcp` and
@@ -2115,6 +2113,20 @@ If you think a failure can't be explained without one of those, say so in the co
 The sheet is the canonical tester procedure. Its success, reporting, and
 credential-first rollback sections replace the older appendix workflow.
 [`docs/RELEASE_ALPHA.md`](RELEASE_ALPHA.md) remains the Owner handoff record.
+
+현재 붙여 넣기 블록은 다음 계약을 모두 포함합니다. `reply_deadline`은 행동
+필요 판정이 아니라 보수적으로 뽑은 후보입니다. 사용자에게 말하기 전에
+뉴스레터·마케팅·자동 영수증, 요청이 없는 FYI 또는 FYI-CC, 다른 사람이 맡은
+스레드, 이 사용자에게 답해야 할 질문·요청·결정이 없는 행은 확신할 수 있을 때
+제외합니다. 명시적인 회신·RSVP·결정 요청, 사용자가 책임진 마감, 이 사용자에게
+직접 묻고 아직 답하지 않은 질문은 유지합니다. 불확실한 후보는 사용자에게
+알리거나 lease 전체를 미확정 상태로 두거나 일상 대화에서 snooze하며, 비실행
+항목이라고 조용히 버리지 않습니다. 모든 행을 검토한 뒤 확정하기로 선택할 때만,
+보여 주지 않기로 확신한 후보까지 포함해 검토한 lease 전체를 정확히 한 번 확정합니다.
+MCP 도구명·설명·필드·값은 영어로 유지하되 사용자에게는 사용자의 언어로
+말합니다.
+일상 대화에는 `serve`만, 별도 예약 대화에는 `serve-scheduled`만 로드하며 한
+대화에 두 프로필을 함께 로드하지 않습니다.
 
 <details>
 <summary>Owner/maintainer reference: superseded manual A1–A8 workflow</summary>

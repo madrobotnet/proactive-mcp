@@ -45,8 +45,9 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | 코드베이스 | 새 저장소, MCP-first. 기존 repo는 참고자료만 |
 | 언어/스택 | Python ≥3.11, 공식 MCP Python SDK, SQLite, uv |
 | 전달 구조 | 하이브리드 — 서버가 감시·판단, 주 전달은 각 에이전트의 자체 채널, 폴백은 OS 알림 |
-| Hermes Agent | 클로즈드 알파 공식 지원에서 제외. 일반 stdio MCP 상호운용은 실험용으로만 남기며 결정적 receipt 확인이 검증될 때까지 설치·cron 경로를 제공하지 않음 |
-| 전달 영수증 | `proactive_check`는 짧은 lease로 상황을 예약하고, 호스트가 결과를 받은 뒤 `confirm_delivery`를 호출해야 `delivered`로 확정. 미확인 lease는 만료 후 pending으로 복귀 (2026-08-24 Owner 보안 수정 승인) |
+| Hermes Agent | Grok CLI와 Codex CLI가 클로즈드 알파의 기본 지원 경로. Hermes는 Owner가 직접 수행하는 일반 stdio MCP 상호운용 및 Hermes Native Cron 검증만 허용하며 테스터 온보딩 경로에서는 제외. 별도 adapter, helper, profile, plugin, handshake, 세션 추적, 배포 cron artifact는 만들지 않음 (2026-08-25 Owner 결정) |
+| 전달 영수증 | `proactive_check`는 짧은 lease로 상황을 예약하고, 호스트가 결과를 받은 뒤 검토한 lease 전체를 `confirm_delivery`로 확정. 사용자에게 보여 주지 않기로 확신한 후보도 같은 전체 lease 확정에 포함. 미확인 lease는 만료 후 pending으로 복귀 (2026-08-24 Owner 보안 수정 승인, 2026-08-25 전체 lease 명확화) |
+| 호스트 전달 판단 | 서버의 `reply_deadline`은 행동 판정이 아니라 보수적인 후보. 호스트가 사용자별 action filter, 불확실성 처리, 사용자 언어 전달을 담당하며 MCP 도구명·설명·필드·값은 영어를 유지. 일상 대화와 예약 대화는 각각 `serve`, `serve-scheduled` 하나만 로드하고 한 대화에 둘을 함께 로드하지 않음 (2026-08-25 Owner 결정) |
 | MVP 범위 | 읽기 + 알림만. 외부 쓰기는 2단계 |
 | MVP Situation | Reply Deadline, Calendar Conflict, Personal Occasion 3종 |
 | 메모리 | MVP 포함 — `remember`/`recall` 도구, 상황 감지가 메모리를 근거로 사용 |
@@ -109,7 +110,7 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 
 ## 5. MCP 도구 표면 v1
 
-도구 설명(description)은 에이전트가 읽고 행동하는 계약이므로, 각 도구의 사용 시점을 명확히 기술해야 한다. 특히 `remember`는 "사용자가 날짜·약속·선호·인물 정보를 언급하면 저장하라"는 지침을 도구 설명에 포함한다 — 이것이 "대화를 메모리에 저장"의 실현 방식이다.
+도구 설명(description)은 에이전트가 읽고 행동하는 계약이므로, 각 도구의 사용 시점을 명확히 기술해야 한다. `get_status`, `proactive_check`, `confirm_delivery` 설명은 영어로 호스트 필터, 전체 lease 확정, 불확실성, 사용자 언어, 대화별 프로필 분리 계약을 함께 전달한다. 특히 `remember`는 "사용자가 날짜·약속·선호·인물 정보를 언급하면 저장하라"는 지침을 도구 설명에 포함한다. 이것이 "대화를 메모리에 저장"의 실현 방식이다.
 
 | 도구 | 목적 | 핵심 입출력 |
 |---|---|---|
@@ -137,7 +138,7 @@ delivered → acknowledged | snoozed(시각 도래 시 pending 복귀) | muted |
 pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일정 변경 등)
 ```
 
-- `proactive_check`가 상황을 반환한 것만으로는 `delivered`로 기록하지 않는다. 응답의 `receipt_token`을 결과 수령 후 `confirm_delivery`에 전달해야 전달 이력이 확정되고 이후 동일 상황이 기본적으로 재반환되지 않는다(에이전트가 `list_situations`로는 조회 가능).
+- `proactive_check`가 상황을 반환한 것만으로는 `delivered`로 기록하지 않는다. 호스트는 반환된 모든 행을 검토한 뒤 확정하기로 선택할 때만 응답의 `receipt_token`을 `confirm_delivery`에 전달해 lease 전체를 확정한다. 사용자의 대화에 보여 주지 않기로 확신한 후보도 전체 lease에 포함된다. 이후 동일 상황은 기본적으로 재반환되지 않는다(에이전트가 `list_situations`로는 조회 가능).
 - 활성 lease 동안에는 다른 에이전트와 OS 폴백이 같은 상황을 가져가지 않는다. 호스트가 결과를 확인하지 못하면 lease가 만료되어 pending으로 다시 제공되므로 전송 실패가 알림 유실로 바뀌지 않는다.
 - 기존에 `proactive_check`만 호출하던 private-alpha 연동은 반드시 `confirm_delivery` 호출을 추가해야 한다. 이를 생략하면 안전한 실패 방식으로 lease 만료 후 상황이 재제공된다.
 - `delivered` 후 사용자 반응 없이 상황이 소스에서 해소되면 `resolved`로 자동 정리한다.
@@ -145,6 +146,16 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 ### 5.2 세션 시작 전달
 
 에이전트 플랫폼 스케줄러가 없어도, 사용자가 에이전트에게 말을 걸어 도구를 호출하는 순간이 전달 기회다. 이를 위해 `proactive_check` 도구 설명에 "세션 시작 시 1회 호출 권장"을 명시하고, 연동 레시피(M5)에서 각 플랫폼의 룰/시스템 프롬프트에 이 관례를 넣는 방법을 문서화한다.
+
+호스트는 매번 다음 순서로 lease를 처리한다.
+
+1. `reply_deadline`을 행동 필요 판정이 아닌 보수적인 후보로 본다.
+2. 사용자에게 말하기 전에 뉴스레터·마케팅·자동 영수증, 요청이 없는 FYI 또는 FYI-CC, 다른 사람이 맡은 스레드, 이 사용자에게 답해야 할 질문·요청·결정이 없는 행을 확신할 수 있을 때 제외한다.
+3. 명시적인 회신·RSVP·결정 요청, 사용자가 책임진 마감, 이 사용자에게 직접 묻고 아직 답하지 않은 질문은 유지한다.
+4. 불확실한 후보는 사용자에게 알리거나 lease 전체를 미확정 상태로 두거나, 일상 대화에서 lease 전체 확정 후 snooze한다. 비실행 항목이라고 조용히 버리지 않는다.
+5. 모든 행을 검토한 뒤 확정하기로 선택할 때만 사용자에게 보여 주지 않기로 확신한 후보까지 포함해 lease 전체를 `confirm_delivery`로 정확히 한 번 확정한다. 토큰이 없거나 호스트가 결과를 받지 못하면 확정하지 않는다.
+6. MCP 도구명·설명·필드·값은 영어로 유지하되 사용자에게는 사용자의 언어로 말한다.
+7. 일상 대화에는 `serve`만, 별도 예약 대화에는 `serve-scheduled`만 로드한다. 한 대화에 두 프로필을 함께 로드하지 않는다.
 
 ### 5.3 플랫폼 전달 매트릭스 (2026-08-22 Owner 개정, M5 정본)
 
@@ -157,7 +168,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 |---|---|---|---|
 | Grok CLI | O — `grok mcp add` 또는 `~/.grok/config.toml`. `~/.claude.json` 설정도 자동 로드 | 없음 → OS 스케줄러 | M5 1순위 |
 | Codex CLI | O — `~/.codex/config.toml` | 없음 → OS 스케줄러 | M5 1순위 |
-| Hermes | 실험용 stdio만 | 지원 스케줄러 없음 | 클로즈드 알파 지원 제외 |
+| Hermes | Owner 검증용 stdio만 | Hermes Native Cron | Owner 전용 상호운용 검증, 테스터 경로 제외 |
 | Claude Code Desktop | O | 로컬 예약 작업(최소 간격 1분, 로컬 MCP 접근 가능) | 레시피 문서화만 (Owner 미설치, 실증 제외) |
 | ChatGPT 웹/데스크톱 | X — 웹은 원격 HTTPS 커넥터만. 데스크톱은 stdio를 표방하나 도구가 채팅 세션에 노출되지 않는 미해결 버그([openai/codex#38162](https://github.com/openai/codex/issues/38162)) | Tasks (클라우드 실행) | **V2 HTTP transport 대기** |
 | Claude 클라우드 Routines | X — 로컬 파일·프로세스 접근 없음 | O | **V2 HTTP transport 대기** |
@@ -174,6 +185,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 ### 6.1 `reply_deadline` — 회신 필요/마감 임박
 
 - **소스:** Gmail (read-only)
+- **의미:** 보수적인 후보 생성 결과이며 사용자가 행동해야 한다는 판정이 아니다. 최종 사용자 전달 여부는 §5.2의 호스트 필터가 결정한다.
 - **평가 범위:** V1은 설정된 provider 읽기 창 안의 받은편지함 스레드만 평가한다. 기본 창은 최근 7일이며 `[sources]`의 `gmail_lookback_days`로 조정한다. 그보다 오래된 미회신·날짜성 마감 백로그는 V1 범위 밖이다.
 - **트리거:** 받은편지함 스레드에서 (a) 마지막 메시지가 상대방 발신이고, (b) 사용자가 수신자(To)이며, (c) 경과 시간이 임계값(기본 48h)을 넘거나 본문/제목에 날짜성 마감 패턴이 있는 경우
 - **우선순위:** 마감 24h 이내 = high, 그 외 = routine
@@ -269,7 +281,7 @@ CREATE TABLE memory_items (
 | **M2.5 메모리 모델 v2** | entity 테이블·별칭, 1차 카테고리 고정 enum + 하위 자유 경로 계층, 중복 병합과 모순 보존, `update`/`list_entities` 도구 — 설계 정본 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md) | 해당 문서 §8 완료 기준 충족 |
 | **M3 Situation 엔진** | 3종 감지기, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 상태 머신 | fake clock 결정론 테스트로 3종 감지·정책 검증 |
 | **M4 전달** | `proactive_check`/`confirm_delivery`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
-| **M5 연동 레시피** | §5.3 매트릭스 1순위(Grok CLI·Codex CLI) 연동 문서와 룰 템플릿, OS 스케줄러 등록 예시(cron·Windows 작업 스케줄러), Claude Code Desktop은 문서만, Hermes는 실험용 stdio 외 지원 제외 | 최소 2개 에이전트 플랫폼에서 "먼저 말 걸기" 실증 — 기본 조합은 Owner 머신의 Grok CLI + Codex CLI |
+| **M5 연동 레시피** | §5.3 매트릭스 1순위(Grok CLI·Codex CLI) 연동 문서와 룰 템플릿, OS 스케줄러 등록 예시(cron·Windows 작업 스케줄러), Claude Code Desktop은 문서만, Hermes Native Cron은 Owner 전용 검증만 | 최소 2개 기본 에이전트 플랫폼에서 "먼저 말 걸기" 실증. 기본 조합은 Owner 머신의 Grok CLI + Codex CLI이며 Hermes 결과는 이 기준을 대체하지 않음 |
 | **M6 클로즈드 알파 릴리스** | README 정비, GCP OAuth 설정 가이드, wheel 빌드와 테스터 배포 절차 (PyPI 미사용) | 새 환경에서 clean install → 온보딩 완료까지 15분 이내, 지정 테스터에게 전달 가능한 상태 |
 
 **M6 이후 — 공개 전환 (Owner 결정):** 지정 테스터의 1차 검증에서 문제가 없으면 저장소를 공개로 전환하고 PyPI `proactive-mcp` 0.1.0을 게시하며 홍보를 시작한다. PyPI 게시는 저장소가 private이어도 패키지를 공개하는 행위이므로, 반드시 공개 전환 시점에 함께 수행한다.
@@ -310,7 +322,8 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 - **배포 artifact:** 클로즈드 알파에서는 저장소를 private로 유지하고, 지정 테스터에게 wheel 파일을 직접 전달한다. 테스터 온보딩에 collaborator 초대나 git clone은 쓰지 않는다. 소스 checkout은 개발 또는 collaborator 작업 맥락에서만 쓴다. PyPI에는 게시하지 않는다. Owner가 지정한 테스터의 1차 검증을 승인한 공개 전환 후에는 PyPI 패키지 `proactive-mcp`를 게시하고 `uvx`로 제공한다.
 - **기존 에이전트가 MCP 등록 후 setup 실행:** 테스터는 이미 쓰는 에이전트에게 wheel 설치, MCP 등록, `proactive-mcp setup` 실행을 맡긴다. 공개 후에도 에이전트가 `uvx proactive-mcp`를 사용해 같은 절차를 수행한다. 알파에서는 Owner의 OAuth 클라이언트 JSON(프로덕션 게시, 미검증, 인증 시 경고 화면에서 고급→계속)을 패키지와 함께 전달한다. 토큰과 데이터는 테스터 본인 머신에만 저장되며 클라이언트 소유자에게 전송되지 않는다. 테스터 중 1~2명은 BYO 경로(`docs/SETUP_GOOGLE.md`)로 온보딩해 문서를 검증하며, 공개 후 일반 사용자는 BYO를 기본으로 한다.
 - **권장 데몬:** 에이전트가 MCP 등록과 setup을 마친 뒤 `proactive-mcp daemon`을 등록한다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, 폴백 알림은 동작하지 않는다.
-- **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고, 반환값에 `receipt_token`이 있을 때만 결과를 수령한 뒤 `confirm_delivery(receipt_token)`를 한 번 호출한다. 토큰이 없으면 호출하지 않는다.
+- **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고 §5.2에 따라 전체 후보를 검토한다. 반환값에 `receipt_token`이 있고 lease를 확정하기로 했다면 사용자에게 보여 주지 않기로 확신한 후보까지 포함한 lease 전체를 `confirm_delivery(receipt_token)`로 한 번 확정한다. 불확실한 후보는 알리거나 전체 lease를 미확정 상태로 두거나 일상 대화에서 확정 후 snooze하며, 비실행 항목이라고 조용히 버리지 않는다. 토큰이 없으면 확정하지 않는다.
+- **언어와 대화 분리:** MCP 도구명·설명·필드·값은 영어를 유지하고 호스트는 사용자의 언어로 말한다. 일상 대화에는 `serve`만, 별도 예약 대화에는 `serve-scheduled`만 로드하며 한 대화에 두 프로필을 함께 로드하지 않는다.
 - **에이전트용 JSON·host 레시피 참조 부록:** 기본 경로에서 사람은 JSON을 직접 편집하거나 `mcp add`를 실행하지 않는다. 아래 JSON 예시와 플랫폼별 host 레시피는 에이전트가 MCP 등록에 적용할 때만 참고한다. 공개 전환 후 `uvx` 등록 예시는 다음과 같다.
 
 ```json

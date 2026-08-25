@@ -4,9 +4,9 @@ Named closed-alpha testers start by pasting the OS-specific block from [docs/tes
 
 The closed alpha ships as a private wheel, not through PyPI. `uvx proactive-mcp` in older notes or `docs/PRODUCT_PLAN.md` §12 is the post-publication path, not today's tester path. Source-tree commands remain below only as agent and developer reference.
 
-The detailed Grok, Codex, and Claude Desktop material is retained as an [agent reference and appendix](#agent-reference-and-appendices). The Hermes appendix records why it is not a closed-alpha tester path.
+The detailed Grok, Codex, and Claude Desktop material is retained as an [agent reference and appendix](#agent-reference-and-appendices). The Hermes appendix is an Owner-only validation path using Hermes Native Cron. It is not a closed-alpha tester path and does not replace Grok or Codex as the primary hosts.
 
-**Verified on:** uv 0.11.29, grok 0.2.112, codex-cli 0.149.0, Linux (aarch64). Hermes Agent v0.20.0 was used only for unsupported compatibility diagnosis. Claude Code Desktop was not installed in the verification environment, so that section is marked and sourced accordingly.
+**Verified on:** uv 0.11.29, grok 0.2.112, codex-cli 0.149.1, Hermes Agent v0.20.0, Linux (aarch64). Hermes was checked only through local help and harmless listing commands. Claude Code Desktop was not installed in the verification environment, so that section is marked and sourced accordingly.
 
 ## Contents
 
@@ -21,7 +21,7 @@ The detailed Grok, Codex, and Claude Desktop material is retained as an [agent r
 - [Agent reference and appendices](#agent-reference-and-appendices)
   - [Grok CLI](#appendix-a-grok-cli)
   - [Codex CLI](#appendix-b-codex-cli)
-  - [Hermes Agent (experimental, unsupported)](#appendix-c-hermes-agent-experimental-unsupported)
+  - [Hermes Agent (Owner-only validation)](#appendix-c-hermes-agent-owner-only-validation)
   - [Claude Code Desktop (documentation only)](#appendix-d-claude-code-desktop-documentation-only)
   - [OS scheduler handoff](#appendix-e-os-scheduler-handoff)
   - [Linux and macOS: cron](#linux-and-macos-cron)
@@ -37,7 +37,7 @@ A platform can deliver proactive messages when two things are true, per `docs/PR
 |---|---|---|---|
 | Grok CLI | Yes | None, use OS scheduler | Full recipe |
 | Codex CLI | Yes | None, use OS scheduler | Full recipe |
-| Hermes | Experimental only | None supported | Excluded from the closed alpha; no recipe |
+| Hermes | Owner validation only | Hermes Native Cron | Owner-only recipe; excluded from tester onboarding |
 | Claude Code Desktop | Yes | Local scheduled tasks, one-minute minimum | Documentation only, not demonstrated |
 
 ### Deliberately out of scope
@@ -54,7 +54,7 @@ Don't try these; the blocker is the platform, not our code.
 
 Paste first. Open [docs/testers/README.md](testers/README.md), choose Windows, Linux, or macOS, and paste that sheet's complete block into the local agent you already use. Give the agent the artifact locations it requests, including the private wheel, its separately supplied SHA-256, and the OAuth JSON when supplied. The agent performs installation, MCP registration, `setup`, Google consent handoff, smoke checks, and verification.
 
-For named testers, the private-wheel OS sheet is the only human path. Don't clone the repository, install the wheel, place the OAuth file, run `setup`, type `mcp add`, or edit JSON or TOML before pasting. Pick one scheduled collector, not both Grok and Codex. The OS sheet keeps `serve` and `serve-scheduled` distinct: `serve` is interactive, while Codex scheduled runs use the restricted `serve-scheduled` profile with only `get_status`, `proactive_check`, and `confirm_delivery`.
+For named testers, the private-wheel OS sheet is the only human path. Don't clone the repository, install the wheel, place the OAuth file, run `setup`, type `mcp add`, or edit JSON or TOML before pasting. Pick one scheduled collector, not both Grok and Codex. Hermes Native Cron is Owner-only and is not a tester alternative. The OS sheet keeps `serve` and `serve-scheduled` distinct: `serve` is loaded only in an interactive everyday conversation, while a separate scheduled conversation loads only `serve-scheduled` with `get_status`, `proactive_check`, and `confirm_delivery`. Never load both profiles into one conversation.
 
 ## Agent and developer setup reference
 
@@ -66,8 +66,8 @@ The agent-reference recipes below follow the same four steps, in this order:
 
 1. **Prerequisites and local stdio MCP registration.** Point the agent at the checkout.
 2. **Watcher daemon, or the degraded-mode alternative.** The daemon is recommended, not required. Without it you lose OS notification fallback.
-3. **A session-start rule** that calls `proactive_check` exactly once.
-4. **A scheduled trigger**, native where the platform has one, OS scheduler where it doesn't.
+3. **A session-start rule** that calls `proactive_check` exactly once, applies the host filter, leaves uncertain leases unconfirmed or snoozes them, speaks to the user in the user's language, and only when choosing confirmation after review confirms the whole reviewed lease through English MCP.
+4. **A separate scheduled conversation**, native where the platform has one, OS scheduler where it doesn't. It loads only `serve-scheduled`; the interactive everyday conversation loads only `serve`. Never load both profiles into one conversation.
 
 Then verification and troubleshooting, which differ per platform.
 
@@ -192,24 +192,36 @@ proactive-mcp daemon [--once] [--poll-interval-minutes MINUTES]
 
 ## The session-start rule
 
-This is the same text on every platform. Copy it verbatim into the platform's rule, system prompt, or scheduled prompt.
+This is the same host contract on every platform. Copy it verbatim into the platform's rule or system prompt. Scheduled prompts repeat the same filter and use a separate conversation with only `serve-scheduled`.
 
 ```text
-At the start of every new session, call the MCP tool proactive_check exactly once,
-before you answer the user. Call it once per session and no more, unless the user
-explicitly asks for a fresh proactive check.
+At the start of every new interactive everyday conversation, load only serve and
+call proactive_check exactly once before answering the user. A separate scheduled
+conversation loads only serve-scheduled. Never load both profiles into one
+conversation.
 
-After proactive_check returns to the host, if it includes a receipt_token, pass
-that token to confirm_delivery exactly once before presenting the situations.
+Treat every reply_deadline as a conservative candidate, not an action verdict.
+Before speaking, confidently drop newsletters, marketing, automated receipts,
+FYI or FYI-CC with no ask, threads owned by someone else, and rows with no
+question, request, or decision for this user. Keep explicit reply, RSVP, or
+decision requests, user-owned deadlines, and unanswered questions directed to
+this user.
 
-If it returns situations, lead your reply with a short, natural summary of them.
-If it returns freshness warnings, say the result may be incomplete. Never report
-"nothing to report" while a source is stale or failed.
-If it returns nothing and freshness is healthy, say nothing about it and answer
-the user's actual request.
+Surface uncertain candidates, leave the whole lease unconfirmed, or use the
+interactive profile to confirm and snooze them. Never silently discard
+uncertainty as non-actionable. After reviewing every row, only when choosing confirmation and the result includes
+a receipt_token, pass it to confirm_delivery exactly once for the entire reviewed
+lease, including candidates confidently and silently dropped. If the host didn't
+receive the result, or no receipt_token exists, don't confirm it.
+
+Keep MCP tool names, descriptions, fields, and values in English. Speak to the
+user in the user's language. If freshness warnings exist, say the result may be
+incomplete and never claim "nothing to report" while a source is stale or failed.
+If no candidates remain and freshness is healthy, say nothing about the check and
+answer the user's actual request.
 ```
 
-Why once: `proactive_check` takes no arguments and atomically leases the returned situations (§5.1). `confirm_delivery` records them as delivered only after the result reached the host. An unconfirmed lease expires back to pending, while a confirmed row is deduped, so repeat checks add round trips without benefit.
+Why once: `proactive_check` takes no arguments and atomically leases the returned candidates (§5.1). `confirm_delivery` records the entire reviewed lease as delivered only after the result reached the host. Confidently filtered rows are part of that lease. An unconfirmed lease expires back to pending, while a confirmed row is deduped, so repeat checks add round trips without benefit.
 
 ## The neutral agent directory
 
@@ -224,7 +236,7 @@ mkdir -p ~/.proactive-mcp/agent-cwd
 chmod 700 ~/.proactive-mcp/agent-cwd
 ```
 
-On Windows that's `%USERPROFILE%\.proactive-mcp\agent-cwd`. Keep it empty. No `AGENTS.md`, no `CLAUDE.md`, no `.mcp.json`, no git repository. The MCP registration is user scope, so the server still starts; only the project instructions disappear. Because the directory isn't a repository, Codex needs `--skip-git-repo-check`.
+On Windows that's `%USERPROFILE%\.proactive-mcp\agent-cwd`. Keep it empty. No `AGENTS.md`, no `CLAUDE.md`, no `.mcp.json`, no git repository. The MCP registration is user scope, so the server still starts; only the project instructions disappear. Each run starts a separate scheduled conversation with only `serve-scheduled`; the interactive everyday conversation keeps only `serve`. Because the directory isn't a repository, Codex needs `--skip-git-repo-check`.
 
 ## Agent reference and appendices
 
@@ -247,7 +259,7 @@ grok mcp doctor
 grok mcp doctor proactive
 ```
 
-If `grok mcp doctor proactive` reports the server, you're done, nothing to add. If it doesn't, fall back to registering it in Grok's own config with `grok mcp add`. User scope writes `~/.grok/config.toml` and applies everywhere:
+If `grok mcp doctor proactive` reports the server, the interactive registration exists. If it doesn't, fall back to registering it in Grok's own config with `grok mcp add`. User scope writes `~/.grok/config.toml` and applies everywhere:
 
 ```bash
 grok mcp add --scope user proactive -- \
@@ -263,6 +275,15 @@ grok mcp add --scope project proactive -- \
 
 Everything after `--` is the server command, per `grok mcp add --help`. Prefer user scope: repo-local servers only start in folders you've marked trusted, and user-scope servers sidestep that entirely.
 
+Grok does not expose a documented per-conversation MCP enable override in this build. Don't register both profiles in the same Grok config. Use the command above when Grok owns interactive everyday conversations. If Grok is the scheduled collector instead, use a dedicated Grok config that contains only this registration:
+
+```bash
+grok mcp add --scope user proactive_scheduled -- \
+  /home/you/.local/bin/uv run --directory /home/you/src/proactive-mcp proactive-mcp serve-scheduled
+```
+
+That scheduled setup gives up Grok's interactive `serve` profile. Use another separately configured host for everyday conversations, or use Codex as the scheduled collector. Never load `proactive` and `proactive_scheduled` into one Grok conversation.
+
 ### 2. Watcher daemon, or degraded mode
 
 ```bash
@@ -273,7 +294,7 @@ Degraded alternative: skip the daemon and let `proactive_check` lazy-sync inline
 
 ### 3. Session-start rule
 
-Put [the rule](#the-session-start-rule) in `AGENTS.md` at your project root; Grok loads project instructions from there. For a single run you can append rules on the command line with `--rules`.
+Put [the rule](#the-session-start-rule) in `AGENTS.md` at your project root; Grok loads project instructions from there. This interactive conversation uses only `proactive`. For a single run you can append rules on the command line with `--rules`.
 
 ### 4. Scheduled trigger: none, hand off to the OS
 
@@ -282,7 +303,7 @@ Grok has no scheduler. Use `-p/--single` for a one-shot headless prompt, and run
 ```bash
 mkdir -p ~/.proactive-mcp/agent-cwd
 chmod 700 ~/.proactive-mcp/agent-cwd
-grok --cwd ~/.proactive-mcp/agent-cwd --no-alt-screen --single 'Call the proactive_check MCP tool exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Then report any returned situations and freshness warnings; otherwise state that there are no actionable situations.'
+grok --cwd ~/.proactive-mcp/agent-cwd --no-alt-screen --single 'Load only proactive_scheduled in this separate scheduled conversation and call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty, leave the whole lease unconfirmed, or defer it to an interactive conversation for snooze; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Never load the interactive profile in this conversation. Report kept or uncertain candidates and freshness warnings; with healthy freshness and nothing kept, stay silent.'
 ```
 
 For machine-readable output add `--output-format json` (values: `plain`, `json`, `streaming-json`). Full scheduler wiring is in [OS scheduler handoff](#appendix-e-os-scheduler-handoff).
@@ -295,7 +316,7 @@ grok mcp doctor proactive
 grok mcp doctor --json proactive
 ```
 
-`doctor` should report the server healthy. Then run one interactive session and confirm a single `proactive_check` call.
+`doctor` should report the one profile assigned to this Grok config as healthy. For a scheduled-only config, substitute `proactive_scheduled`. Then run one conversation and confirm a single `proactive_check` call and no second profile in its tool list.
 
 ### Troubleshooting
 
@@ -311,7 +332,7 @@ Grok writes MCP stderr to `~/.grok/logs/mcp/`. Start there when a launch fails.
 
 ## Appendix B: Codex CLI
 
-Verified against codex-cli 0.149.0.
+Verified against codex-cli 0.149.1.
 
 ### 1. Registration
 
@@ -337,6 +358,7 @@ args = [
   "proactive-mcp",
   "serve",
 ]
+enabled = true
 default_tools_approval_mode = "prompt"
 
 [mcp_servers.proactive_scheduled]
@@ -348,6 +370,7 @@ args = [
   "proactive-mcp",
   "serve-scheduled",
 ]
+enabled = false
 default_tools_approval_mode = "approve"
 ```
 
@@ -363,6 +386,7 @@ args = [
   "proactive-mcp",
   "serve",
 ]
+enabled = true
 default_tools_approval_mode = "prompt"
 
 [mcp_servers.proactive_scheduled]
@@ -374,14 +398,15 @@ args = [
   "proactive-mcp",
   "serve-scheduled",
 ]
+enabled = false
 default_tools_approval_mode = "approve"
 ```
 
-`default_tools_approval_mode` accepts `auto`, `prompt`, `writes`, or `approve` on codex-cli 0.149.0; anything else fails config load with `unknown variant`. Keep the full interactive server on `prompt`. Only the separately named `proactive_scheduled` server may use `approve`.
+`default_tools_approval_mode` accepts `auto`, `prompt`, `writes`, or `approve` on codex-cli 0.149.1; anything else fails config load with `unknown variant`. Keep the full interactive server on `prompt`. Only the separately named `proactive_scheduled` server may use `approve`, and keep it disabled outside a separate scheduled conversation.
 
 V1 exposes **no Google or other external write actions**, but the full server still has consequential local tools: `remember`, `update`, `forget`, `snooze_situation`, `mute_situation`, and `acknowledge_situation`. The restricted `serve-scheduled` process exposes exactly `get_status`, `proactive_check`, and `confirm_delivery`; it cannot make those broader mutations even if a scheduled prompt or inherited instruction asks it to. `proactive_check` only leases returned situations, and `confirm_delivery` records delivery after the result reaches the host, so approving this narrow profile remains a deliberate authorization.
 
-Confirm what actually landed on disk with `codex mcp get proactive` and `codex mcp get proactive_scheduled`. The full profile must read `prompt`; only the scheduled profile should read `approve` and use `serve-scheduled`.
+Confirm what actually landed on disk with `codex mcp get proactive` and `codex mcp get proactive_scheduled`. The full profile must read `prompt` and be enabled for interactive everyday conversations. The scheduled profile must read `approve`, use `serve-scheduled`, and stay disabled by default. A scheduled invocation reverses those two enable flags for that new conversation only.
 
 ### 2. Watcher daemon, or degraded mode
 
@@ -393,7 +418,7 @@ Degraded alternative: no daemon, inline lazy sync on `proactive_check`, and **no
 
 ### 3. Session-start rule
 
-Codex has no automatic session hook for this. Put [the rule](#the-session-start-rule) in `AGENTS.md` at the repository or workspace root, and repeat the instruction inside any scheduled prompt.
+Codex has no automatic session hook for this. Put [the rule](#the-session-start-rule) in `AGENTS.md` at the repository or workspace root. Interactive everyday conversations load only the enabled `proactive` profile. Repeat the full host contract inside each scheduled prompt.
 
 ### 4. Scheduled trigger: none, hand off to the OS
 
@@ -404,12 +429,14 @@ codex exec \
   --ephemeral \
   --sandbox read-only \
   --skip-git-repo-check \
+  -c mcp_servers.proactive.enabled=false \
+  -c mcp_servers.proactive_scheduled.enabled=true \
   -c mcp_servers.proactive_scheduled.default_tools_approval_mode=approve \
   -C "$HOME/.proactive-mcp/agent-cwd" \
-  'Call proactive_scheduled.proactive_check exactly once. If it returns a receipt_token, call proactive_scheduled.confirm_delivery with that token exactly once. Then report its situations, freshness, and warnings concisely. Do not modify files and do not run unrelated commands.'
+  'This is a separate scheduled conversation with only proactive_scheduled loaded. Call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty, leave the whole lease unconfirmed, or defer it to an interactive conversation for snooze; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Never load the interactive profile in this conversation. Report kept or uncertain candidates and freshness warnings concisely. Do not modify files or run unrelated commands.'
 ```
 
-The `-c` override repeats the narrow scheduled profile's setting. Carry it in every non-interactive example so a scheduled run cannot be silently broken by a config edit. Never point this override at the full `proactive` profile. Interactive `codex` sessions keep `prompt`, because a human is there to approve consequential tools.
+The `-c` overrides disable the full profile, enable the narrow scheduled profile, and repeat its approval setting for this new conversation. Carry all three in every non-interactive example so a scheduled run cannot load both profiles or be silently broken by a config edit. Never approve the full `proactive` profile. Interactive `codex` conversations keep only `proactive` enabled with `prompt`, because a human is there to approve consequential tools.
 
 Flags, all from `codex exec --help`: `--ephemeral` skips persisting session files, `-s/--sandbox read-only` blocks filesystem writes by model-generated shell commands, `-C/--cd` sets the working root, `--skip-git-repo-check` allows non-repo directories, `-c/--config` overrides one config key, `--json` emits JSONL events, `-o/--output-last-message FILE` writes the final message to a file.
 
@@ -440,13 +467,82 @@ Then start an interactive `codex` session and confirm exactly one `proactive_che
 | `codex exec` fails outside a git repo | Add `--skip-git-repo-check`. |
 | Agent tries to run a shell command or edit a file | Keep `--sandbox read-only`. This job needs no shell at all, so an attempt means the prompt drifted. Local database writes by the MCP server itself are normal and aren't affected by the sandbox. |
 
-## Appendix C: Hermes Agent (experimental, unsupported)
+## Appendix C: Hermes Agent (Owner-only validation)
 
-Hermes Agent is not supported in the closed alpha. Generic local stdio MCP interoperability remains possible, but deterministic receipt confirmation was not reproducible across otherwise equivalent live one-shot sessions. Do not install Hermes profile helpers or cron jobs, and do not rely on Hermes for proactive delivery.
+Hermes remains outside named tester onboarding. Grok CLI and Codex CLI are the primary closed-alpha hosts. This section lets the Owner validate generic stdio interoperability and Hermes Native Cron without adding any proactive-mcp-specific package or runtime boundary. The commands below match Hermes Agent v0.20.0 local help.
 
-The host-neutral MCP server contracts remain available for experimentation outside the alpha. That does not make Hermes a supported delivery host: one live run confirmed the returned receipt through the host-follow-up path, while another direct `proactive_check` produced no confirmation. Read-only diagnosis found deterministic result shapes, plugin registration, and persisted-result ownership, so no safe product-side correction was identified.
+Start by reading the installed command surface:
 
-If you experiment manually, treat the connection as unsupported and non-delivery-critical. Remove the manual registration before returning to a supported alpha setup. Issue #28 retains the diagnostic evidence; this appendix intentionally provides no installation or scheduler recipe.
+```bash
+hermes mcp --help
+hermes mcp add --help
+hermes cron --help
+hermes cron create --help
+```
+
+### Interactive Owner check
+
+Register only the interactive server. `--args` must be the final option:
+
+```bash
+hermes mcp add proactive \
+  --command /home/you/venvs/proactive/bin/proactive-mcp \
+  --args serve
+hermes mcp test proactive
+hermes mcp list
+```
+
+Open a new Hermes conversation with only `proactive` loaded and apply [the complete session-start rule](#the-session-start-rule). That rule treats `reply_deadline` as a conservative candidate, not an action verdict. It drops newsletters, marketing, automated receipts, no-ask FYI or FYI-CC, someone else's threads, and rows with no question, request, or decision for this user. It keeps explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Uncertainty is surfaced, left unconfirmed, or snoozed, never silently discarded as non-actionable. Only when choosing confirmation after review is the whole reviewed lease confirmed, including confidently and silently dropped candidates. MCP stays English while Hermes speaks the user's language.
+
+Finish that conversation, then remove its registration before the Native Cron check:
+
+```bash
+hermes mcp remove proactive
+hermes mcp list
+```
+
+### Hermes Native Cron Owner check
+
+Register only the restricted scheduled server. Never keep the interactive registration beside it:
+
+```bash
+hermes mcp add proactive_scheduled \
+  --command /home/you/venvs/proactive/bin/proactive-mcp \
+  --args serve-scheduled
+hermes mcp test proactive_scheduled
+hermes mcp list
+```
+
+Create a Native Cron job with Hermes itself. Don't use `--script` or `--no-agent`; the scheduled Hermes conversation must call the MCP tools. Keep the working directory neutral and the prompt self-contained:
+
+```bash
+hermes cron create \
+  --name proactive-owner-check \
+  --deliver local \
+  --workdir /home/you/.proactive-mcp/agent-cwd \
+  '*/15 * * * *' \
+  'This is a separate scheduled conversation with only proactive_scheduled loaded. Call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty or leave the whole lease unconfirmed; never silently discard uncertainty as non-actionable. Snooze is reserved for a separate interactive conversation. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Never load the interactive profile in this conversation. Report kept or uncertain candidates and freshness warnings; with healthy freshness and nothing kept, stay silent.'
+```
+
+`hermes cron create` prints the job ID. Use that exact ID for the harmless inspection and explicit Owner run:
+
+```bash
+hermes cron list
+hermes cron status
+hermes cron run JOB_ID
+hermes cron runs --limit 5 JOB_ID
+```
+
+The explicit run is optional and stays Owner-only. It requests execution on the next scheduler tick; it does not justify a repeated-run reliability suite. Inspect the conversation for one check, conditional whole-lease confirmation, user-language speech, and no interactive profile. Then clean up both the job and registration:
+
+```bash
+hermes cron remove JOB_ID
+hermes mcp remove proactive_scheduled
+hermes cron list
+hermes mcp list
+```
+
+Don't ship this job or copy it into tester sheets. Don't keep both registrations, and don't treat an Owner Hermes result as a substitute for Grok and Codex acceptance.
 
 ## Appendix D: Claude Code Desktop (documentation only)
 
@@ -488,15 +584,17 @@ Degraded alternative: no daemon, inline lazy sync only, and **no OS notification
 
 ### 3. Session-start rule
 
-Put [the rule](#the-session-start-rule) in the project instructions or custom instructions for the project where you use this server.
+Put [the rule](#the-session-start-rule) in the project instructions or custom instructions for the project where you use this server. This interactive everyday conversation loads only `serve`.
 
 ### 4. Scheduled trigger: local scheduled task
 
-Create a **local** scheduled task in Claude Code Desktop:
+Create a **local** scheduled task in Claude Code Desktop as a separate conversation with only `serve-scheduled` enabled. Never enable the interactive `serve` profile in that task.
 
-- Prompt: call `proactive_check` exactly once, call `confirm_delivery` once with any returned `receipt_token`, present returned situations and freshness warnings, and do not claim an all-clear while a source is stale.
+The JSON above is interactive-only. For a dedicated scheduled-only Desktop setup, replace that registration with one named `proactive_scheduled` whose final argument is `serve-scheduled`. Don't put both registrations in the same Desktop setup. If the installed Desktop build cannot keep them separate, use the Codex scheduled recipe instead.
+
+- Prompt: "This is a separate scheduled conversation with only serve-scheduled loaded. Call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty or leave the whole lease unconfirmed; never silently discard uncertainty as non-actionable. Snooze is reserved for a separate interactive conversation. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Never load the interactive profile in this conversation. Present kept or uncertain candidates and freshness warnings, and don't claim an all-clear while a source is stale."
 - Recurrence: your choice, minimum one minute. One minute is the floor documented in §5.3; something like 15 minutes is saner in practice.
-- Execution: local, on this machine, with the `proactive` MCP server enabled.
+- Execution: local, on this machine, with only the `proactive_scheduled` MCP server enabled.
 
 In the **Code** tab, open **Routines**, click **New routine**, and choose
 **Local**. Select the working folder that contains the MCP configuration, paste
@@ -536,11 +634,13 @@ A Routine will happily run on schedule and accomplish nothing here, because its 
 
 ## Appendix E: OS scheduler handoff
 
-Grok CLI and Codex CLI have no scheduler, so the OS supplies one. A scheduled
-run must do more than lease a situation: it must confirm the receipt and make
-the result visible. If the host loses the response, it must not call
-`confirm_delivery`; the short lease then expires and the situation becomes
-eligible for a later agent or the fallback path.
+Grok CLI and Codex CLI have no scheduler, so the OS supplies one. Each trigger
+starts a separate scheduled conversation with only `serve-scheduled`; everyday
+conversations load only `serve`. Never load both profiles into one conversation.
+The scheduled prompt repeats the full host filter, whole-lease confirmation,
+uncertainty, English MCP, and user-language contract. If the host loses the
+response, it must not call `confirm_delivery`; the short lease then expires and
+the candidates become eligible for a later agent or the fallback path.
 
 ### How the wrappers decide
 
@@ -645,7 +745,7 @@ AGENT_CWD="$HOME/.proactive-mcp/agent-cwd"
 LOGDIR="$HOME/.proactive-mcp/logs"
 LOG="$LOGDIR/grok-cron.log"
 LOCK="$HOME/.proactive-mcp/scheduler.lock"
-PROMPT='Call the MCP tool proactive_check exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Call no other tool, then stop.'
+PROMPT='This is a separate scheduled conversation with only proactive_scheduled loaded. Call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty or leave the whole lease unconfirmed; never silently discard uncertainty as non-actionable. Snooze is reserved for a separate interactive conversation. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Never load the interactive profile in this conversation. Call no other tool, then stop.'
 
 mkdir -p "$LOGDIR" "$AGENT_CWD"
 chmod 700 "$LOGDIR" "$AGENT_CWD"
@@ -789,7 +889,7 @@ AGENT_CWD="$HOME/.proactive-mcp/agent-cwd"
 LOGDIR="$HOME/.proactive-mcp/logs"
 LOG="$LOGDIR/codex-cron.log"
 LOCK="$HOME/.proactive-mcp/scheduler.lock"
-PROMPT='Call proactive_scheduled.proactive_check exactly once. If it returns a receipt_token, call proactive_scheduled.confirm_delivery with that token exactly once. Call no other tool, then stop.'
+PROMPT='This is a separate scheduled conversation with only proactive_scheduled loaded. Call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty or leave the whole lease unconfirmed; never silently discard uncertainty as non-actionable. Snooze is reserved for a separate interactive conversation. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Never load the interactive profile in this conversation. Call no other tool, then stop.'
 
 mkdir -p "$LOGDIR" "$AGENT_CWD"
 chmod 700 "$LOGDIR" "$AGENT_CWD"
@@ -877,6 +977,8 @@ codex exec \
   --ephemeral \
   --sandbox read-only \
   --skip-git-repo-check \
+  -c mcp_servers.proactive.enabled=false \
+  -c mcp_servers.proactive_scheduled.enabled=true \
   -c mcp_servers.proactive_scheduled.default_tools_approval_mode=approve \
   -C "$AGENT_CWD" \
   "$PROMPT" >/dev/null 2>&1
@@ -1016,7 +1118,7 @@ $Lock     = Join-Path $env:USERPROFILE ".proactive-mcp\scheduler.lock"
 $Uv       = (Get-Command uv).Source
 $ToastScript = (& $Uv run --directory $Repo python -c `
     "from proactive_mcp.delivery.notify import WINDOWS_TOAST_SCRIPT; print(WINDOWS_TOAST_SCRIPT)").Trim()
-$Prompt = "Call the MCP tool proactive_check exactly once. If it returns a receipt_token, call confirm_delivery with that token exactly once. Call no other tool, then stop."
+$Prompt = "This is a separate scheduled conversation with only proactive_scheduled loaded. Call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty or leave the whole lease unconfirmed; never silently discard uncertainty as non-actionable. Snooze is reserved for a separate interactive conversation. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user language. Never load the interactive profile in this conversation. Call no other tool, then stop."
 New-Item -ItemType Directory -Force -Path $LogDir, $AgentCwd | Out-Null
 
 function Write-Marker {
@@ -1078,6 +1180,8 @@ try {
     # All agent output is discarded. Nothing it says is read, parsed, or stored.
     if ($Cli -eq "codex") {
         & codex exec --ephemeral --sandbox read-only --skip-git-repo-check `
+            -c mcp_servers.proactive.enabled=false `
+            -c mcp_servers.proactive_scheduled.enabled=true `
             -c mcp_servers.proactive_scheduled.default_tools_approval_mode=approve `
             -C $AgentCwd $Prompt *> $null
     }
@@ -1240,16 +1344,18 @@ Per platform, in order:
 
 | | Grok CLI | Codex CLI | Hermes | Claude Desktop |
 |---|---|---|---|---|
-| Registered | `grok mcp list` | `codex mcp list` | Not an alpha path | server in tool list |
-| Server healthy | `grok mcp doctor proactive` | full `proactive` is `prompt`; `proactive_scheduled` uses `serve-scheduled` and is `approve` | Not verified for supported delivery | `get_status` from a chat |
-| Daemon or degraded | `status` shows daemon state, or the missing-fallback warning is understood and accepted | same | n/a | same |
-| Session-start rule | `AGENTS.md` at project root | `AGENTS.md` at workspace root | n/a | project instructions |
-| Neutral working directory | `--cwd ~/.proactive-mcp/agent-cwd` in the one-shot and the wrapper | `-C ~/.proactive-mcp/agent-cwd`, plus `--skip-git-repo-check` | n/a | n/a, tasks run in their own folder |
-| Scheduled trigger | `deliveries.total` rises by one, state moves to `delivered`, fixed OS notification appears | same, and every `codex exec` approves only `proactive_scheduled` | n/a | local scheduled task, ≥1 min |
+| Registered | `grok mcp list`, one profile per config | `codex mcp list`, scheduled disabled by default | Owner only: `hermes mcp list`, one profile at a time | one profile in the conversation tool list |
+| Server healthy | `grok mcp doctor` for the one registered profile | full `proactive` is enabled and `prompt`; scheduled is disabled, uses `serve-scheduled`, and is `approve` | Owner only: `hermes mcp test` for the one registered profile | `get_status` from a chat |
+| Daemon or degraded | `status` shows daemon state, or the missing-fallback warning is understood and accepted | same | Owner decides before validation | same |
+| Host contract | candidate filter, entire reviewed lease, uncertainty, English MCP, user language | same | same, Owner only | same |
+| Conversation isolation | interactive `proactive` or scheduled `proactive_scheduled`, never both | scheduled overrides disable full and enable restricted; interactive does the reverse | remove interactive before Native Cron registration | select only `serve` for interactive or `serve-scheduled` for a separate task |
+| Session-start rule | `AGENTS.md` at project root | `AGENTS.md` at workspace root | complete rule in a fresh Owner conversation | project instructions |
+| Neutral working directory | `--cwd ~/.proactive-mcp/agent-cwd` in scheduled-only config | `-C ~/.proactive-mcp/agent-cwd`, plus `--skip-git-repo-check` | Native Cron `--workdir` | task runs in its own folder |
+| Scheduled trigger | `deliveries.total` rises by one, state moves to `delivered`, fixed OS notification appears | same, and every `codex exec` enables only `proactive_scheduled` | Owner only: `hermes cron list`, `status`, and explicit `run JOB_ID` | local scheduled task, at least 1 min |
 | Quiet run | second run with nothing pending logs `result=no_delivery`, or `result=status_warning` with its own fixed text when a source is stale | same | n/a | n/a |
 | Dedupe | situation delivered once, never twice; one scheduled collector only | same | n/a | same |
 | Logs clean | no payloads on disk, no agent output captured, only fixed marker fields | no payloads on disk, no agent output captured, only fixed marker fields | n/a | no payloads on disk |
 
-Auditing a wrapper you inherited? Five things disqualify it: it reads or matches agent output instead of the delivery counter, it diffs `budget.used`, it starts the agent inside a repository, it approves the full `proactive` profile, or it runs `codex exec` without the narrow scheduled-profile override. Extract each POSIX wrapper and check it with `sh -n` before you install it.
+Auditing a wrapper you inherited? Six things disqualify it: it reads or matches agent output instead of the delivery counter, it diffs `budget.used`, it starts the agent inside a repository, it approves the full `proactive` profile, it loads both profiles in one conversation, or it runs `codex exec` without all narrow scheduled-profile overrides. Extract each POSIX wrapper and check it with `sh -n` before you install it.
 
-Commands that were **not** executable in the verification environment, and are therefore sourced rather than tested: everything Claude Code Desktop-specific (not installed; sourced from Anthropic's local MCP guide and §5.3), and all Windows PowerShell snippets (verified on Linux; cmdlet shapes come from Microsoft's `Register-ScheduledTask` reference). Grok, Codex, and `proactive-mcp` commands and flags were read from the installed binaries' own `--help` output at the versions listed at the top of this file. Hermes was installed for diagnosis, but live receipt confirmation was not deterministic, so it has no supported command path here.
+Commands that were **not** executable in the verification environment, and are therefore sourced rather than tested: everything Claude Code Desktop-specific (not installed; sourced from Anthropic's local MCP guide and §5.3), all Windows PowerShell snippets (checked on Linux; cmdlet shapes come from Microsoft's `Register-ScheduledTask` reference), and Hermes job creation or execution. Grok, Codex, Hermes, and `proactive-mcp` command shapes were read from the installed binaries' own `--help` output at the versions listed at the top of this file. Harmless MCP and cron listings were run locally. Hermes remains Owner-only; no job or registration was created during documentation verification.
