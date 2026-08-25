@@ -10,7 +10,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Final, NoReturn, Self
+from typing import TYPE_CHECKING, Final, Literal, NoReturn, Self
 
 import pytest
 
@@ -22,6 +22,7 @@ from proactive_mcp.delivery.daemon import (
     DaemonDependencies,
     DaemonFailureError,
     DaemonFailureKind,
+    DaemonPass,
     WatcherDaemon,
 )
 from proactive_mcp.delivery.evaluation import (
@@ -43,6 +44,10 @@ from proactive_mcp.store import (
     SourceFreshness,
     Store,
     UnsafeDatabasePathError,
+)
+from proactive_mcp.store.sync import (
+    SourceReadDiagnostics,
+    SourceReadReasonCount,
 )
 from tests.daemon_test_support import (
     FakeCredential,
@@ -146,6 +151,23 @@ def _ok_pass() -> EvaluationPass:
     freshness = SourceFreshness("ok", _START, _START, 0, None)
     result = EvaluationResult(0, 0, 0, 0, 0, 0, (), freshness, freshness)
     return EvaluationPass(result, PreparedSources(EngineInputs()), ())
+
+
+def _once_payload(
+    completed: DaemonPass,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> DaemonOnceResponse:
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "proactive.db"))
+    monkeypatch.setattr(daemon_cli, "daemon_clock", lambda: FakeClock(_START))
+
+    def complete_once(_daemon: WatcherDaemon) -> DaemonPass:
+        return completed
+
+    monkeypatch.setattr(WatcherDaemon, "run_once", complete_once)
+    assert cli.main(["daemon", "--once"]) == 0
+    return DaemonOnceResponse.model_validate_json(capsys.readouterr().out)
 
 
 def _ok_daemon() -> WatcherDaemon:
@@ -275,6 +297,70 @@ def test_once_exits_zero_on_an_ok_pass(
     assert payload.gmail_diagnostics.request_count == 0
     assert payload.calendar == "ok"
     assert payload.warning_count == 0
+
+
+def test_once_skip_uses_freshness_derived_zero_counter_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: a pass skips a read because persisted source freshness is current.
+    freshness = SourceFreshness("ok", _START, _START, 0, None)
+    result = EvaluationResult(0, 0, 0, 0, 0, 0, (), freshness, freshness)
+    completed = DaemonPass(
+        EvaluationPass(result, SkippedSources("already_fresh"), ()),
+        (),
+    )
+
+    # When: the existing once output serializes the skipped pass.
+    payload = _once_payload(completed, tmp_path, monkeypatch, capsys)
+
+    # Then: skip output derives a healthy, zero-counter compatibility value.
+    assert payload.sources == "already_fresh"
+    assert payload.gmail_diagnostics.outcome == "healthy"
+    assert payload.gmail_diagnostics.request_count == 0
+    assert payload.gmail_diagnostics.reason_counts == {}
+
+
+@pytest.mark.parametrize("reason", ["already_fresh", "sync_in_flight"])
+def test_once_skip_keeps_latest_accepted_nonzero_diagnostics(
+    reason: Literal["already_fresh", "sync_in_flight"],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Given: a prior accepted read has nonzero counters before a skipped pass.
+    freshness = SourceFreshness("ok", _START, _START, 0, None)
+    diagnostics = SourceReadDiagnostics(
+        outcome="partial",
+        request_count=12,
+        page_count=3,
+        projected_count=4,
+        excluded_count=8,
+        byte_budget=8_000_000,
+        reason_counts=(SourceReadReasonCount("pagination_limit", 2),),
+    )
+    result = EvaluationResult(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        (),
+        freshness,
+        freshness,
+        gmail_diagnostics=diagnostics,
+    )
+    completed = DaemonPass(EvaluationPass(result, SkippedSources(reason), ()), ())
+
+    # When: daemon output reports an already-fresh or coalesced check.
+    payload = _once_payload(completed, tmp_path, monkeypatch, capsys)
+
+    # Then: skip never replaces accepted counters with freshness-derived zeros.
+    assert payload.sources == reason
+    assert payload.gmail_diagnostics.request_count == 12
+    assert payload.gmail_diagnostics.reason_counts == {"pagination_limit": 2}
 
 
 def test_once_exits_one_on_infrastructure_failure(

@@ -253,33 +253,31 @@ class GoogleSyncService:
         try:
             result = self._dependencies.gmail.read_inbox_threads()
         except (GmailError, GoogleTransportError) as error:
-            self._dependencies.store.record_sync_failure(
-                "gmail",
+            diagnostics = source_failure_diagnostics(error.error_code)
+            self._dependencies.store.record_gmail_sync(
+                diagnostics,
                 error_code=error.error_code,
             )
             return _GmailReadOutcome(
                 count=0,
                 ids=(),
                 error_code=error.error_code,
-                diagnostics=source_failure_diagnostics(error.error_code),
+                diagnostics=diagnostics,
             )
-        if result.coverage_complete:
-            self._dependencies.store.record_sync_success(
-                "gmail",
-                sync_cursor=result.provider_history_cursor,
-            )
-            error_code = None
-        else:
-            self._dependencies.store.record_sync_failure(
-                "gmail",
-                error_code="degraded",
-            )
-            error_code = "degraded"
+        diagnostics = _gmail_read_diagnostics(result)
+        error_code: SourceSyncFailureCode | None = (
+            None if result.coverage_complete else "degraded"
+        )
+        self._dependencies.store.record_gmail_sync(
+            diagnostics,
+            sync_cursor=result.provider_history_cursor,
+            error_code=error_code,
+        )
         return _GmailReadOutcome(
             count=len(result.threads),
             ids=tuple(thread.thread_id for thread in result.threads),
             error_code=error_code,
-            diagnostics=_gmail_read_diagnostics(result),
+            diagnostics=diagnostics,
         )
 
     def _sync_calendar(self) -> _SourceReadOutcome:
@@ -311,7 +309,8 @@ class GoogleSyncService:
         return _SourceReadOutcome(count=0, ids=(), error_code=error_code)
 
     def _reauthentication_summary(self) -> GoogleReadSummary:
-        self._dependencies.store.record_google_invalid_grant()
+        diagnostics = source_failure_diagnostics("invalid_grant")
+        self._dependencies.store.record_google_invalid_grant(diagnostics)
         cleanup_failed = False
         try:
             self._dependencies.credentials.delete()
@@ -325,7 +324,7 @@ class GoogleSyncService:
             calendar_ids=(),
             calendar_error_code="invalid_grant",
             credential_cleanup_failed=cleanup_failed,
-            gmail_diagnostics=source_failure_diagnostics("invalid_grant"),
+            gmail_diagnostics=diagnostics,
         )
 
 

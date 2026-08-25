@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import (
     datetime,  # noqa: TC003 - Pydantic resolves this annotation at runtime.
@@ -18,8 +17,10 @@ from ._source_generation import (
     SourceGenerationStatus,
     SourceGenerationStore,
 )
+from ._sqlite_transaction import ImmediateTransaction
 
 if TYPE_CHECKING:
+    import sqlite3
     from datetime import timedelta
 
     from proactive_mcp.clock import Clock
@@ -93,6 +94,37 @@ _SOURCE_ERROR_OUTCOMES: Final[dict[SourceErrorCode, SourceReadOutcome]] = {
     "unknown": "transport_error",
 }
 _GOOGLE_SOURCES: Final[tuple[SourceName, SourceName]] = ("gmail", "calendar")
+_SOURCE_READ_OUTCOMES: Final = frozenset(
+    {"healthy", "partial", "stale", "auth_error", "transport_error"}
+)
+_SOURCE_READ_REASONS: Final = frozenset(
+    {
+        "body_snippet_fallback",
+        "body_truncated",
+        "degraded",
+        "direction_metadata_ambiguous",
+        "direction_metadata_missing",
+        "http_4xx",
+        "http_5xx",
+        "identity_headers_ambiguous",
+        "invalid_grant",
+        "mime_structure_truncated",
+        "network",
+        "never_synced",
+        "not_configured",
+        "pagination_limit",
+        "resource_limit",
+        "scope_mismatch",
+        "stale",
+        "sync_budget_exhausted",
+        "thread_list_entry_skipped",
+        "thread_projection_limit",
+        "thread_response_too_large",
+        "thread_without_projectable_message",
+        "timeout",
+        "unknown",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +164,17 @@ class SourceSyncState:
 _SOURCE_SYNC_STATE_ADAPTER: Final[TypeAdapter[SourceSyncState]] = TypeAdapter(
     SourceSyncState
 )
+_SOURCE_READ_DIAGNOSTICS_ADAPTER: Final[TypeAdapter[SourceReadDiagnostics]] = (
+    TypeAdapter(SourceReadDiagnostics)
+)
+
+
+class InvalidSourceReadDiagnosticsError(ValueError):
+    """Raised when diagnostics contain values outside the closed store contract."""
+
+    def __init__(self) -> None:
+        """Initialize a PII-free boundary error."""
+        super().__init__("invalid Gmail diagnostics")
 
 
 class SyncStore:
@@ -140,6 +183,7 @@ class SyncStore:
     _connection: sqlite3.Connection
     _clock: Clock
     _states: list[SourceSyncState]
+    _diagnostics: list[SourceReadDiagnostics]
     _generations: SourceGenerationStore
     _lazy_sync_leases: LazySyncLeaseStore
 
@@ -148,12 +192,18 @@ class SyncStore:
         self._connection = connection
         self._clock = clock
         self._states = []
+        self._diagnostics = []
         self._generations = SourceGenerationStore(connection)
         self._lazy_sync_leases = LazySyncLeaseStore(connection, clock)
         connection.create_function(
             "_proactive_capture_source_sync_state",
             1,
             self._capture_state,
+        )
+        connection.create_function(
+            "_proactive_capture_gmail_diagnostics",
+            1,
+            self._capture_diagnostics,
         )
 
     def acquire_lazy_sync_lease(
@@ -180,9 +230,64 @@ class SyncStore:
         self,
         generation: SourceGeneration,
         status: SourceGenerationStatus,
+        diagnostics: SourceReadDiagnostics | None = None,
     ) -> None:
-        """Accept a generation inside the caller's transaction."""
+        """Accept a generation and its diagnostics inside the caller transaction."""
+        if diagnostics is not None:
+            if generation.source != "gmail":
+                raise InvalidSourceReadDiagnosticsError
+            _validate_diagnostics(diagnostics)
         self._generations.accept(generation, status)
+        if diagnostics is not None:
+            self._write_gmail_diagnostics(diagnostics)
+
+    def gmail_diagnostics(self) -> SourceReadDiagnostics | None:
+        """Return latest accepted Gmail diagnostics, or the v9-compatible default."""
+        self._diagnostics.clear()
+        _ = self._connection.execute(
+            """
+            SELECT SUM(_proactive_capture_gmail_diagnostics(json_object(
+                'outcome', outcome,
+                'request_count', request_count,
+                'page_count', page_count,
+                'projected_count', projected_count,
+                'excluded_count', excluded_count,
+                'byte_budget', byte_budget,
+                'reason_counts', json(COALESCE((
+                    SELECT json_group_array(json_object(
+                        'reason', reason,
+                        'count', count
+                    ))
+                    FROM (
+                        SELECT reason, count
+                        FROM gmail_diagnostic_reason_counts
+                        WHERE diagnostic_id = gmail_diagnostics.id
+                        ORDER BY reason
+                    )
+                ), '[]'))
+            )))
+            FROM gmail_diagnostics WHERE id = 1
+            """
+        )
+        return None if not self._diagnostics else self._diagnostics[0]
+
+    def record_gmail_sync(
+        self,
+        diagnostics: SourceReadDiagnostics,
+        *,
+        sync_cursor: str | None = None,
+        error_code: SourceErrorCode | None = None,
+    ) -> None:
+        """Atomically persist one direct Gmail attempt and bounded diagnostics."""
+        _validate_diagnostics(diagnostics)
+        with ImmediateTransaction(self._connection):
+            if error_code is None:
+                self.record_sync_success("gmail", sync_cursor=sync_cursor)
+            elif error_code == "invalid_grant":
+                self._write_google_auth_state("needs_reauth", "invalid_grant")
+            else:
+                self.record_sync_failure("gmail", error_code=error_code)
+            self._write_gmail_diagnostics(diagnostics)
 
     def get_source_sync(self, source: SourceName) -> SourceSyncState:
         """Return persisted state, or the explicit never-configured source state."""
@@ -260,9 +365,17 @@ class SyncStore:
             (source, timestamp, error_code, timestamp),
         )
 
-    def record_google_invalid_grant(self) -> None:
-        """Atomically require reauthorization for the shared Google grant."""
-        self._update_google_auth_state("needs_reauth", "invalid_grant")
+    def record_google_invalid_grant(
+        self,
+        diagnostics: SourceReadDiagnostics | None = None,
+    ) -> None:
+        """Atomically require reauthorization and persist Gmail diagnostics."""
+        if diagnostics is not None:
+            _validate_diagnostics(diagnostics)
+        with ImmediateTransaction(self._connection):
+            self._write_google_auth_state("needs_reauth", "invalid_grant")
+            if diagnostics is not None:
+                self._write_gmail_diagnostics(diagnostics)
 
     def record_google_invalid_grant_in_transaction(self) -> None:
         """Require reauthorization inside an existing SQLite transaction."""
@@ -273,14 +386,8 @@ class SyncStore:
         auth_state: SourceAuthState,
         error_code: SourceErrorCode | None,
     ) -> None:
-        _ = self._connection.execute("BEGIN IMMEDIATE")
-        try:
+        with ImmediateTransaction(self._connection):
             self._write_google_auth_state(auth_state, error_code)
-            _ = self._connection.execute("COMMIT")
-        except sqlite3.Error:
-            if self._connection.in_transaction:
-                _ = self._connection.execute("ROLLBACK")
-            raise
 
     def _write_google_auth_state(
         self,
@@ -317,6 +424,46 @@ class SyncStore:
                 ),
             )
 
+    def _write_gmail_diagnostics(
+        self,
+        diagnostics: SourceReadDiagnostics,
+    ) -> None:
+        _ = self._connection.execute(
+            "DELETE FROM gmail_diagnostic_reason_counts WHERE diagnostic_id = 1"
+        )
+        _ = self._connection.execute(
+            """
+            INSERT INTO gmail_diagnostics (
+                id, outcome, request_count, page_count, projected_count,
+                excluded_count, byte_budget
+            ) VALUES (1, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                outcome = excluded.outcome,
+                request_count = excluded.request_count,
+                page_count = excluded.page_count,
+                projected_count = excluded.projected_count,
+                excluded_count = excluded.excluded_count,
+                byte_budget = excluded.byte_budget
+            """,
+            (
+                diagnostics.outcome,
+                diagnostics.request_count,
+                diagnostics.page_count,
+                diagnostics.projected_count,
+                diagnostics.excluded_count,
+                diagnostics.byte_budget,
+            ),
+        )
+        for item in diagnostics.reason_counts:
+            _ = self._connection.execute(
+                """
+                INSERT INTO gmail_diagnostic_reason_counts (
+                    diagnostic_id, reason, count
+                ) VALUES (1, ?, ?)
+                """,
+                (item.reason, item.count),
+            )
+
     def _persisted_states(self) -> tuple[SourceSyncState, ...]:
         self._states.clear()
         _ = self._connection.execute(
@@ -344,6 +491,34 @@ class SyncStore:
         state = _SOURCE_SYNC_STATE_ADAPTER.validate_json(payload)
         self._states.append(state)
         return 1
+
+    def _capture_diagnostics(self, payload: str) -> int:
+        diagnostics = _SOURCE_READ_DIAGNOSTICS_ADAPTER.validate_json(payload)
+        self._diagnostics.append(diagnostics)
+        return 1
+
+
+def _validate_diagnostics(diagnostics: SourceReadDiagnostics) -> None:
+    counts = (
+        diagnostics.request_count,
+        diagnostics.page_count,
+        diagnostics.projected_count,
+        diagnostics.excluded_count,
+        diagnostics.byte_budget,
+    )
+    reasons = tuple(item.reason for item in diagnostics.reason_counts)
+    if (
+        diagnostics.outcome not in _SOURCE_READ_OUTCOMES
+        or any(type(value) is not int or value < 0 for value in counts)
+        or len(reasons) != len(set(reasons))
+        or any(
+            item.reason not in _SOURCE_READ_REASONS
+            or type(item.count) is not int
+            or item.count < 0
+            for item in diagnostics.reason_counts
+        )
+    ):
+        raise InvalidSourceReadDiagnosticsError
 
 
 def source_failure_diagnostics(

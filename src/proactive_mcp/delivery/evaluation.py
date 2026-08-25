@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias
 
 from proactive_mcp.situations.inputs import EngineInputs
@@ -111,9 +111,19 @@ class EvaluationService:
                 inputs = EngineInputs()
                 skipped = _skip_warnings(reason)
         result = self._dependencies.evaluator.evaluate(inputs)
+        accepted_outcome = (
+            PreparedSources(
+                replace(
+                    inputs,
+                    gmail_diagnostics=result.gmail_diagnostics,
+                )
+            )
+            if isinstance(outcome, PreparedSources)
+            else outcome
+        )
         return EvaluationPass(
             result=result,
-            sources=outcome,
+            sources=accepted_outcome,
             warnings=(*skipped, *result.warnings),
         )
 

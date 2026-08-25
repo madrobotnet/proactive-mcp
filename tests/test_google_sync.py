@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
 
@@ -28,6 +28,11 @@ from proactive_mcp.sources.google_sync import (
     InvalidGrantError,
 )
 from proactive_mcp.store import Store
+from proactive_mcp.store.sync import (
+    SourceReadReason,
+    SourceReadReasonCount,
+    source_failure_diagnostics,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -150,6 +155,110 @@ def test_sync_records_successful_gmail_projection_and_cursor(
     assert summary.gmail_ids == ("thread-1",)
     assert gmail_state.last_success_at is not None
     assert gmail_state.sync_cursor == "history-2"
+
+
+def test_sync_freshness_state_survives_close_and_reopen(tmp_path: Path) -> None:
+    # Given: the direct sync surface records one complete Google read.
+    database = tmp_path / "proactive.db"
+    with Store(database) as store:
+        service = GoogleSyncService(
+            GoogleReadDependencies(
+                store=store,
+                gmail=FakeInboxReader(gmail_inbox_result()),
+                calendar=FakeCalendarReader(calendar_result()),
+                credentials=FakeCredentials(),
+            )
+        )
+        _ = service.sync()
+
+    # When: a new store instance reads the existing migration-9 source state.
+    with Store(database) as reopened:
+        gmail_state, calendar_state = reopened.list_source_sync()
+
+    # Then: freshness and the Gmail cursor remain durable across connections.
+    assert gmail_state.last_success_at is not None
+    assert gmail_state.last_attempt_at == gmail_state.last_success_at
+    assert gmail_state.sync_cursor == "history-2"
+    assert calendar_state.last_success_at is not None
+    assert calendar_state.last_attempt_at == calendar_state.last_success_at
+
+
+def test_direct_sync_atomically_persists_pii_free_gmail_diagnostics(
+    tmp_path: Path,
+) -> None:
+    # Given: a bounded read with nonzero counters and PII-shaped source values.
+    database = tmp_path / "proactive.db"
+    canaries = (
+        "person@example.test",
+        "SELECT secret FROM private_mail",
+        "/home/person/mail.eml",
+    )
+    result = replace(
+        gmail_inbox_result(),
+        threads=(
+            replace(
+                gmail_inbox_result().threads[0],
+                thread_id=canaries[0],
+                latest_message_id=canaries[1],
+                subject=canaries[2],
+            ),
+        ),
+        provider_history_cursor=None,
+        request_count=7,
+        page_count=3,
+        projected_thread_count=1,
+        excluded_thread_count=2,
+        degradation_reasons=("body_truncated",),
+        degradation_reason_counts=(("body_truncated", 2),),
+    )
+    with Store(database) as store:
+        summary = GoogleSyncService(
+            GoogleReadDependencies(
+                store=store,
+                gmail=FakeInboxReader(result),
+                calendar=FakeCalendarReader(calendar_result()),
+                credentials=FakeCredentials(),
+            )
+        ).sync()
+        persisted = store.gmail_diagnostics()
+        gmail_state = store.get_source_sync("gmail")
+
+    # When: the database is closed and opened by a new process boundary.
+    with Store(database) as reopened:
+        reopened_diagnostics = reopened.gmail_diagnostics()
+        dump = "\n".join(reopened.connection().iterdump())
+
+    # Then: freshness and only closed aggregate diagnostics committed together.
+    assert gmail_state.last_success_at is not None
+    assert persisted == summary.gmail_diagnostics
+    assert reopened_diagnostics == summary.gmail_diagnostics
+    assert reopened_diagnostics is not None
+    assert reopened_diagnostics.request_count == 7
+    assert reopened_diagnostics.reason_counts[0].count == 2
+    assert all(canary not in dump for canary in canaries)
+
+
+def test_store_rejects_unclosed_diagnostic_reason_without_persisting_it(
+    tmp_path: Path,
+) -> None:
+    # Given: an untrusted string is forced across the typed store boundary.
+    canary = "person@example.test /private/mail SELECT token"
+    malformed = replace(
+        source_failure_diagnostics("network"),
+        reason_counts=(
+            SourceReadReasonCount(cast("SourceReadReason", cast("object", canary)), 1),
+        ),
+    )
+    database = tmp_path / "proactive.db"
+    with Store(database) as store:
+        with pytest.raises(ValueError, match="invalid Gmail diagnostics"):
+            store.record_gmail_sync(malformed, error_code="network")
+        assert store.gmail_diagnostics() is None
+        assert store.get_source_sync("gmail").last_attempt_at is None
+        dump = "\n".join(store.connection().iterdump())
+
+    # Then: neither the malformed reason nor partial freshness reaches disk.
+    assert canary not in dump
 
 
 @pytest.mark.parametrize(

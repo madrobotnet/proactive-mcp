@@ -38,7 +38,9 @@ if TYPE_CHECKING:
     from .situations import SituationStore
     from .sync import (
         SourceAuthState,
+        SourceErrorCode,
         SourceName,
+        SourceReadDiagnostics,
         SourceSyncFailureCode,
         SourceSyncState,
     )
@@ -206,6 +208,10 @@ class Store:
         """Return issued and accepted detector generation progress."""
         return self._require().sync.source_generation_state(source)
 
+    def gmail_diagnostics(self) -> SourceReadDiagnostics | None:
+        """Return the latest accepted bounded Gmail diagnostics, when present."""
+        return self._require().sync.gmail_diagnostics()
+
     def get_source_sync(self, source: SourceName) -> SourceSyncState:
         """Return persisted synchronization state for one Google source."""
         return self._require().sync.get_source_sync(source)
@@ -221,6 +227,20 @@ class Store:
     def set_google_auth_state(self, auth_state: SourceAuthState) -> None:
         """Persist the shared Google authorization state for both sources."""
         self._require().sync.set_google_auth_state(auth_state)
+
+    def record_gmail_sync(
+        self,
+        diagnostics: SourceReadDiagnostics,
+        *,
+        sync_cursor: str | None = None,
+        error_code: SourceErrorCode | None = None,
+    ) -> None:
+        """Atomically persist direct Gmail freshness and diagnostics."""
+        self._require().sync.record_gmail_sync(
+            diagnostics,
+            sync_cursor=sync_cursor,
+            error_code=error_code,
+        )
 
     def record_sync_success(
         self,
@@ -240,9 +260,12 @@ class Store:
         """Record a normalized source synchronization failure."""
         self._require().sync.record_sync_failure(source, error_code=error_code)
 
-    def record_google_invalid_grant(self) -> None:
-        """Atomically mark both Google sources as requiring reauthorization."""
-        self._require().sync.record_google_invalid_grant()
+    def record_google_invalid_grant(
+        self,
+        diagnostics: SourceReadDiagnostics | None = None,
+    ) -> None:
+        """Atomically persist shared reauthorization and Gmail diagnostics."""
+        self._require().sync.record_google_invalid_grant(diagnostics)
 
     def _require(self) -> StoreCollaborators:
         collaborators = self._collaborators

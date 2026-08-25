@@ -43,7 +43,7 @@ if TYPE_CHECKING:
         SourceGenerationStatus,
         SourceName,
     )
-    from .sync import SourceErrorCode, SyncStore
+    from .sync import SourceErrorCode, SourceReadDiagnostics, SyncStore
 
 _SOURCE_TYPES: Final[dict[SourceName, SituationType]] = {
     "gmail": "reply_deadline",
@@ -115,6 +115,7 @@ class SituationConsistencyStore:
         *,
         sync_cursor: str | None = None,
         error_code: SourceErrorCode | None = None,
+        diagnostics: SourceReadDiagnostics | None = None,
         resolve_absent: bool = False,
         resolution_scope_ids: Collection[str] = (),
         resolution_excluded_ids: Collection[str] = (),
@@ -123,7 +124,7 @@ class SituationConsistencyStore:
         expected_type = _SOURCE_TYPES[generation.source]
         timestamp = self._now_iso()
         with ImmediateTransaction(self._connection):
-            self._sync.accept_source_generation(generation, status)
+            self._sync.accept_source_generation(generation, status, diagnostics)
             summary = self._upsert_batch(detections, timestamp, expected_type)
             resolved = 0
             if _RESOLVES_ABSENT[status]:

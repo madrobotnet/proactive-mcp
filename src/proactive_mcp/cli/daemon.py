@@ -260,11 +260,7 @@ def _poll_override(value: float | None) -> timedelta | None:
 def _emit_once(completed: DaemonPass) -> None:
     evaluation = completed.evaluation
     result = evaluation.result
-    match evaluation.sources:
-        case PreparedSources(inputs=inputs):
-            diagnostics = inputs.gmail_diagnostics
-        case SkippedSources():
-            diagnostics = None
+    diagnostics = result.gmail_diagnostics
     if diagnostics is None:
         diagnostics = gmail_freshness_diagnostics(result.gmail_freshness)
     payload = DaemonOnceResponse(

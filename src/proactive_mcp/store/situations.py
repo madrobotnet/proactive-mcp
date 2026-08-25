@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
     from ._situation_reader import SituationReader
     from ._source_generation import SourceGeneration, SourceGenerationStatus
-    from .sync import SourceErrorCode, SyncStore
+    from .sync import SourceErrorCode, SourceReadDiagnostics, SyncStore
 
 __all__ = [
     "DelayedSourceGenerationError",
@@ -96,6 +96,7 @@ class SituationStore:
         status: SourceGenerationStatus,
         sync_cursor: str | None = None,
         error_code: SourceErrorCode | None = None,
+        diagnostics: SourceReadDiagnostics | None = None,
         resolve_absent: bool = False,
         resolution_scope_ids: Collection[str] = (),
         resolution_excluded_ids: Collection[str] = (),
@@ -107,6 +108,7 @@ class SituationStore:
             status,
             sync_cursor=sync_cursor,
             error_code=error_code,
+            diagnostics=diagnostics,
             resolve_absent=resolve_absent,
             resolution_scope_ids=resolution_scope_ids,
             resolution_excluded_ids=resolution_excluded_ids,

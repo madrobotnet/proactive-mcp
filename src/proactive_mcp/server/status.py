@@ -162,6 +162,7 @@ def status_response(
     google = google_freshness_response(
         evaluate_source_freshness(gmail_state, now),
         evaluate_source_freshness(calendar_state, now),
+        store.gmail_diagnostics(),
     )
     poll_interval = (
         store.daemon.status().poll_interval or runtime.config.daemon.poll_interval
