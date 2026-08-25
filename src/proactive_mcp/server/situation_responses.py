@@ -176,8 +176,8 @@ class ProactiveCheckResponse(BaseModel):
     situations: tuple[SituationResponse, ...]
     receipt_token: str | None = Field(
         description=(
-            "Opaque short-lived receipt. After this result reaches the host, pass "
-            "it to confirm_delivery; otherwise the situations remain pending."
+            "Opaque receipt. Confirm via confirm_delivery exactly once only when "
+            "situations is nonempty and this receipt_token is non-null."
         )
     )
     freshness: GoogleFreshnessResponse
