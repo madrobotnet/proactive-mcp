@@ -42,7 +42,7 @@ from tests.google_oauth_support import (
     count_setup_success_events,
     google_credential,
 )
-from tests.test_google_sync import (
+from tests.google_sync_test_support import (
     FakeCalendarReader,
     FakeCredentials,
     FakeInboxReader,

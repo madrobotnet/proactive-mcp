@@ -23,13 +23,13 @@ from proactive_mcp.sources.google_sync import (
 )
 from proactive_mcp.store import Store
 from proactive_mcp.store.migrations import load_migrations
-from tests.memory_tools_stdio import memory_session
-from tests.test_google_sync import (
+from tests.google_sync_test_support import (
     FailingGmailReader,
     FakeCalendarReader,
     FakeCredentials,
     calendar_result,
 )
+from tests.memory_tools_stdio import memory_session
 
 _PROJECT_ROOT: Final = Path(__file__).parents[1]
 _MIGRATION_FILES: Final = (
