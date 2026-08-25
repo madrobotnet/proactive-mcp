@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import webbrowser
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Final
 
@@ -159,10 +160,9 @@ class GoogleOAuthAuthorizer:
                 )
         except WSGITimeoutError:
             raise GoogleOAuthAuthorizationTimeoutError from None
-        except (OAuth2Error, RequestException):
+        except (OSError, webbrowser.Error, OAuth2Error, RequestException):
             raise GoogleOAuthAuthorizationError from None
         self.credential_store.save(credentials)
-        write_headless_setup_success()
         return credentials
 
 

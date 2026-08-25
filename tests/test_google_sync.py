@@ -439,7 +439,15 @@ def test_setup_runtime_marks_both_sources_configured_after_authorization(
         assert headless
         return FakeCredentials()
 
+    success_states: list[tuple[str, str]] = []
+
+    def emit_success() -> None:
+        with Store(database_path) as persisted:
+            gmail, calendar = persisted.list_source_sync()
+        success_states.append((gmail.auth_state, calendar.auth_state))
+
     monkeypatch.setattr(sources.GoogleOAuthAuthorizer, "authorize", authorize)
+    monkeypatch.setattr(sources, "write_headless_setup_success", emit_success)
 
     # When: the concrete setup runtime completes authorization.
     sources.configure_google_sources(
@@ -456,6 +464,7 @@ def test_setup_runtime_marks_both_sources_configured_after_authorization(
     # Then: both halves of the shared grant are configured before their first read.
     assert gmail_state.auth_state == "configured"
     assert calendar_state.auth_state == "configured"
+    assert success_states == [("configured", "configured")]
 
 
 def test_sync_updates_each_source_independently_and_returns_redacted_values_only(

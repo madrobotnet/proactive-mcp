@@ -2,16 +2,17 @@ import json
 import os
 import subprocess
 import sys
+import webbrowser
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import pytest
 from oauthlib.oauth2 import AccessDeniedError
 from pydantic import BaseModel, ConfigDict
 from requests.exceptions import RequestException
 
-from proactive_mcp import cli
+from proactive_mcp import cli, sources
 from proactive_mcp.server import StatusResponse
 from proactive_mcp.server.situation_responses import SourceReadDiagnosticsResponse
 from proactive_mcp.sources import (
@@ -219,6 +220,37 @@ def test_setup_reports_authorization_timeout_without_a_traceback(
     assert captured.out == ""
     assert captured.err
     assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "bootstrap_error",
+    [
+        OSError("socket-/private/loopback?state=state-canary"),
+        webbrowser.Error("browser-/private/provider?code=code-canary"),
+    ],
+)
+def test_setup_reports_bootstrap_failure_as_one_closed_safe_error(
+    bootstrap_error: Exception,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    private_path = tmp_path / "private-client.json"
+    _ = private_path.write_bytes((FIXTURES / "installed-client.json").read_bytes())
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "state.db"))
+    _install_fake_authorizer(monkeypatch, ErrorInstalledAppFlow(bootstrap_error))
+
+    result = cli.main(["setup", "--client-secrets", str(private_path)])
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert captured.out == ""
+    assert captured.err == "error: Google authorization failed; run setup again\n"
+    assert "Traceback" not in captured.err
+    assert str(bootstrap_error) not in captured.err
+    assert str(private_path) not in captured.err
+    assert "state-canary" not in captured.err
+    assert "code-canary" not in captured.err
 
 
 @pytest.mark.parametrize(
@@ -454,6 +486,95 @@ def test_headless_setup_emits_single_url_and_success_when_authorization_complete
     assert result == 0
     assert count_authorization_url_events(captured.out, captured.err) == 1
     assert count_setup_success_events(captured.out, captured.err) == 1
+
+
+def test_setup_emits_no_success_when_database_open_fails_after_credential_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    credential_stores: list[CredentialStore] = []
+    factory = FakeFlowFactory(FakeInstalledAppFlow(google_credential()))
+
+    def credential_store(path: Path) -> CredentialStore:
+        store = CredentialStore(path, keyring=FakeKeyring())
+        credential_stores.append(store)
+        return store
+
+    database_error = OSError("database-/private/path-canary")
+
+    class DatabaseOpenFailure:
+        def __init__(self, _path: Path) -> None:
+            raise database_error
+
+    def authorizer(store: CredentialStore) -> GoogleOAuthAuthorizer:
+        return GoogleOAuthAuthorizer(store, flow_factory=factory)
+
+    monkeypatch.setattr(sources, "CredentialStore", credential_store)
+    monkeypatch.setattr(sources, "GoogleOAuthAuthorizer", authorizer)
+    monkeypatch.setattr(sources, "Store", DatabaseOpenFailure)
+
+    with pytest.raises(OSError, match="database-/private/path-canary"):
+        sources.configure_google_sources(
+            tmp_path / "state.db",
+            GoogleSetupOptions(
+                client_secrets_path=FIXTURES / "installed-client.json",
+                reauth=False,
+                headless=True,
+            ),
+        )
+    captured = capsys.readouterr()
+
+    assert credential_stores[0].load() is not None
+    assert count_authorization_url_events(captured.out, captured.err) == 1
+    assert count_setup_success_events(captured.out, captured.err) == 0
+
+
+def test_setup_emits_no_success_when_source_state_write_fails_after_credential_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    factory = FakeFlowFactory(FakeInstalledAppFlow(google_credential()))
+
+    state_error = RuntimeError("source-state-canary")
+
+    class SourceStateFailure:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def set_google_auth_state(self, _state: str) -> None:
+            raise state_error
+
+    def credential_store(path: Path) -> CredentialStore:
+        return CredentialStore(path, keyring=FakeKeyring())
+
+    def authorizer(store: CredentialStore) -> GoogleOAuthAuthorizer:
+        return GoogleOAuthAuthorizer(store, flow_factory=factory)
+
+    monkeypatch.setattr(sources, "CredentialStore", credential_store)
+    monkeypatch.setattr(sources, "GoogleOAuthAuthorizer", authorizer)
+    monkeypatch.setattr(sources, "Store", SourceStateFailure)
+
+    with pytest.raises(RuntimeError, match="source-state-canary"):
+        sources.configure_google_sources(
+            tmp_path / "state.db",
+            GoogleSetupOptions(
+                client_secrets_path=FIXTURES / "installed-client.json",
+                reauth=False,
+                headless=True,
+            ),
+        )
+    captured = capsys.readouterr()
+
+    assert count_authorization_url_events(captured.out, captured.err) == 1
+    assert count_setup_success_events(captured.out, captured.err) == 0
 
 
 def test_headless_setup_emits_no_success_when_authorization_timeout(

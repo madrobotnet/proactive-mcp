@@ -4,6 +4,7 @@ import json
 import logging
 import socket
 import threading
+import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
@@ -257,7 +258,6 @@ def test_oauth_owned_output_and_typed_failure_characterization(
     assert store.load() is not None
     assert completed.out == (
         f"{HEADLESS_AUTHORIZATION_URL_EVENT} {_FAKE_AUTHORIZATION_URL}\n"
-        f"{HEADLESS_SETUP_SUCCESS_EVENT}\n"
     )
     assert completed.err == ""
 
@@ -542,6 +542,36 @@ def test_authorization_provider_failures_return_one_safe_typed_error(
     assert store.load() is None
 
 
+@pytest.mark.parametrize(
+    "bootstrap_error",
+    [
+        OSError("socket-/private/loopback?state=state-canary"),
+        webbrowser.Error("browser-/private/provider?code=code-canary"),
+    ],
+)
+def test_authorization_bootstrap_failures_return_one_safe_typed_error(
+    bootstrap_error: Exception,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = CredentialStore(tmp_path / "state", keyring=FakeKeyring())
+    authorizer = GoogleOAuthAuthorizer(
+        store,
+        flow_factory=FakeFlowFactory(ErrorInstalledAppFlow(bootstrap_error)),
+    )
+
+    with pytest.raises(GoogleOAuthAuthorizationError) as error:
+        _ = authorizer.authorize(FIXTURES / "installed-client.json", headless=True)
+    captured = capsys.readouterr()
+
+    assert str(error.value) == "Google authorization failed; run setup again"
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__
+    assert captured.out == ""
+    assert captured.err == ""
+    assert store.load() is None
+
+
 @pytest.mark.parametrize("control", [KeyboardInterrupt(), SystemExit(19)])
 def test_authorization_does_not_swallow_process_control_exceptions(
     control: BaseException,
@@ -574,7 +604,7 @@ def test_authorization_timeout_returns_a_typed_error(tmp_path: Path) -> None:
     assert isinstance(error.value, GoogleOAuthAuthorizationTimeoutError)
 
 
-def test_headless_authorization_emits_single_url_and_success_when_consent_completes(
+def test_headless_authorization_emits_single_url_without_setup_success(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -588,13 +618,13 @@ def test_headless_authorization_emits_single_url_and_success_when_consent_comple
     authorized = authorizer.authorize(FIXTURES / "installed-client.json", headless=True)
     captured = capsys.readouterr()
 
-    # Then: exactly one URL event and one success event are owned.
+    # Then: the authorizer owns one URL event, but not final setup success.
     assert authorized.refresh_token == _TEST_REFRESH
     assert count_authorization_url_events(captured.out, captured.err) == 1
-    assert count_setup_success_events(captured.out, captured.err) == 1
+    assert count_setup_success_events(captured.out, captured.err) == 0
 
 
-def test_headless_reauth_emits_single_url_and_success_when_consent_completes(
+def test_headless_reauth_emits_single_url_without_setup_success(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -612,10 +642,10 @@ def test_headless_reauth_emits_single_url_and_success_when_consent_completes(
     )
     captured = capsys.readouterr()
 
-    # Then: output ownership stays one URL and one success.
+    # Then: URL ownership stays singular and final setup success stays external.
     assert authorized.refresh_token == _TEST_REFRESH
     assert count_authorization_url_events(captured.out, captured.err) == 1
-    assert count_setup_success_events(captured.out, captured.err) == 1
+    assert count_setup_success_events(captured.out, captured.err) == 0
 
 
 def test_headless_timeout_emits_no_success_when_loopback_expires(
@@ -765,7 +795,7 @@ def test_headless_real_adapter_supplies_owned_authorization_prompt_once(
 
     # Then: the adapter supplied exactly one owned authorization prompt.
     assert authorized.refresh_token == _TEST_REFRESH
-    assert count_setup_success_events(after_authorize.out, after_authorize.err) == 1
+    assert count_setup_success_events(after_authorize.out, after_authorize.err) == 0
     assert len(recording.authorization_prompts) == 1
     owned_prompt = recording.authorization_prompts[0]
     assert owned_prompt is not None

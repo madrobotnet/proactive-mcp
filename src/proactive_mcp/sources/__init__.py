@@ -40,6 +40,7 @@ from .oauth import (
     GoogleOAuthAuthorizationTimeoutError,
     GoogleOAuthAuthorizer,
     OAuthClientConfigError,
+    write_headless_setup_success,
 )
 from .transport import GoogleAuthenticatedGetTransport
 
@@ -121,6 +122,7 @@ def configure_google_sources(
     )
     with Store(database_path) as store:
         store.set_google_auth_state("configured")
+    write_headless_setup_success()
 
 
 def disconnect_google_sources(database_path: Path) -> None:
