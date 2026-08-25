@@ -219,6 +219,32 @@ def test_read_inbox_threads_bounds_thread_count_and_body_text() -> None:
     assert all("/second" not in call[1] for call in transport.calls)
 
 
+def test_read_inbox_threads_counts_repeated_projection_reasons() -> None:
+    # Given: two Gmail threads independently truncate oversized body projections.
+    listed = json.dumps({"threads": [{"id": "first"}, {"id": "second"}]}).encode()
+    oversized = "deadline " + "x" * 5_000
+    encoded = base64.urlsafe_b64encode(oversized.encode()).decode().rstrip("=")
+    detail = _fixture("thread_deadline.json").replace(
+        b"UGxlYXNlIHJlcGx5IGJ5IDIwMjYtMDgtMjIu",
+        encoded.encode(),
+    )
+    transport = FakeGmailTransport(
+        {
+            GMAIL_PROFILE_URL: {None: (200, _fixture("profile.json"))},
+            GMAIL_THREADS_URL: {None: (200, listed)},
+            f"{GMAIL_THREADS_URL}/first": {None: (200, detail)},
+            f"{GMAIL_THREADS_URL}/second": {None: (200, detail)},
+        }
+    )
+
+    # When: the production adapter projects both threads.
+    result = _adapter(transport).read_inbox_threads()
+
+    # Then: compatibility reasons stay unique while typed counts retain multiplicity.
+    assert result.degradation_reasons == ("body_truncated",)
+    assert result.degradation_reason_counts == (("body_truncated", 2),)
+
+
 def test_read_inbox_threads_marks_snippet_body_fallback_as_degraded() -> None:
     # Given: a full thread response without a MIME text/plain part.
     thread_url = f"{GMAIL_THREADS_URL}/thread-fallback"

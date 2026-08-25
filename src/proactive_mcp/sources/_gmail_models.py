@@ -136,6 +136,7 @@ class GmailInboxReadResult:
     allows_absent_resolution: bool = False
     resolution_safe_thread_ids: frozenset[str] = frozenset()
     resolution_excluded_thread_ids: frozenset[str] = frozenset()
+    degradation_reason_counts: tuple[tuple[GmailDegradationReason, int], ...] = ()
 
     @property
     def is_complete(self) -> bool:

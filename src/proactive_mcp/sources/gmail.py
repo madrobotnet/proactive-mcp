@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final
 from urllib.parse import quote
@@ -184,6 +185,7 @@ class GmailAdapter:
                 if not snapshot.resolution_safe:
                     excluded_thread_ids.add(thread.id)
         unique_reasons = tuple(dict.fromkeys(reasons))
+        reason_counts: Counter[GmailDegradationReason] = Counter(reasons)
         return GmailInboxReadResult(
             threads=tuple(snapshots),
             fetched_at=listed.fetched_at,
@@ -194,6 +196,7 @@ class GmailAdapter:
             projected_thread_count=len(snapshots),
             excluded_thread_count=len(excluded_thread_ids),
             degradation_reasons=unique_reasons,
+            degradation_reason_counts=tuple(reason_counts.items()),
             allows_absent_resolution=(
                 listed.is_complete
                 and listed.skipped_count == 0

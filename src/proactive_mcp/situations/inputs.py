@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
     from proactive_mcp.sources.calendar import CalendarEvent
     from proactive_mcp.store import SourceErrorCode, SourceGeneration
+    from proactive_mcp.store.sync import SourceReadDiagnostics
 
 InboxThreadDegradationReason: TypeAlias = Literal[
     "body_snippet_fallback",
@@ -81,3 +82,4 @@ class EngineInputs:
 
     gmail_threads: SourceSnapshot[InboxThreadSnapshot] | None = None
     calendar_events: SourceSnapshot[CalendarEvent] | None = None
+    gmail_diagnostics: SourceReadDiagnostics | None = None

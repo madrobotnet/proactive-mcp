@@ -23,6 +23,10 @@ from proactive_mcp.cli.service import ServiceAction, run_service
 from proactive_mcp.config import ConfigError
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server import build_status, create_server, server
+from proactive_mcp.server.situation_responses import (
+    SourceReadDiagnosticsResponse,
+    source_read_diagnostics_response,
+)
 from proactive_mcp.sources import (
     CredentialScopeError,
     CredentialStorageError,
@@ -82,12 +86,18 @@ class _GoogleSmokeSourceResponse(BaseModel):
     error_code: SourceErrorCode | None
 
 
+class _GoogleSmokeGmailResponse(_GoogleSmokeSourceResponse):
+    """Legacy Gmail smoke fields plus additive bounded diagnostics."""
+
+    diagnostics: SourceReadDiagnosticsResponse
+
+
 class _GoogleSmokeResponse(BaseModel):
     """PII-free observable output of an explicitly enabled Google smoke read."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    gmail: _GoogleSmokeSourceResponse
+    gmail: _GoogleSmokeGmailResponse
     calendar: _GoogleSmokeSourceResponse
     credential_cleanup_failed: bool
 
@@ -138,9 +148,10 @@ def run_google_smoke(arguments: _CliArguments) -> None:
 def _smoke_response(summary: GoogleReadSummary) -> _GoogleSmokeResponse:
     """Serialize only redacted source counts and normalized error codes."""
     return _GoogleSmokeResponse(
-        gmail=_GoogleSmokeSourceResponse(
+        gmail=_GoogleSmokeGmailResponse(
             count=summary.gmail_count,
             error_code=summary.gmail_error_code,
+            diagnostics=source_read_diagnostics_response(summary.gmail_diagnostics),
         ),
         calendar=_GoogleSmokeSourceResponse(
             count=summary.calendar_count,

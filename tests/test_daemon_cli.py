@@ -197,6 +197,8 @@ def test_once_exits_zero_on_an_ok_pass(
     assert result == 0
     assert payload.sources == "prepared"
     assert payload.gmail == "ok"
+    assert payload.gmail_diagnostics.outcome == "healthy"
+    assert payload.gmail_diagnostics.request_count == 0
     assert payload.calendar == "ok"
     assert payload.warning_count == 0
 
@@ -459,6 +461,8 @@ def test_once_subprocess_exits_without_hanging_and_stays_pii_free(
     assert "@" not in combined
     payload = DaemonOnceResponse.model_validate_json(result.stdout)
     assert payload.sources == "not_configured"
+    assert payload.gmail_diagnostics.outcome == "stale"
+    assert "path" not in payload.gmail_diagnostics.model_dump()
 
 
 def test_poll_interval_override_is_visible_to_status_at_sixteen_minutes(

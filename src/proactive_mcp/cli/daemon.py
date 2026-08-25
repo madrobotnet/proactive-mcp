@@ -37,6 +37,11 @@ from proactive_mcp.delivery.notify import (
 )
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.scheduler import EventScheduler
+from proactive_mcp.server.situation_responses import (
+    SourceReadDiagnosticsResponse,
+    gmail_freshness_diagnostics,
+    source_read_diagnostics_response,
+)
 from proactive_mcp.server.status import DaemonDiagnosticResponse
 from proactive_mcp.situations import SituationRuntime
 from proactive_mcp.sources.lazy_sync import ScheduledSourceProvider, open_source_access
@@ -71,6 +76,7 @@ class DaemonOnceResponse(BaseModel):
     created: int
     notifications: int
     gmail: str
+    gmail_diagnostics: SourceReadDiagnosticsResponse
     calendar: str
     sources: str
     warning_count: int
@@ -238,10 +244,18 @@ def _poll_override(value: float | None) -> timedelta | None:
 def _emit_once(completed: DaemonPass) -> None:
     evaluation = completed.evaluation
     result = evaluation.result
+    match evaluation.sources:
+        case PreparedSources(inputs=inputs):
+            diagnostics = inputs.gmail_diagnostics
+        case SkippedSources():
+            diagnostics = None
+    if diagnostics is None:
+        diagnostics = gmail_freshness_diagnostics(result.gmail_freshness)
     payload = DaemonOnceResponse(
         created=result.created,
         notifications=len(completed.notifications),
         gmail=result.gmail_freshness.status,
+        gmail_diagnostics=source_read_diagnostics_response(diagnostics),
         calendar=result.calendar_freshness.status,
         sources=_source_token(evaluation.sources),
         warning_count=len(evaluation.warnings),
