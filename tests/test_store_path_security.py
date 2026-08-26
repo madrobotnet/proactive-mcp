@@ -120,7 +120,7 @@ def test_sidecar_swap_cannot_chmod_symlink_target(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX sidecar identity validation")
-def test_private_sidecar_is_reopened_for_identity_validation(
+def test_private_sidecar_identity_strategy_is_platform_safe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -150,7 +150,7 @@ def test_private_sidecar_is_reopened_for_identity_validation(
     finally:
         os.close(directory_fd)
 
-    assert reopened
+    assert reopened is (sys.platform != "darwin")
     assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 
