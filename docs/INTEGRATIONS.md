@@ -159,7 +159,80 @@ selects the model, and delivers through its channel. The Owner may validate it
 only with a dedicated scheduled host profile containing `serve-scheduled` and
 without a simultaneous everyday profile. Do not add a Hermes adapter, package,
 handshake, session tracker, helper, or plugin-managed cron artifact, and do not
-put Hermes Native Cron in tester onboarding.
+put Hermes Native Cron in tester onboarding. Named testers must not execute the
+following recipe.
+
+#### Native Cron Owner recipe
+
+The commands below were checked against Hermes Agent v0.20.0 local `--help`.
+They are an Owner-operated host recipe, not proactive-mcp scheduling. Hermes
+starts its own agent for the job. `proactive-mcp` only serves the restricted
+stdio surface after Hermes connects to it.
+
+Before registration, finish any everyday Hermes conversation. The scheduled
+profile must contain `proactive_scheduled` backed by `serve-scheduled`, and it
+must not contain the everyday `proactive` registration. Remove the everyday
+registration before the scheduled check:
+
+```bash
+hermes mcp remove proactive
+hermes mcp list
+```
+
+Register and inspect the restricted scheduled surface. `--args` is the final
+option required by Hermes:
+
+```bash
+hermes mcp add proactive_scheduled \
+  --command /home/you/venvs/proactive/bin/proactive-mcp \
+  --args serve-scheduled
+hermes mcp test proactive_scheduled
+hermes mcp list
+```
+
+Confirm the list contains `proactive_scheduled` and not `proactive` before
+creating the job. Do not use `--script` or `--no-agent`: this is a Hermes agent
+conversation that explicitly calls MCP tools. No plugin gate, counter, selector,
+or host-launch wrapper is involved.
+
+Create the Native Cron job. The prompt carries the delivery contract because
+this is a separate scheduled conversation:
+
+```bash
+hermes cron create \
+  --name proactive-owner-check \
+  --deliver local \
+  --workdir /home/you/.proactive-mcp/agent-cwd \
+  '*/15 * * * *' \
+  'This is a separate scheduled conversation with only proactive_scheduled loaded. Call proactive_check exactly once. Treat reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user. Surface uncertainty, leave the whole lease unconfirmed, or defer it to an interactive conversation for snooze. Never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once with a non-null receipt_token, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak the user's language. Never load the interactive profile in this conversation. Report kept or uncertain candidates and freshness warnings concisely. With healthy freshness and nothing kept, stay silent.'
+```
+
+`hermes cron create` prints the job ID. Substitute that exact value for
+`JOB_ID`, inspect the native scheduler, then request one manual run:
+
+```bash
+hermes cron list
+hermes cron status
+hermes cron run JOB_ID
+hermes cron runs --limit 5 JOB_ID
+```
+
+`hermes cron run` requests the job on the next scheduler tick. Inspect that one
+run for exactly one check, conditional whole-lease confirmation, user-language
+speech, freshness warnings, and no everyday profile. It is not a repeated-run
+suite.
+
+Remove the Owner check and its restricted registration when finished:
+
+```bash
+hermes cron remove JOB_ID
+hermes mcp remove proactive_scheduled
+hermes cron list
+hermes mcp list
+```
+
+Do not ship this job or copy it into tester sheets. Do not treat this Owner
+result as a substitute for Grok or Codex acceptance.
 
 ### Claude Code Desktop
 
