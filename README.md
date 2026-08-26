@@ -8,14 +8,11 @@ A local-first MCP server that turns read-only signals and local memory into grou
 
 <strong>English</strong> · <a href="README.ko.md">한국어</a>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![Closed alpha](https://img.shields.io/badge/status-closed%20alpha-D97706?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square)
 
 [Why](#why-proactive-mcp) · [How it works](#how-it-works) · [Get started](#get-started) · [Connect an agent](#connect-an-agent) · [Documentation](#documentation)
 
 </div>
-
-> [!IMPORTANT]
-> **proactive-mcp is in closed alpha.** The package isn't on PyPI yet, so the public package path below is written for launch day and doesn't work today. A source checkout works for collaborators. The private tester wheel is a finished path; see [Closed-alpha record](#closed-alpha-record).
 
 ## Why proactive-mcp?
 
@@ -69,18 +66,15 @@ flowchart LR
 
 ## Get started
 
-Open the local agent you already use and paste the block below. You only handle Google consent. You need your own Google Cloud Desktop OAuth client (BYO). Nobody sends you an Owner client JSON.
-
-> [!WARNING]
-> `uvx proactive-mcp` becomes available only after the Owner approves the same-day public flip (GitHub public + PyPI 0.1.0). During the closed alpha it fails by design because nothing is published to PyPI. This README does not claim that `uvx` works today.
+Open the local agent you already use and paste the block below. You only handle Google consent. You need your own Google Cloud Desktop OAuth client (BYO).
 
 ```text
-Install proactive-mcp with uvx. Register it as a local stdio MCP server for this agent using absolute paths. Complete read-only Google authorization using my own Google Cloud Desktop OAuth client JSON (BYO). Do not use or request an Owner-provided client secret. Start the recommended watcher and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md and https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not configure automated scheduling unless this host guarantees a dedicated per-run MCP profile; proactive-mcp must never launch or verify the host. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
+Install proactive-mcp with uvx from PyPI. Register it as a local stdio MCP server for this agent using absolute paths. Complete read-only Google authorization using my own Google Cloud Desktop OAuth client JSON (BYO). Do not use or request someone else's client secret. Start the recommended watcher and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md and https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not configure automated scheduling unless this host guarantees a dedicated per-run MCP profile; proactive-mcp must never launch or verify the host. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
 ```
 
 You approve the Google consent screen. After a successful first read the sources should show `ok`. Command names and host recipes live in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). BYO Google details for the agent are in [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
 
-Collaborators developing from a checkout give the agent that checkout's absolute path. That is a development path, not the public install. The closed-alpha wheel is a finished tester path; see [Closed-alpha record](#closed-alpha-record).
+If you are developing from a checkout, give the agent that checkout's absolute path. The public install is `uvx` from PyPI.
 
 ## Connect an agent
 
@@ -123,14 +117,14 @@ This receipt rule keeps delivery history accurate across crashes, retries, and m
 
 ## Release status
 
-| Area | Closed alpha now | Public release target |
-|:---|:---|:---|
-| Distribution | Private tester artifact or source checkout | PyPI package and public repository |
-| Google OAuth | Owner-provided client or BYO validation | BYO OAuth client by default |
-| Validation | Named testers, Linux automation, Owner Windows smoke | Published support matrix |
-| Data model | Local SQLite with migrations and private-path checks | Same local-first contract |
+| Area | Now |
+|:---|:---|
+| Distribution | PyPI package `proactive-mcp` 0.1.0, installed with `uvx` |
+| Google OAuth | Your own Desktop OAuth client (BYO) |
+| Hosts | Grok CLI and Codex CLI for interactive use; Hermes Native Cron is Owner-only |
+| Data | Local SQLite under `~/.proactive-mcp/` |
 
-The same-day flip (public GitHub + PyPI 0.1.0 + badge change) still needs a separate Owner one-line approval after this prep lands. This repository does not publish itself. Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md).
+Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md).
 
 ## Development
 

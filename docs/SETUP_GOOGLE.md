@@ -9,15 +9,10 @@ account and on your disk.
 Budget about 15 minutes. Most of it is clicking through the Google Cloud
 console; the local part is two commands.
 
-**BYO is the default.** After public release, every user creates their own
-Desktop OAuth client. The public package never ships an Owner
-`client_secret.json`. Give the JSON path to the agent you already use; the
-agent runs the local commands. You only handle Google consent.
-
-Owner-bundled client JSON existed in the **closed alpha only**. Named testers
-who still have that file may skip to
-[step 5](#step-5-put-the-file-where-setup-will-look). That handoff is not a
-public path. Historical tester sheets live in [docs/testers/](testers/README.md).
+**BYO is the default.** You create your own Desktop OAuth client. The PyPI
+package never ships a project `client_secret.json`. Give the JSON path to
+the agent you already use; the agent runs the local commands. You only
+handle Google consent.
 
 ## Contents
 
@@ -69,17 +64,15 @@ and anyone holding it can burn through your project's API quota.
   first, then come back.
 
 Every command below uses the public `uvx` shape from
-[`docs/INTEGRATIONS.md`](INTEGRATIONS.md). Until the Owner publishes PyPI
-0.1.0, `uvx proactive-mcp` fails on purpose.
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md):
 
 ```bash
 uvx proactive-mcp <command>
 ```
 
 A development checkout substitutes
-`uv run --directory /home/you/src/proactive-mcp proactive-mcp <command>`. A
-closed-alpha wheel uses the installed console script, for example
-`/home/you/venvs/proactive/bin/proactive-mcp <command>`. The
+`uv run --directory /home/you/src/proactive-mcp proactive-mcp <command>`.
+The
 [installation command shapes in the integration guide](INTEGRATIONS.md#installation-command-shapes)
 spell out that translation.
 

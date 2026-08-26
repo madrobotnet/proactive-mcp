@@ -8,14 +8,11 @@
 
 <a href="README.md">English</a> · <strong>한국어</strong>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![Closed alpha](https://img.shields.io/badge/status-closed%20alpha-D97706?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square)
 
 [왜](#왜-proactive-mcp인가) · [작동 방식](#작동-방식) · [시작하기](#시작하기) · [에이전트 연결](#에이전트-연결) · [문서](#문서)
 
 </div>
-
-> [!IMPORTANT]
-> **proactive-mcp는 클로즈드 알파 단계입니다.** 아직 PyPI에 올라가 있지 않습니다. 아래 공개 패키지 경로는 출시 시점을 위해 미리 적어 둔 것으로, 지금은 동작하지 않습니다. 저장소 collaborator는 소스 체크아웃을 쓰면 됩니다. 비공개 테스터 wheel은 끝난 경로입니다. [클로즈드 알파 기록](#클로즈드-알파-기록)을 보세요.
 
 ## 왜 proactive-mcp인가
 
@@ -69,18 +66,15 @@ flowchart LR
 
 ## 시작하기
 
-이미 쓰고 있는 로컬 에이전트를 열고 아래 블록을 붙여 넣어 주세요. 직접 하실 일은 Google 동의뿐입니다. Google Cloud Desktop OAuth 클라이언트는 본인 것(BYO)을 쓰세요. Owner가 클라이언트 JSON을 보내 주지 않습니다.
-
-> [!WARNING]
-> `uvx proactive-mcp`는 Owner가 같은 날 공개 플립(GitHub public + PyPI 0.1.0)을 승인한 뒤에만 됩니다. 지금은 PyPI에 패키지가 없어서 이 명령이 실패하는 것이 맞습니다.
+이미 쓰고 있는 로컬 에이전트를 열고 아래 블록을 붙여 넣어 주세요. 직접 하실 일은 Google 동의뿐입니다. Google Cloud Desktop OAuth 클라이언트는 본인 것(BYO)을 쓰세요.
 
 ```text
-uvx로 proactive-mcp를 설치하세요. 절대 경로를 사용해 이 에이전트의 로컬 stdio MCP 서버로 등록하세요. 읽기 전용 Google 연결은 제 Google Cloud Desktop OAuth 클라이언트 JSON(BYO)으로 하세요. Owner가 준 client secret을 쓰거나 요청하지 마세요. 권장 watcher를 시작하고 연결을 확인하세요. 설정을 바꾸기 전에 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md와 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md를 읽어 주세요. reply_deadline은 행동 필요 판정이 아니라 보수적으로 뽑은 후보로 취급하세요. 사용자에게 말하기 전에 뉴스레터, 마케팅, 자동 영수증, 요청이 없는 FYI 또는 FYI-CC, 다른 사람이 맡은 스레드, 저에게 답해야 할 질문·요청·결정이 없는 행은 확신할 수 있을 때 제외하세요. 명시적인 회신·RSVP·결정 요청, 제가 책임진 마감, 저에게 직접 묻고 아직 답하지 않은 질문은 유지하세요. 불확실한 후보는 저에게 알리거나 lease 전체를 미확정 상태로 두거나 일상 대화에서 snooze하세요. 비실행 항목이라고 조용히 버리지 마세요. 모든 행을 검토한 뒤 확정하기로 선택할 때만, 보여 주지 않기로 확신한 후보까지 포함해 검토한 lease 전체를 정확히 한 번 confirm_delivery 하세요. MCP 도구명·설명·필드·값은 영어로 유지하되 저에게는 제 언어로 말하세요. 일상 대화에는 serve만 로드하고 별도 예약 대화에는 serve-scheduled만 로드하세요. 한 대화에 두 프로필을 함께 로드하지 마세요. 이 host가 dedicated per-run MCP profile을 보장하지 못하면 자동 예약을 구성하지 말고, proactive-mcp가 host를 시작하거나 검증하게 만들지 마세요. HTTP transport는 사용하지 말고, 메일을 보내거나 일정을 만들지 마세요. 실행한 모든 명령과 변경한 파일, 제 승인이 필요한 항목을 보고해 주세요.
+PyPI에서 uvx로 proactive-mcp를 설치하세요. 절대 경로를 사용해 이 에이전트의 로컬 stdio MCP 서버로 등록하세요. 읽기 전용 Google 연결은 제 Google Cloud Desktop OAuth 클라이언트 JSON(BYO)으로 하세요. 다른 사람 클라이언트 secret을 쓰거나 요청하지 마세요. 권장 watcher를 시작하고 연결을 확인하세요. 설정을 바꾸기 전에 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md와 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md를 읽어 주세요. reply_deadline은 행동 필요 판정이 아니라 보수적으로 뽑은 후보로 취급하세요. 사용자에게 말하기 전에 뉴스레터, 마케팅, 자동 영수증, 요청이 없는 FYI 또는 FYI-CC, 다른 사람이 맡은 스레드, 저에게 답해야 할 질문·요청·결정이 없는 행은 확신할 수 있을 때 제외하세요. 명시적인 회신·RSVP·결정 요청, 제가 책임진 마감, 저에게 직접 묻고 아직 답하지 않은 질문은 유지하세요. 불확실한 후보는 저에게 알리거나 lease 전체를 미확정 상태로 두거나 일상 대화에서 snooze하세요. 비실행 항목이라고 조용히 버리지 마세요. 모든 행을 검토한 뒤 확정하기로 선택할 때만, 보여 주지 않기로 확신한 후보까지 포함해 검토한 lease 전체를 정확히 한 번 confirm_delivery 하세요. MCP 도구명·설명·필드·값은 영어로 유지하되 저에게는 제 언어로 말하세요. 일상 대화에는 serve만 로드하고 별도 예약 대화에는 serve-scheduled만 로드하세요. 한 대화에 두 프로필을 함께 로드하지 마세요. 이 host가 dedicated per-run MCP profile을 보장하지 못하면 자동 예약을 구성하지 말고, proactive-mcp가 host를 시작하거나 검증하게 만들지 마세요. HTTP transport는 사용하지 말고, 메일을 보내거나 일정을 만들지 마세요. 실행한 모든 명령과 변경한 파일, 제 승인이 필요한 항목을 보고해 주세요.
 ```
 
 Google 동의 화면은 직접 승인해 주세요. 첫 읽기에 성공하면 소스가 `ok`여야 합니다. 명령 이름과 호스트 레시피는 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)에 있습니다. 에이전트가 볼 BYO 안내는 [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md)에 있습니다.
 
-체크아웃으로 개발하시면 에이전트에게 그 절대 경로를 알려 주세요. 공개 설치가 아닙니다. 클로즈드 알파 wheel은 끝난 테스터 경로입니다. [클로즈드 알파 기록](#클로즈드-알파-기록)을 보세요.
+체크아웃으로 개발하시면 에이전트에게 그 절대 경로를 알려 주세요. 공개 설치는 PyPI의 `uvx`입니다.
 
 ## 에이전트 연결
 
@@ -123,14 +117,14 @@ Daemon은 local sync·결정론 평가·queue·문서화된 critical OS fallback
 
 ## 릴리스 상태
 
-| 영역 | 지금, 클로즈드 알파 | 공개 배포 목표 |
-|:---|:---|:---|
-| 배포 | 비공개 wheel 또는 소스 체크아웃 | PyPI 패키지와 공개 저장소 |
-| Google OAuth | Owner 제공 클라이언트 또는 BYO 검증 | 기본은 BYO OAuth 클라이언트 |
-| 검증 | 지정 테스터, Linux 자동화, Owner Windows 스모크 | 공개된 지원 매트릭스 |
-| 데이터 모델 | 마이그레이션과 경로 검사가 있는 로컬 SQLite | 동일한 로컬 우선 계약 |
+| 영역 | 지금 |
+|:---|:---|
+| 배포 | PyPI 패키지 `proactive-mcp` 0.1.0, `uvx`로 설치 |
+| Google OAuth | 본인 Desktop OAuth 클라이언트 (BYO) |
+| 호스트 | 일상 사용은 Grok CLI와 Codex CLI. Hermes Native Cron은 Owner 전용 |
+| 데이터 | `~/.proactive-mcp/` 아래 로컬 SQLite |
 
-같은 날 플립(공개 GitHub + PyPI 0.1.0 + 배지 교체)은 이 준비가 올라간 뒤 Owner가 따로 한 줄로 승인해야 합니다. 이 저장소가 스스로 게시하지 않습니다. 범위와 릴리스 결정의 정본은 [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)입니다.
+범위와 릴리스 결정의 정본은 [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)입니다.
 
 ## 개발
 
