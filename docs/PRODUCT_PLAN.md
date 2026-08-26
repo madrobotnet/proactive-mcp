@@ -4,7 +4,7 @@
 > **작성일:** 2026-08-20
 > **Owner:** 경우 (Kyungwoo Seo, @madrobotnet) — 범위 변경·릴리스·실계정 연동은 Owner 승인 사항
 > **개발 주체:** AI 코딩 에이전트 (별도 Linux 서버, GitHub 저장소 중심 워크플로)
-> **저장소:** https://github.com/madrobotnet/proactive-mcp (private — 공개 전환은 클로즈드 알파 검증 후 Owner 결정, §10)
+> **저장소:** https://github.com/madrobotnet/proactive-mcp (private — 공개 전환은 준비 머지 후 Owner 한 줄 승인으로만 실행, §10)
 
 ---
 
@@ -51,11 +51,11 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | MVP 범위 | 읽기 + 알림만. 외부 쓰기는 2단계 |
 | MVP Situation | Reply Deadline, Calendar Conflict, Personal Occasion 3종 |
 | 메모리 | MVP 포함 — `remember`/`recall` 도구, 상황 감지가 메모리를 근거로 사용 |
-| Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트(BYO), read-only scope만 — 공개 후 기본 경로. 클로즈드 알파에서는 Owner의 OAuth 클라이언트 JSON을 알파 패키지에 동봉해 배포 (2026-08-20 확정) |
+| Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트(BYO), read-only scope만 — 공개 후 **유일한** 기본 경로. Owner OAuth JSON은 클로즈드 알파 핸드오프에서만 썼고, 공개 패키지·wheel·저장소에 넣지 않는다 (2026-08-20 확정, 2026-08-26 공개 준비에서 재확인) |
 | Gmail reply_deadline 읽기 창 | 기본 최근 7일. `[sources]`의 `gmail_lookback_days`로 조정 가능. 7일보다 오래된 미회신·날짜성 마감 백로그는 V1 범위 밖이며, 설정된 창 안의 불완전 읽기는 §9에 따라 계속 degraded (2026-08-24 Owner 결정 #25 C(7d configurable)) |
 | 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 — 구체 기준은 §7 폴백 항목 (critical만·30분, 2026-08-21 확정 #14) |
-| 배포 | 개발~1차 클로즈드 테스트 동안 저장소 private 유지. Owner가 지정한 테스터의 1차 검증에서 문제가 없으면 공개 전환 + 홍보 (Owner 결정). 공개 후 최종 배포 형태는 PyPI + uvx |
-| 사람 온보딩 | 알파 wheel 또는 공개 artifact를 OS-sheet의 단일 paste block으로 사용자의 기존 에이전트에 전달한다. 에이전트가 설치·MCP 등록·`setup`·검증을 맡고, 사람은 Google 동의와 blocker 보고만 한다. 기본 경로에는 wizard, 수동 `mcp add`, JSON 편집이 없다 (2026-08-24 Owner 결정 #26) |
+| 배포 | 공개 전환 전까지 저장소 private. 클로즈드 알파 wheel은 **끝난 경로**. 공개 후 artifact는 PyPI `proactive-mcp` + `uvx`뿐. 저장소 public과 PyPI 0.1.0은 같은 날, Owner 한 줄 승인 뒤에만 실행. 문서·패키징 준비 PR은 플립을 실행하지 않는다 (2026-08-26 #32) |
+| 사람 온보딩 | 첫 경로는 쓰는 에이전트에 붙여 넣기 + BYO. 에이전트가 설치·등록·검증을 맡고, 사람은 Google 동의와 blocker 보고만 한다. 사람은 `setup` / `google-smoke` / `mcp add`를 몰라도 된다. 기본 경로에는 wizard, 수동 `mcp add`, JSON 편집이 없다 (2026-08-24 Owner 결정 #26, 2026-08-26 공개 준비) |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
 
 ## 4. 아키텍처
@@ -288,7 +288,10 @@ CREATE TABLE memory_items (
 | **M5 연동 레시피** | agent-owned lifecycle과 profile isolation 계약, 수동 restricted flow, host-native scheduling 조건 문서화. plugin이 Grok/Codex/Hermes/model을 시작·선택·검증하는 wrapper는 없음 | agent-off 시 host process/conversation 미생성 및 pending 유지, 이후 실행 중인 host의 명시적 restricted MCP 호출로 queue 회수 실증. 자동 예약은 dedicated per-run profile을 보장하는 host에서만 host-owned로 검증 |
 | **M6 클로즈드 알파 릴리스** | README 정비, GCP OAuth 설정 가이드, wheel 빌드와 테스터 배포 절차 (PyPI 미사용) | 새 환경에서 clean install → 온보딩 완료까지 15분 이내, 지정 테스터에게 전달 가능한 상태 |
 
-**M6 이후 — 공개 전환 (Owner 결정):** 지정 테스터의 1차 검증에서 문제가 없으면 저장소를 공개로 전환하고 PyPI `proactive-mcp` 0.1.0을 게시하며 홍보를 시작한다. PyPI 게시는 저장소가 private이어도 패키지를 공개하는 행위이므로, 반드시 공개 전환 시점에 함께 수행한다.
+**M6 이후 — 공개 전환 (Owner 결정, 준비와 플립을 가름):** M6(#7)는 완료로 닫혀 있다. 공개 전환은 두 단계다.
+
+1. **준비 (이 단계, #32).** README·기획서·연동/BYO 문서와 `pyproject.toml` 메타만 공개 첫 경로(에이전트 붙여 넣기 + `uvx` + BYO)에 맞춘다. closed-alpha 배지와 “PyPI 아직 없음”은 유지한다. 테스트는 지우지 않는다. `gh repo edit --visibility public`과 `uv publish`는 실행하지 않는다.
+2. **플립 (별도 Owner 한 줄 승인).** 준비가 `main`에 머지된 뒤에만, 같은 날에 (a) 배지/경고를 공개 상태로 바꾸고 (b) 저장소를 public으로 전환하고 (c) PyPI `proactive-mcp` 0.1.0을 게시한다. PyPI만 올리면 저장소가 private여도 패키지가 공개되므로 배지 교체·저장소 공개·PyPI 게시를 같은 날에 끝낸다. 에이전트는 Owner 승인 댓글 없이 저장소 공개나 게시를 실행하지 않는다.
 
 2단계(V2, 별도 기획): 쓰기 액션(approval-first), Google Tasks·Docs, Telegram 채널, HTTP transport(원격 데몬 — ChatGPT 웹·Claude 클라우드 Routines 등 원격 실행 에이전트 지원의 전제, §5.3), OpenClaw 지원, 다중 계정.
 
@@ -323,8 +326,8 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 
 ## 12. 배포·온보딩
 
-- **배포 artifact:** 클로즈드 알파에서는 저장소를 private로 유지하고, 지정 테스터에게 wheel 파일을 직접 전달한다. 테스터 온보딩에 collaborator 초대나 git clone은 쓰지 않는다. 소스 checkout은 개발 또는 collaborator 작업 맥락에서만 쓴다. PyPI에는 게시하지 않는다. Owner가 지정한 테스터의 1차 검증을 승인한 공개 전환 후에는 PyPI 패키지 `proactive-mcp`를 게시하고 `uvx`로 제공한다.
-- **기존 에이전트가 MCP 등록 후 setup 실행:** 테스터는 이미 쓰는 에이전트에게 wheel 설치, MCP 등록, `proactive-mcp setup` 실행을 맡긴다. 공개 후에도 에이전트가 `uvx proactive-mcp`를 사용해 같은 절차를 수행한다. 알파에서는 Owner의 OAuth 클라이언트 JSON(프로덕션 게시, 미검증, 인증 시 경고 화면에서 고급→계속)을 패키지와 함께 전달한다. 토큰과 데이터는 테스터 본인 머신에만 저장되며 클라이언트 소유자에게 전송되지 않는다. 테스터 중 1~2명은 BYO 경로(`docs/SETUP_GOOGLE.md`)로 온보딩해 문서를 검증하며, 공개 후 일반 사용자는 BYO를 기본으로 한다.
+- **배포 artifact:** 공개 후 정본 artifact는 PyPI `proactive-mcp`와 `uvx`다. 클로즈드 알파 wheel은 끝난 경로이며, 테스터 기록(`docs/RELEASE_ALPHA.md`, `docs/testers/`)으로만 남긴다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 준비 단계에서는 PyPI에 게시하지 않는다. 저장소 public과 PyPI 0.1.0은 Owner 한 줄 승인 당일에만 함께 수행한다.
+- **기존 에이전트에 붙여 넣기 + BYO:** 사람은 쓰는 에이전트에 붙여 넣기 블록 하나를 넣고 Google 동의만 한다. 에이전트가 `uvx` 설치·MCP 등록·읽기 전용 Google 연결·검증을 맡는다. 공개 후 Google은 BYO만 — Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 클로즈드 알파에서만 Owner OAuth JSON을 별도 채널로 전달했다. 토큰과 데이터는 사용자 머신에만 저장된다.
 - **권장 데몬:** 에이전트가 MCP 등록과 setup을 마친 뒤 `proactive-mcp daemon` local service를 등록한다. 데몬은 sync·평가·queue·문서화된 OS 폴백만 담당하며 agent/LLM을 호출하거나 prompt를 보내지 않는다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, periodic sync와 폴백 알림은 동작하지 않는다.
 - **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고 §5.2에 따라 전체 후보를 검토한다. 반환값에 `receipt_token`이 있고 lease를 확정하기로 했다면 사용자에게 보여 주지 않기로 확신한 후보까지 포함한 lease 전체를 `confirm_delivery(receipt_token)`로 한 번 확정한다. 불확실한 후보는 알리거나 전체 lease를 미확정 상태로 두거나 일상 대화에서 확정 후 snooze하며, 비실행 항목이라고 조용히 버리지 않는다. 토큰이 없으면 확정하지 않는다.
 - **언어와 대화 분리:** MCP 도구명·설명·필드·값은 영어를 유지하고 호스트는 사용자의 언어로 말한다. 일상 대화에는 `serve`만, 별도 수동/예약 대화에는 `serve-scheduled`만 로드하며 한 대화에 두 프로필을 함께 로드하지 않는다. Host/operator가 이 isolation과 agent lifecycle을 소유한다. Host가 dedicated per-run profile을 제공하지 못하면 자동 예약은 지원하지 않고 구성하지 않는다. Grok 0.2.112 merged source와 Codex config layer의 immutable isolation을 plugin이 보장한다고 주장하지 않는다.
@@ -340,7 +343,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
   }
 }
 ```
-- GCP OAuth 클라이언트 생성 가이드는 `docs/SETUP_GOOGLE.md`로 M6에서 작성한다.
+- GCP OAuth 클라이언트 생성 가이드는 `docs/SETUP_GOOGLE.md`에 있다. 공개 후 기본은 BYO다.
 
 ## 13. 미결 사항
 

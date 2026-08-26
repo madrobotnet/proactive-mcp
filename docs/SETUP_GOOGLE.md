@@ -1,4 +1,4 @@
-# Bring your own Google OAuth client (M6)
+# Bring your own Google OAuth client
 
 This guide takes you from an empty Google Cloud account to a working read-only
 Gmail and Calendar connection on your own machine. You don't need to know
@@ -9,15 +9,15 @@ account and on your disk.
 Budget about 15 minutes. Most of it is clicking through the Google Cloud
 console; the local part is two commands.
 
-There are two ways to connect Google during the closed alpha. The Owner may
-hand you a client secret file, in which case skip straight to
-[step 5](#step-5-put-the-file-where-setup-will-look) and use the delivered
-file. This guide covers the other way, **BYO**: you create the OAuth client
-yourself. BYO is what every user will do after public release, and one or two
-alpha testers run it now precisely to prove this document works.
+**BYO is the default.** After public release, every user creates their own
+Desktop OAuth client. The public package never ships an Owner
+`client_secret.json`. Give the JSON path to the agent you already use; the
+agent runs the local commands. You only handle Google consent.
 
-Alpha recipients should give their OAuth JSON location to their agent and use
-the matching [OS tester sheet](testers/README.md); BYO testers should follow this guide.
+Owner-bundled client JSON existed in the **closed alpha only**. Named testers
+who still have that file may skip to
+[step 5](#step-5-put-the-file-where-setup-will-look). That handoff is not a
+public path. Historical tester sheets live in [docs/testers/](testers/README.md).
 
 ## Contents
 
@@ -68,16 +68,17 @@ and anyone holding it can burn through your project's API quota.
   [the installation command shapes in the integration guide](INTEGRATIONS.md#installation-command-shapes)
   first, then come back.
 
-Every command below is written for the source checkout, matching
-[`docs/INTEGRATIONS.md`](INTEGRATIONS.md):
+Every command below uses the public `uvx` shape from
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md). Until the Owner publishes PyPI
+0.1.0, `uvx proactive-mcp` fails on purpose.
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp <command>
+uvx proactive-mcp <command>
 ```
 
-Substitute your own checkout path. If the Owner gave you a wheel instead of a
-checkout, drop `uv run --directory ...` and call the installed console script
-directly, for example
+A development checkout substitutes
+`uv run --directory /home/you/src/proactive-mcp proactive-mcp <command>`. A
+closed-alpha wheel uses the installed console script, for example
 `/home/you/venvs/proactive/bin/proactive-mcp <command>`. The
 [installation command shapes in the integration guide](INTEGRATIONS.md#installation-command-shapes)
 spell out that translation.
@@ -85,7 +86,7 @@ spell out that translation.
 Verify your install answers before you touch the Google console:
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp --help
+uvx proactive-mcp --help
 ```
 
 ## Step 1: create a Google Cloud project
@@ -153,7 +154,7 @@ same, so match by function rather than by heading.
 Testing mode has one real cost, so plan for it: **refresh tokens issued by an
 app in Testing status expire after seven days.** When that happens, `status`
 tells you the sources need reauthentication and you re-run `setup --reauth`.
-See [Reauthorizing](#reauthorizing). It's a weekly nuisance during the alpha,
+See [Reauthorizing](#reauthorizing). It's a weekly nuisance while the app stays in Testing,
 not a bug in this tool.
 
 ## Step 4: create the Desktop app OAuth client
@@ -229,7 +230,7 @@ database's own directory. Keep that directory private too.
 ## Step 6: run setup and grant consent
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp setup
+uvx proactive-mcp setup
 ```
 
 Confirm the flags yourself first if you like, with
@@ -295,7 +296,7 @@ options:
 Run it:
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp status
+uvx proactive-mcp status
 ```
 
 Before `setup`, both sources report `not_configured` and the warnings tell you
@@ -347,7 +348,7 @@ agent/model or sends a prompt. Once it has run a pass, these statuses become
 If you'd rather read the JSON without squinting, pipe it through a formatter:
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp status \
+uvx proactive-mcp status \
   | python3 -m json.tool
 ```
 
@@ -369,7 +370,7 @@ options:
 ```
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp google-smoke \
+uvx proactive-mcp google-smoke \
   --confirm-real-account-read
 ```
 
@@ -398,7 +399,7 @@ listed here in the same precedence order `setup` applies.
 variable:
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp setup \
+uvx proactive-mcp setup \
   --client-secrets /home/you/secrets/proactive-client.json
 ```
 
@@ -407,7 +408,7 @@ uv run --directory /home/you/src/proactive-mcp proactive-mcp setup \
 
 ```bash
 export PROACTIVE_GOOGLE_CLIENT_SECRETS=/home/you/secrets/proactive-client.json
-uv run --directory /home/you/src/proactive-mcp proactive-mcp setup
+uvx proactive-mcp setup
 ```
 
 In PowerShell:
@@ -430,7 +431,7 @@ command, and the redirect still has to reach it. So `setup` prints the URL and
 waits for you.
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp setup --headless
+uvx proactive-mcp setup --headless
 ```
 
 ```text
@@ -465,7 +466,7 @@ consent prompt again instead of silently reusing your prior grant, then
 overwrites the stored credential.
 
 ```bash
-uv run --directory /home/you/src/proactive-mcp proactive-mcp setup --reauth
+uvx proactive-mcp setup --reauth
 ```
 
 Reach for it when:
@@ -547,8 +548,7 @@ since the URL carries your client ID.
 
 You're authorized, but nothing is watching yet. Register proactive-mcp with
 your agent and set up the local-only watcher daemon using
-[`docs/INTEGRATIONS.md`](INTEGRATIONS.md). Windows testers following the
-Owner's smoke path have step-by-step PowerShell in
-[`docs/WINDOWS_SMOKE_TEST.md`](WINDOWS_SMOKE_TEST.md). The product decisions
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md). [`docs/WINDOWS_SMOKE_TEST.md`](WINDOWS_SMOKE_TEST.md)
+is Owner-only diagnostics, not a tester or public path. The product decisions
 behind the read-only, BYO design are in
 [`docs/PRODUCT_PLAN.md`](PRODUCT_PLAN.md) sections 3, 9, and 12, in Korean.
