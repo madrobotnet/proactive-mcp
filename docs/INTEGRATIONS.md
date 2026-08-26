@@ -6,8 +6,7 @@ message-delivery channel. It never launches Grok, Codex, Hermes, another host
 agent, or an LLM, and it never sends a prompt to one.
 
 Install from PyPI with `uvx proactive-mcp`. A source checkout
-(`uv run --directory …`) is for development. Hermes Native Cron is
-Owner-only.
+(`uv run --directory …`) is for development.
 
 ## Runtime ownership
 
