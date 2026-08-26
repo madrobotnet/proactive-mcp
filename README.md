@@ -22,7 +22,7 @@ proactive-mcp supplies that direction. It watches approved read-only sources in 
 
 | Read-only signals | Local context | Agent-neutral delivery |
 |:---|:---|:---|
-| Gmail and Google Calendar are read through minimal scopes. | Memories, situations, receipts, and sync state stay in local SQLite. | Any local MCP client can use the same tools and deliver through its own channel. |
+| Gmail and Google Calendar are read through minimal scopes. | Memories, situations, delivery confirmations, and sync state stay in local SQLite. | Any local MCP client can use the same tools and deliver through its own channel. |
 
 ### Situations, not notifications
 
@@ -86,7 +86,7 @@ The host loads `serve` only in an interactive everyday conversation and `serve-s
 |:---|:---|
 | Grok CLI 0.2.112 | Manual dedicated restricted profile only; merged config sources cannot prove immutable per-run isolation, so unattended scheduling is not advertised |
 | Codex CLI | Local stdio; config layers are not claimed isolated by this plugin, so schedule only when the host/operator independently guarantees a dedicated per-run profile |
-| Hermes Agent | Owner-only Native Cron. Not a tester or general-user path |
+| Hermes Agent | Local stdio. Schedule only when the host guarantees a dedicated per-run profile |
 | Claude Code Desktop | Local stdio; local tasks only when that version provides a dedicated per-task MCP profile |
 
 The daemon may perform local sync, deterministic evaluation, queue maintenance, and the documented critical-only OS fallback. It never invokes an agent/LLM or sends prompts. Exact host responsibilities and command shapes are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
@@ -99,11 +99,11 @@ When an agent calls `proactive_check`:
 2. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for this user.
 3. Keep explicit reply, RSVP, or decision requests, user-owned deadlines, and unanswered questions directed to this user.
 4. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them from the interactive profile. Never silently discard uncertainty as non-actionable.
-5. After reviewing every row, only when choosing confirmation, use a non-null `receipt_token` to call `confirm_delivery` exactly once for the entire reviewed lease. That confirmation includes candidates the host confidently and silently dropped. Never confirm a tokenless response.
+5. After reviewing every row, only when choosing confirmation, use the `receipt_token` from that check to call `confirm_delivery` exactly once for the entire reviewed lease. That confirmation includes candidates the host confidently and silently dropped. Never confirm a tokenless response.
 6. Keep MCP tool names, descriptions, fields, and values in English. Speak to the user in the user's language.
 7. Keep interactive everyday and scheduled work in separate conversations. Load only `serve` in the former and only `serve-scheduled` in the latter, never both. The host/operator owns this isolation; if a dedicated per-run profile is unavailable, do not automate the scheduled run.
 
-This receipt rule keeps delivery history accurate across crashes, retries, and multiple agents.
+This confirmation step keeps delivery history accurate across crashes, retries, and multiple agents.
 
 ## Tool surface
 
@@ -121,23 +121,10 @@ This receipt rule keeps delivery history accurate across crashes, retries, and m
 |:---|:---|
 | Distribution | PyPI package `proactive-mcp` 0.1.0, installed with `uvx` |
 | Google OAuth | Your own Desktop OAuth client (BYO) |
-| Hosts | Grok CLI and Codex CLI for interactive use; Hermes Native Cron is Owner-only |
+| Hosts | Grok CLI and Codex CLI for everyday use |
 | Data | Local SQLite under `~/.proactive-mcp/` |
 
 Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md).
-
-## Development
-
-```bash
-uv sync --locked
-uv run ruff check .
-uv run ruff format --check .
-uv run basedpyright
-uv run pytest
-uv build
-```
-
-Python 3.11 or newer is required. Tests use fake clocks and local fixtures; normal test runs do not call real Google APIs.
 
 ## Documentation
 
@@ -146,16 +133,11 @@ Python 3.11 or newer is required. Tests use fake clocks and local fixtures; norm
 | [`README.ko.md`](README.ko.md) | Korean README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (the public default) |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Host recipes and command shapes for agents |
-| [`docs/testers/README.md`](docs/testers/README.md) | Historical closed-alpha OS sheets; not the first path |
-| [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) | Historical private-wheel record; not the first path |
-| [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Owner-only diagnostics; not a tester or user path |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | Memory model and tool contracts |
 | [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) | Canonical product and release plan |
 
-## Closed-alpha record
-
-Named testers used a private wheel and an OS sheet in [`docs/testers/`](docs/testers/README.md). That path is finished. Keep the sheets and [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) as history. Do not treat them as the public first path. Hermes Native Cron stays Owner-only.
-
 ## License
 
-[MIT](LICENSE) © 2026 Kyungwoo Seo
+[MIT](LICENSE) © 2026 Kyungwoo Seo <[hello@madrobot.net](mailto:hello@madrobot.net)>
+
+This project was built with [OmO Native](https://github.com/code-yeongyu/oh-my-openagent).
