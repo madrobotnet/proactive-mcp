@@ -19,7 +19,11 @@ from proactive_mcp.store import Store
 
 PID = os.getpid()
 UNIT_NAME = "proactive-mcp.service"
-ENTRYPOINT = Path(__file__).parents[1] / ".venv" / "bin" / "proactive-mcp"
+_ENTRYPOINT_DIRECTORY = "Scripts" if os.name == "nt" else "bin"
+_ENTRYPOINT_NAME = "proactive-mcp.exe" if os.name == "nt" else "proactive-mcp"
+ENTRYPOINT = (
+    Path(__file__).parents[1] / ".venv" / _ENTRYPOINT_DIRECTORY / _ENTRYPOINT_NAME
+)
 
 
 class ServiceResponse(BaseModel):
