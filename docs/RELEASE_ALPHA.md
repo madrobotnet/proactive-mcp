@@ -181,16 +181,23 @@ into the agent. They do not paste shell or PowerShell into a terminal. They do
 not need a repository, `git`, a package index, `mcp add`, or manual MCP JSON.
 The agent carries out the OS-specific handoff: checksum verification, Python and
 uv checks, virtual environment creation, wheel installation, OAuth JSON
-placement and permissions, MCP registration, Google read-only linking, a
-confirmed real-account read, one-shot watch, and status verification. The
+placement and permissions, everyday MCP registration, Google read-only linking,
+a confirmed real-account read, one-shot watch, and status verification. The
 tester paste names outcomes, not CLI verbs; the agent looks those up from
-`--help`, including the real-account confirm flag. It then installs and
-verifies the host-specific session-start rule, a scheduled agent invocation
-through `serve-scheduled`, and the platform-appropriate continuous watcher: Windows
-Task Scheduler, a Linux user service, or a macOS LaunchAgent. A scheduler must
-launch the agent so it can call `proactive_check` and conditionally
-`confirm_delivery`; invoking the proactive-mcp CLI alone does not deliver a
-situation.
+`--help`, including the real-account confirm flag. It also installs the
+everyday session-start rule and the platform-appropriate continuous
+**proactive-mcp daemon** watcher: Windows Task Scheduler, a Linux user service,
+or a macOS LaunchAgent.
+
+The watcher starts only local sync/evaluation/queue work and the documented OS
+fallback. It must never start Grok, Codex, Hermes, another agent/model, or send
+a prompt. `serve-scheduled` is a restricted stdio MCP surface, not a scheduler
+or collector. Optional automated agent scheduling is host/operator-owned and is
+configured only when the installed host guarantees a dedicated per-run MCP
+profile containing only `serve-scheduled`; otherwise it is left unscheduled.
+Grok 0.2.112 unattended scheduling is not advertised, and Codex config layers
+are not claimed isolated by this plugin. Manual restricted host use remains
+possible.
 
 If the checksum differs, the agent stops before installation and reports the
 mismatch. The expected pre-setup status is `"overall":"degraded"` with sources
@@ -203,10 +210,12 @@ machine has no browser. On Linux and macOS it also creates
 
 Within the fifteen-minute onboarding window, report success or failure, elapsed
 onboarding time, and the blocked step, if any. Success includes a verified
-session-start call, one scheduled agent delivery invocation, and a running
-continuous watcher. If the watcher cannot be registered, the tester must first
-receive an explanation that periodic sync and OS-notification fallback will be
-unavailable and explicitly consent to degraded mode. Include only the redacted
+everyday session-start call and a running continuous watcher. Record whether the
+host can guarantee a dedicated per-run MCP profile; lack of that feature means
+automated agent scheduling is intentionally not configured, not an install
+failure. If the watcher cannot be registered, the tester must first receive an
+explanation that periodic sync and OS-notification fallback will be unavailable
+and explicitly consent to degraded mode. Include only the redacted
 status fields named in section 9 before and after setup. Do not send complete
 status JSON, OAuth JSON, tokens, database paths, PIDs, or timestamps. The agent
 must report a checksum mismatch without installing the wheel.
@@ -214,8 +223,8 @@ must report a checksum mismatch without installing the wheel.
 ## 8. Rollback
 
 The tester asks their existing agent to roll back using the matching OS sheet.
-The agent first stops any watcher daemon or scheduled job, then deletes the
-stored credential and confirms that deletion succeeded. Only after successful
+The agent first stops the watcher daemon and any host-owned agent schedule, then
+deletes the stored credential and confirms that deletion succeeded. Only after successful
 credential deletion may it remove MCP registration, the state directory, the
 virtual environment, or the wheel installation. This order is mandatory because
 a keyring credential can outlive the state directory and appear to be a legacy
@@ -234,21 +243,13 @@ PROACTIVE_BIN="$HOME/venvs/proactive/bin/proactive-mcp"
 ```
 
 Only after the command prints `{"google":"disconnected"}` may the agent remove
-the active MCP registrations for the client in use and any legacy Grok user-scope entries:
+the active MCP registrations created for this install:
 
 ```bash
-# Grok CLI: remove the project registrations from the two trusted directories.
-if [ -d "$HOME/.proactive-mcp/grok-interactive" ]; then
-  (cd "$HOME/.proactive-mcp/grok-interactive" && grok mcp remove --scope project proactive 2>/dev/null || true)
-fi
-if [ -d "$HOME/.proactive-mcp/grok-scheduled" ]; then
-  (cd "$HOME/.proactive-mcp/grok-scheduled" && grok mcp remove --scope project proactive_scheduled 2>/dev/null || true)
-fi
-# Also clean legacy user-scope entries if they exist; absence is harmless here.
-grok mcp remove --scope user proactive 2>/dev/null || true
-grok mcp remove --scope user proactive_scheduled 2>/dev/null || true
-# Restore any pre-install Claude/Cursor/user registration from its backup rather
-# than deleting unrelated settings.
+# Grok CLI: use the host/operator's recorded scope. Do not scan or rewrite
+# unrelated Grok, Claude, Cursor, or project configuration.
+grok mcp remove proactive 2>/dev/null || true
+grok mcp remove proactive_scheduled 2>/dev/null || true
 ```
 
 ```bash
@@ -298,10 +299,11 @@ against the fifteen-minute bar from §12, and the blocked step, if any. Retain
 only these redacted status fields before and after setup: `overall`,
 `database.status`, `database.migration_version`, each Google source `status`
 and `error_code`, and warning strings. Do not retain or ask for
-`database.path`, PID, or timestamps. Record whether the session-start call,
-scheduled agent invocation, and continuous watcher verification succeeded, or
-whether the tester explicitly consented to degraded mode after the missing
-periodic sync and OS-notification fallback were explained. The blocked steps
+`database.path`, PID, or timestamps. Record whether the session-start call and
+continuous watcher verification succeeded, whether host-owned dedicated
+per-run isolation is available, and whether the tester explicitly consented to
+degraded mode after the missing periodic sync and OS-notification fallback were
+explained. Do not require automated agent invocation where isolation is absent. The blocked steps
 are the valuable part; they're what the onboarding docs get fixed from.
 
 ## Owner checklist
@@ -318,7 +320,8 @@ are the valuable part; they're what the onboarding docs get fixed from.
 - [ ] `git status` clean, no OAuth JSON anywhere in the tree
 - [ ] No PyPI publication, and no `uv publish` in the build history
 - [ ] POSIX OAuth directory/file permissions verified as `0700`/`0600`
-- [ ] Session-start call and scheduled agent delivery invocation verified
-- [ ] Continuous watcher verified, or degraded mode limitations explained and explicitly accepted
+- [ ] Everyday session-start call verified with only `serve`
+- [ ] Host per-run isolation recorded; unsupported automated scheduling left unconfigured
+- [ ] Continuous daemon watcher verified to launch no host agent, or degraded mode limitations explained and explicitly accepted
 - [ ] Tester report records success or failure, elapsed onboarding time, and any blocked step
 - [ ] Rollback steps delivered with the install steps, not after the tester asks

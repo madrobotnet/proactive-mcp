@@ -65,7 +65,7 @@ and anyone holding it can burn through your project's API quota.
 - A Google account. Use the one whose Gmail and Calendar you want watched.
 - Access to a browser you control, on any machine.
 - proactive-mcp installed. If you haven't done that yet, do
-  [Step 0 of the integration guide](INTEGRATIONS.md#step-0-prerequisites-once-per-machine)
+  [the installation command shapes in the integration guide](INTEGRATIONS.md#installation-command-shapes)
   first, then come back.
 
 Every command below is written for the source checkout, matching
@@ -79,7 +79,7 @@ Substitute your own checkout path. If the Owner gave you a wheel instead of a
 checkout, drop `uv run --directory ...` and call the installed console script
 directly, for example
 `/home/you/venvs/proactive/bin/proactive-mcp <command>`. The
-[wheel notes in the integration guide](INTEGRATIONS.md#getting-the-code-during-the-private-alpha)
+[installation command shapes in the integration guide](INTEGRATIONS.md#installation-command-shapes)
 spell out that translation.
 
 Verify your install answers before you touch the Google console:
@@ -337,11 +337,12 @@ because a single credential backs both sources.
 
 Don't be alarmed that `overall` still says `degraded`. `never_synced` is an
 honest complaint: authorization is done, but nothing has read anything yet.
-The watcher daemon is what performs reads, and setting it up is a separate
-task covered in
-[the integration guide](INTEGRATIONS.md#the-neutral-agent-directory). Once the
-daemon has run a pass, these statuses become `ok` and `overall` goes to `ok`
-too, assuming nothing else is complaining.
+The watcher daemon is what performs routine local reads, and setting it up is a
+separate task covered in
+[the integration guide](INTEGRATIONS.md#watcher-daemon-and-degraded-mode). The
+daemon performs local sync/evaluation/queue work only; it never launches an
+agent/model or sends a prompt. Once it has run a pass, these statuses become
+`ok` and `overall` goes to `ok` too, assuming nothing else is complaining.
 
 If you'd rather read the JSON without squinting, pipe it through a formatter:
 
@@ -511,7 +512,8 @@ These hold for V1, and they're the reason this setup is narrow.
 - **Reads happen only when you ask.** `setup` authorizes and stores; it reads
   no mail. `google-smoke` reads your real account only with
   `--confirm-real-account-read`. Routine syncing is the watcher daemon's job,
-  and you register that separately.
+  and you register that separately. It does not initiate a host conversation or
+  agent delivery.
 
 ## Troubleshooting
 
@@ -544,7 +546,7 @@ since the URL carries your client ID.
 ## Where to go next
 
 You're authorized, but nothing is watching yet. Register proactive-mcp with
-your agent and set up the watcher daemon using
+your agent and set up the local-only watcher daemon using
 [`docs/INTEGRATIONS.md`](INTEGRATIONS.md). Windows testers following the
 Owner's smoke path have step-by-step PowerShell in
 [`docs/WINDOWS_SMOKE_TEST.md`](WINDOWS_SMOKE_TEST.md). The product decisions
