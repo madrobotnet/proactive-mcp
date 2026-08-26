@@ -8,7 +8,7 @@
 
 <a href="README.md">English</a> · <strong>한국어</strong>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
 
 [왜](#왜-proactive-mcp인가) · [작동 방식](#작동-방식) · [시작하기](#시작하기) · [에이전트 연결](#에이전트-연결) · [문서](#문서)
 
@@ -140,3 +140,7 @@ Daemon은 local sync·결정론 평가·queue·문서화된 critical OS fallback
 [MIT](LICENSE) © 2026 서경우 <[hello@madrobot.net](mailto:hello@madrobot.net)>
 
 이 프로젝트는 [OmO Native](https://github.com/code-yeongyu/oh-my-openagent)로 제작했습니다.
+
+도움이 되셨다면 [Ko-fi](https://ko-fi.com/madrobot)에서 후원하실 수 있습니다.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/madrobot)

@@ -8,7 +8,7 @@ A local-first MCP server that turns read-only signals and local memory into grou
 
 <strong>English</strong> · <a href="README.ko.md">한국어</a>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
 
 [Why](#why-proactive-mcp) · [How it works](#how-it-works) · [Get started](#get-started) · [Connect an agent](#connect-an-agent) · [Documentation](#documentation)
 
@@ -140,3 +140,7 @@ Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PR
 [MIT](LICENSE) © 2026 Kyungwoo Seo <[hello@madrobot.net](mailto:hello@madrobot.net)>
 
 This project was built with [OmO Native](https://github.com/code-yeongyu/oh-my-openagent).
+
+You can support this project on [Ko-fi](https://ko-fi.com/madrobot).
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/madrobot)
