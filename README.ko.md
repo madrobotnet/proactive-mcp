@@ -151,4 +151,6 @@ Python 3.11 이상이 필요합니다. 테스트는 fake clock과 로컬 fixture
 
 ## 라이선스
 
-[MIT](LICENSE) © 2026 서경우
+[MIT](LICENSE) © 2026 서경우 <[hello@madrobot.net](mailto:hello@madrobot.net)>
+
+이 프로젝트는 [OmO Native](https://github.com/code-yeongyu/oh-my-openagent)로 제작했습니다.

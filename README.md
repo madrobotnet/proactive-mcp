@@ -151,4 +151,6 @@ Python 3.11 or newer is required. Tests use fake clocks and local fixtures; norm
 
 ## License
 
-[MIT](LICENSE) © 2026 Kyungwoo Seo
+[MIT](LICENSE) © 2026 Kyungwoo Seo <[hello@madrobot.net](mailto:hello@madrobot.net)>
+
+This project was built with [OmO Native](https://github.com/code-yeongyu/oh-my-openagent).
