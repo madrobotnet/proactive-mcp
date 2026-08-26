@@ -25,18 +25,7 @@ AI 에이전트는 기본적으로 요청-응답 구조라서 사용자가 묻�
 
 > 사용자가 언젠가 에이전트와 대화하다 "엄마 생신이 7월 18일이야"라고 말했다. 에이전트는 `remember`로 저장했다. 7월 11일(D-7) 아침, 사용자가 에이전트에게 말을 걸자 에이전트가 먼저 말한다: "그런데, 어머니 생신이 일주일 남았어요. 선물이나 식사 예약을 챙기시겠어요?"
 
-## 2. 배경: hermes-proactive에서의 전환
-
-이 프로젝트는 [madrobotnet/hermes-proactive](https://github.com/madrobotnet/hermes-proactive)의 방향 전환(pivot)이다. 기존 저장소는 Hermes Agent 전용 플러그인으로 설계되었고, 이중 런타임(Legacy JSON + SQLite), 2,300여 개 requirement, 4단계 실행 게이트 등 무거운 거버넌스가 쌓여 있다. 코드는 이식하지 않고 **새로 시작**하되, 검증된 설계 자산을 선별 계승한다.
-
-| 구분 | 항목 |
-|---|---|
-| **계승** | Situation 개념과 상태 모델, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 안전 불변식(stale-source 시 all-clear 금지, PII 로깅 금지), Mother's Birthday E2E 시나리오, 2단계용 approval-first 쓰기 계약 |
-| **폐기** | Hermes 전용 Host/Plugin 경계, 이중 런타임, 스테이지 게이트·독립 리뷰 거버넌스, 일반화된 World Model/Dreaming, Google Tasks·Docs 어댑터(후속으로 연기) |
-
-기존 저장소는 참고자료로만 사용한다. 코드 import, 파일 복사, 스펙 승계는 하지 않는다.
-
-## 3. 확정된 제품 결정
+## 2. 확정된 제품 결정
 
 Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이 필요하다.
 
@@ -58,7 +47,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | 사람 온보딩 | 첫 경로는 쓰는 에이전트에 붙여 넣기 + BYO. 에이전트가 설치·등록·검증을 맡고, 사람은 Google 동의와 blocker 보고만 한다. 사람은 `setup` / `google-smoke` / `mcp add`를 몰라도 된다. 기본 경로에는 wizard, 수동 `mcp add`, JSON 편집이 없다 (2026-08-24 Owner 결정 #26, 2026-08-26 공개 준비) |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
 
-## 4. 아키텍처
+## 3. 아키텍처
 
 ```mermaid
 flowchart LR
@@ -86,7 +75,7 @@ flowchart LR
     A1 & A2 & A3 -->|"자체 채널"| U[사용자]
 ```
 
-### 4.1 프로세스 모델
+### 3.1 프로세스 모델
 
 MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 spawn되므로, 상시 감시는 별도 프로세스가 담당한다. 모든 프로세스는 하나의 SQLite 데이터베이스를 공유한다.
 
@@ -102,14 +91,14 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 
 **동시성:** SQLite WAL 모드 + `busy_timeout`. 여러 에이전트가 동시에 서버 인스턴스를 띄워도 안전해야 한다. 스키마 마이그레이션은 데몬/서버 시작 시 단일 writer 락으로 수행한다.
 
-### 4.2 데이터 위치
+### 3.2 데이터 위치
 
 - DB: `~/.proactive-mcp/proactive.db`
 - 설정: `~/.proactive-mcp/config.toml`
 - OAuth 토큰: OS keyring 우선, 사용 불가 시(headless Linux) `~/.proactive-mcp/credentials/` 0600 파일
 - 로그: `~/.proactive-mcp/logs/` (redaction 규칙 적용, §9)
 
-## 5. MCP 도구 표면 v1
+## 4. MCP 도구 표면 v1
 
 도구 설명(description)은 에이전트가 읽고 행동하는 계약이므로, 각 도구의 사용 시점을 명확히 기술해야 한다. Owner가 지정한 정확한 세 도구인 `proactive_check`, `list_situations`, `get_situation` 설명은 영어로 호스트 필터, 검토 후 조건부 전체 lease 확정, 불확실성, 사용자 언어, 대화별 프로필 분리 계약을 각각 완전하게 전달한다. 제한된 scheduled 프로필의 `get_status`와 `confirm_delivery`에도 해당 프로필에서 안전하게 lease를 처리하기 위한 일관된 지침을 유지하되, 이는 정본 세 도구를 대신하지 않는다. 특히 `remember`는 "사용자가 날짜·약속·선호·인물 정보를 언급하면 저장하라"는 지침을 도구 설명에 포함한다. 이것이 "대화를 메모리에 저장"의 실현 방식이다.
 
@@ -129,7 +118,7 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 
 메모리 도구의 시그니처는 M2.5부터 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md)가 정본이다 — `remember`/`recall` 확장과 `update`/`list_entities` 추가 (2026-08-21 개정, §8 참조).
 
-### 5.1 전달 상태 머신
+### 4.1 전달 상태 머신
 
 ```text
 detected → pending --proactive_check--> pending(leased; 별도 lease 레코드)
@@ -144,7 +133,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 - `proactive_check`만 호출하는 연동은 반드시 `confirm_delivery` 호출을 추가해야 한다. 이를 생략하면 안전한 실패 방식으로 lease 만료 후 상황이 재제공된다.
 - `delivered` 후 사용자 반응 없이 상황이 소스에서 해소되면 `resolved`로 자동 정리한다.
 
-### 5.2 세션 시작 전달
+### 4.2 세션 시작 전달
 
 에이전트 플랫폼 스케줄러가 없어도, 사용자가 에이전트에게 말을 걸어 도구를 호출하는 순간이 전달 기회다. 이를 위해 `proactive_check` 도구 설명에 "세션 시작 시 1회 호출 권장"을 명시하고, 연동 레시피(M5)에서 각 플랫폼의 룰/시스템 프롬프트에 이 관례를 넣는 방법을 문서화한다.
 
@@ -158,7 +147,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 6. MCP 도구명·설명·필드·값은 영어로 유지하되 사용자에게는 사용자의 언어로 말한다.
 7. 일상 대화에는 `serve`만, 별도 수동/예약 대화에는 `serve-scheduled`만 로드한다. 한 대화에 두 프로필을 함께 로드하지 않는다. 이 격리는 host/operator 책임이며 plugin은 host 설정을 검사하거나 host를 시작하지 않는다.
 
-### 5.3 플랫폼 전달 매트릭스 (2026-08-22 Owner 개정, M5 정본)
+### 4.3 플랫폼 전달 매트릭스 (2026-08-22 Owner 개정, M5 정본)
 
 "먼저 말 걸기"의 성립 조건은 MCP 지원 여부가 아니라 host가 소유한 다음 조건이다.
 
@@ -182,11 +171,11 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 
 **2026-08-22 Owner 결정 (#20):** Cursor Automations는 cloud agent에서 실행되어 V1 로컬 stdio 서버에 닿을 수 없으므로 지원 목록에서 제거한다. 이를 우회하기 위한 HTTP transport를 M5에 앞당기지 않는다. 대신 OpenClaw를 V2 지원 대상으로 추가하며, 구체 transport·스케줄 연동은 V2 기획에서 조사·확정한다.
 
-## 6. Situation 카탈로그 v1
+## 5. Situation 카탈로그 v1
 
 3종. 각 Situation은 결정론적 규칙으로 감지한다(LLM 판단 없음 — V1 감지기는 순수 규칙 기반이며, LLM 요약·판단 결합은 후속 검토).
 
-### 6.1 `reply_deadline` — 회신 필요/마감 임박
+### 5.1 `reply_deadline` — 회신 필요/마감 임박
 
 - **소스:** Gmail (read-only)
 - **의미:** 보수적인 후보 생성 결과이며 사용자가 행동해야 한다는 판정이 아니다. 최종 사용자 전달 여부는 §5.2의 호스트 필터가 결정한다.
@@ -196,7 +185,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 - **dedupe key:** thread id + 최신 메시지 id
 - **자연 해소:** 사용자가 해당 스레드에 회신하면 resolved
 
-### 6.2 `calendar_conflict` — 일정 충돌
+### 5.2 `calendar_conflict` — 일정 충돌
 
 - **소스:** Google Calendar (read-only)
 - **트리거:** 확정(accepted/owner) 일정끼리 시간이 겹침. 종일 일정끼리는 제외
@@ -204,7 +193,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 - **dedupe key:** 충돌 쌍의 event id 정렬 조합
 - **자연 해소:** 한쪽 일정이 이동/취소되면 resolved
 
-### 6.3 `personal_occasion` — 메모리 기반 기념일·약속
+### 5.3 `personal_occasion` — 메모리 기반 기념일·약속
 
 - **소스:** 메모리 (`memory_items` 중 `date_anchor`가 있는 항목)
 - **트리거:** D-N 도달 (기본 N=7, 항목별 설정 가능). 반복(recurrence=yearly) 항목은 매년 재생성
@@ -213,7 +202,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 - **모순 처리:** 동일 entity+attribute에 모순된 `date_anchor` 행이 둘 다 active면 알림은 dedupe key 기준 연 1회만 나가되, 요약과 evidence에 모순 사실과 두 날짜를 함께 명시한다
 - **Mother's Birthday Test가 이 유형의 대표 acceptance 시나리오다 (§11.3)**
 
-## 7. Attention 정책
+## 6. Attention 정책
 
 모든 수치는 `config.toml`에서 설정 가능하며 아래는 기본값이다.
 
@@ -234,7 +223,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 - 구현: 3개 OS 모두 OS 기본 도구 subprocess 호출로 통일 — Linux `notify-send`, macOS `osascript`, Windows는 WinRT `ToastNotificationManager`를 호출하는 고정 PowerShell 스크립트(신규 의존성 0, AUMID는 PowerShell 기본값 재사용). 구현 중 신뢰성 문제가 실측되면 `winotify`로 전환하고 사유를 PR에 기록한다.
 - 내용 제약: 토스트 본문은 §9.2에 따라 상황 유형 + 짧은 표시명 수준의 최소 컨텍스트만 (토스트는 Windows 알림 센터 DB에 남는다). 외부 입력이 섞이는 문자열의 이스케이프를 hermetic 테스트로 검증한다. 발송 실패는 조용히 삼키지 않고 redacted 로그와 `get_status`에 노출한다.
 
-## 8. 메모리 모델
+## 7. 메모리 모델
 
 기존 repo의 World Model(Entity/Claim/Fact/Conflict revision 체계)의 경량 축소판. V1은 단일 테이블로 시작한다.
 
@@ -259,7 +248,7 @@ CREATE TABLE memory_items (
 
 **개정 (2026-08-21, Owner 승인):** 위 단일 테이블 모델은 M1에서 구현을 마쳤으나, 항목이 늘면 중복 저장이 `personal_occasion` 알림 중복으로 이어지고(§6.3 dedupe key가 memory item id 기준) 동일 대상을 묶을 수단이 없다. entity 테이블·별칭·1차 카테고리 고정 + 하위 자유 경로 계층·중복 병합을 도입한다. 설계 정본은 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md)이며, 이 절과 충돌하면 해당 문서를 따른다. 착수는 **M2 머지 직후 ~ M3 착수 전**으로 고정한다 (M3 감지기가 메모리 구조를 읽기 시작하면 개정 비용이 급증한다).
 
-## 9. 안전·프라이버시 계약 (V1)
+## 8. 안전·프라이버시 계약 (V1)
 
 다음은 완화할 수 없는 불변식이다. 위반이 발견되면 개발 에이전트는 작업을 멈추고 Owner에게 보고한다.
 
@@ -272,7 +261,7 @@ CREATE TABLE memory_items (
 
 **2단계(쓰기) 예고 계약:** 쓰기 도구를 추가할 때는 기존 hermes-proactive의 approval-first 계약을 계승한다 — complete preview → 명시적 승인 → immutable payload binding → 실행 → provider read-back → `outcome_unknown` 자동 재시도 금지. V1 코드는 이 계약을 훼손하는 구조(예: LLM이 직접 실행기를 호출하는 경로)를 만들지 않는다.
 
-## 10. 개발 로드맵
+## 9. 개발 로드맵
 
 마일스톤은 순서대로 진행하며, 각 마일스톤의 완료 기준을 충족한 뒤 다음으로 넘어간다. 마일스톤 하나당 하나의 PR(또는 정리된 커밋 시리즈)을 기본으로 한다.
 
@@ -294,15 +283,15 @@ CREATE TABLE memory_items (
 
 2단계(V2, 별도 기획): 쓰기 액션(approval-first), Google Tasks·Docs, Telegram 채널, HTTP transport(원격 데몬 — ChatGPT 웹·Claude 클라우드 Routines 등 원격 실행 에이전트 지원의 전제, §5.3), OpenClaw 지원, 다중 계정.
 
-## 11. 테스트 전략
+## 10. 테스트 전략
 
-### 11.1 원칙
+### 10.1 원칙
 
 - 모든 테스트는 hermetic — 실제 Google API 호출 없음. fixture로 Gmail/Calendar 응답을 재현한다.
 - 시간 의존 로직은 전부 fake clock 주입. 실제 `datetime.now()` 직접 호출 금지.
 - 실계정 smoke test는 별도 opt-in 스크립트로만 제공하며 CI에서 실행하지 않는다.
 
-### 11.2 커버리지 필수 영역
+### 10.2 커버리지 필수 영역
 
 Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), dedupe(재sync 시 중복 상황 미생성), 상태 머신 전이, stale-source warning, 다중 서버 인스턴스 동시 접근.
 
@@ -323,7 +312,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
    응답에 stale warning이 포함되는지 확인
 ```
 
-## 12. 배포·온보딩
+## 11. 배포·온보딩
 
 - **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.1.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시와 저장소 public은 Owner가 같은 날 실행한다.
 - **기존 에이전트에 붙여 넣기 + BYO:** 사람은 쓰는 에이전트에 붙여 넣기 블록 하나를 넣고 Google 동의만 한다. 에이전트가 `uvx` 설치·MCP 등록·읽기 전용 Google 연결·검증을 맡는다. Google은 BYO만 — Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 토큰과 데이터는 사용자 머신에만 저장된다.
@@ -344,7 +333,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 ```
 - GCP OAuth 클라이언트 생성 가이드는 `docs/SETUP_GOOGLE.md`에 있다. 기본은 BYO다.
 
-## 13. 미결 사항
+## 12. 미결 사항
 
 | 항목 | 상태 |
 |---|---|
