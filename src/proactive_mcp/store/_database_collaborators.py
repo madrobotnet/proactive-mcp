@@ -130,12 +130,10 @@ def close_connection(
             try:
                 if validate:
                     verify_database_identity(directory_fd, path, database_fd)
-                    enforce_private_sidecars(directory_fd, path)
             finally:
                 connection.close()
             if validate:
                 verify_database_identity(directory_fd, path, database_fd)
-                enforce_private_sidecars(directory_fd, path)
     finally:
         if database_guard is not None:
             _ = database_guard.__exit__(None, None, None)

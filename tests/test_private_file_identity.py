@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +12,9 @@ from proactive_mcp.store.private_file import (
     read_private_text,
     write_private_text,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX identity contract")
 
@@ -61,7 +64,7 @@ def test_private_temporary_link_race_is_rejected(
 
     def hardlink_before_replace(descriptor: int) -> None:
         nonlocal raced
-        if not raced and Path(f"/proc/self/fd/{descriptor}").is_file():
+        if not raced and stat.S_ISREG(os.fstat(descriptor).st_mode):
             targets = tuple(tmp_path.glob(".*.tmp"))
             if targets:
                 raced = True
