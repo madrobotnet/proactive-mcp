@@ -10,6 +10,7 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from ._posix_identity import verify_open_name, verify_private_file
 from .storage_errors import UnsafeDatabasePathError
 
 if TYPE_CHECKING:
@@ -21,6 +22,8 @@ _PRIVATE_FILE_MODE: Final[int] = 0o600
 
 def open_private_parent(path: Path) -> int:
     """Open and pin a POSIX database directory without following symlinks."""
+    if not path.is_absolute():
+        raise UnsafeDatabasePathError(path, "private path must be absolute")
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     current_fd = os.open("/", directory_flags)
     try:
@@ -52,16 +55,20 @@ def open_private_parent(path: Path) -> int:
             os.close(current_fd)
 
 
-def prepare_private_database_file(directory_fd: int, path: Path) -> None:
-    """Create or open the database file and reject unsafe sidecars."""
+def prepare_private_database_file(directory_fd: int, path: Path) -> int:
+    """Create and retain the verified database descriptor."""
     descriptor = _open_private_file(
         directory_fd,
         path.name,
         os.O_CREAT | os.O_RDWR,
         path,
     )
-    os.close(descriptor)
-    enforce_private_sidecars(directory_fd, path)
+    try:
+        enforce_private_sidecars(directory_fd, path)
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
 
 
 @contextmanager
@@ -70,35 +77,45 @@ def private_initialization_lock(
     path: Path,
 ) -> Generator[None]:
     """Serialize WAL setup and migrations across fresh Store processes."""
+    name = f".{path.name}.init.lock"
     lock_fd = _open_private_file(
         directory_fd,
-        f".{path.name}.init.lock",
+        name,
         os.O_CREAT | os.O_RDWR,
         path,
     )
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _ = verify_open_name(
+            directory_fd,
+            name,
+            lock_fd,
+            path,
+            "initialization lock",
+        )
         yield
+        _ = verify_open_name(
+            directory_fd,
+            name,
+            lock_fd,
+            path,
+            "initialization lock",
+        )
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
 
 
 def enforce_private_sidecars(directory_fd: int, path: Path) -> None:
-    """Enforce private modes on the database and existing WAL sidecars."""
+    """Revalidate the database and each existing SQLite sidecar."""
     database_fd = _open_private_file(directory_fd, path.name, os.O_RDONLY, path)
     os.close(database_fd)
     for suffix in ("-wal", "-shm", "-journal"):
-        name = f"{path.name}{suffix}"
-        _secure_existing_sidecar(directory_fd, name, path)
+        _secure_existing_sidecar(directory_fd, f"{path.name}{suffix}", path)
 
 
 def _secure_existing_sidecar(directory_fd: int, name: str, path: Path) -> None:
     """Secure one sidecar through a stable descriptor without following links."""
-    existing = _sidecar_stat(directory_fd, name, path)
-    if existing is None or stat.S_IMODE(existing.st_mode) == _PRIVATE_FILE_MODE:
-        return
-
     flags = os.O_PATH if sys.platform == "linux" else os.O_RDONLY
     try:
         descriptor = os.open(name, flags | os.O_NOFOLLOW, dir_fd=directory_fd)
@@ -111,20 +128,19 @@ def _secure_existing_sidecar(directory_fd: int, name: str, path: Path) -> None:
         ) from error
     try:
         observed = os.fstat(descriptor)
-        _verify_private_file_identity(observed, path, "database sidecar")
+        verify_private_file(observed, path, "database sidecar")
         if stat.S_IMODE(observed.st_mode) != _PRIVATE_FILE_MODE:
             if sys.platform == "linux":
                 Path(f"/proc/self/fd/{descriptor:d}").chmod(_PRIVATE_FILE_MODE)
             else:
                 os.fchmod(descriptor, _PRIVATE_FILE_MODE)
-        secured = os.fstat(descriptor)
-        _verify_private_file_identity(secured, path, "database sidecar")
-        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        if _identity(current) != _identity(secured) or current.st_nlink != 1:
-            raise UnsafeDatabasePathError(
-                path,
-                "database sidecar changed while being secured",
-            )
+        _ = verify_open_name(
+            directory_fd,
+            name,
+            descriptor,
+            path,
+            "database sidecar",
+        )
     except OSError as error:
         raise UnsafeDatabasePathError(
             path,
@@ -132,25 +148,6 @@ def _secure_existing_sidecar(directory_fd: int, name: str, path: Path) -> None:
         ) from error
     finally:
         os.close(descriptor)
-
-
-def _sidecar_stat(
-    directory_fd: int,
-    name: str,
-    path: Path,
-) -> os.stat_result | None:
-    """Return one regular sidecar's metadata without following links."""
-    try:
-        existing = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    except OSError as error:
-        raise UnsafeDatabasePathError(
-            path,
-            "database sidecar cannot be inspected safely",
-        ) from error
-    _verify_private_file_identity(existing, path, "database sidecar")
-    return existing
 
 
 def _verify_private_directory(
@@ -213,40 +210,17 @@ def _open_private_file(
         ) from error
     try:
         observed = os.fstat(descriptor)
-        _verify_private_file_identity(observed, path, "private path")
+        verify_private_file(observed, path, "private path")
         if stat.S_IMODE(observed.st_mode) != _PRIVATE_FILE_MODE:
             os.fchmod(descriptor, _PRIVATE_FILE_MODE)
-        secured = os.fstat(descriptor)
-        _verify_private_file_identity(secured, path, "private path")
-        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        _verify_unchanged(current, secured, path)
+        _ = verify_open_name(
+            directory_fd,
+            name,
+            descriptor,
+            path,
+            "private path",
+        )
     except (OSError, UnsafeDatabasePathError):
         os.close(descriptor)
         raise
     return descriptor
-
-
-def _verify_unchanged(
-    current: os.stat_result,
-    secured: os.stat_result,
-    path: Path,
-) -> None:
-    if _identity(current) != _identity(secured) or current.st_nlink != 1:
-        raise UnsafeDatabasePathError(path, "private path changed while secured")
-
-
-def _verify_private_file_identity(
-    observed: os.stat_result,
-    path: Path,
-    label: str,
-) -> None:
-    if not stat.S_ISREG(observed.st_mode):
-        raise UnsafeDatabasePathError(path, f"{label} is not a regular file")
-    if observed.st_uid != os.getuid():
-        raise UnsafeDatabasePathError(path, f"{label} is not user-owned")
-    if observed.st_nlink != 1:
-        raise UnsafeDatabasePathError(path, f"{label} has an ambiguous identity")
-
-
-def _identity(observed: os.stat_result) -> tuple[int, int]:
-    return observed.st_dev, observed.st_ino

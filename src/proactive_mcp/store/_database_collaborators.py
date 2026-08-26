@@ -21,6 +21,7 @@ from .private_path import (
     private_database_guard,
     private_initialization_lock,
     sqlite_connection_target,
+    verify_database_identity,
 )
 from .situations import SituationStore
 from .storage_errors import ReceiptErasurePendingError
@@ -41,6 +42,7 @@ class StoreCollaborators:
 
     connection: sqlite3.Connection
     directory_fd: int | None
+    database_fd: int | None
     reader: ScalarReader
     memory: MemoryStore
     sync: SyncStore
@@ -63,21 +65,25 @@ def open_collaborators(
     """
     directory_fd = open_private_parent(path)
     connection: sqlite3.Connection | None = None
+    database_fd: int | None = None
     database_guard = private_database_guard(directory_fd, path)
     database_guard_entered = False
     try:
-        prepare_private_database_file(directory_fd, path)
+        database_fd = prepare_private_database_file(directory_fd, path)
         _ = database_guard.__enter__()
         database_guard_entered = True
         with private_initialization_lock(directory_fd, path):
             connection = sqlite3.connect(
-                sqlite_connection_target(directory_fd, path),
+                sqlite_connection_target(directory_fd, path, database_fd),
                 timeout=busy_timeout_ms / 1000,
             )
+            verify_database_identity(directory_fd, path, database_fd)
             connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms:d}").close()
             reader = ScalarReader(connection)
             initialize_connection(connection, reader)
+            verify_database_identity(directory_fd, path, database_fd)
             enforce_private_sidecars(directory_fd, path)
+            verify_database_identity(directory_fd, path, database_fd)
     except (
         OSError,
         sqlite3.Error,
@@ -87,7 +93,9 @@ def open_collaborators(
         close_connection(
             connection,
             directory_fd,
+            (database_fd, path),
             database_guard if database_guard_entered else None,
+            validate=False,
         )
         raise
     sync = SyncStore(connection, clock)
@@ -95,6 +103,7 @@ def open_collaborators(
     return StoreCollaborators(
         connection=connection,
         directory_fd=directory_fd,
+        database_fd=database_fd,
         reader=reader,
         memory=MemoryStore(connection, clock),
         sync=sync,
@@ -109,12 +118,28 @@ def open_collaborators(
 def close_connection(
     connection: sqlite3.Connection | None,
     directory_fd: int | None,
+    database_identity: tuple[int | None, Path],
     database_guard: AbstractContextManager[None] | None = None,
+    *,
+    validate: bool = True,
 ) -> None:
-    """Release one SQLite connection and its private directory descriptor."""
-    if connection is not None:
-        connection.close()
-    if database_guard is not None:
-        _ = database_guard.__exit__(None, None, None)
-    if directory_fd is not None:
-        os.close(directory_fd)
+    """Revalidate close boundaries and release retained filesystem identities."""
+    database_fd, path = database_identity
+    try:
+        if connection is not None:
+            try:
+                if validate:
+                    verify_database_identity(directory_fd, path, database_fd)
+                    enforce_private_sidecars(directory_fd, path)
+            finally:
+                connection.close()
+            if validate:
+                verify_database_identity(directory_fd, path, database_fd)
+                enforce_private_sidecars(directory_fd, path)
+    finally:
+        if database_guard is not None:
+            _ = database_guard.__exit__(None, None, None)
+        if database_fd is not None:
+            os.close(database_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)

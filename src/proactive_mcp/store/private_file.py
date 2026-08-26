@@ -180,13 +180,13 @@ def _write_windows_private_text(path: Path, content: str) -> None:
     _ = open_private_parent(path)
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
     try:
-        prepare_private_database_file(None, temporary)
+        _ = prepare_private_database_file(None, temporary)
         with temporary.open("w", encoding="utf-8") as private_file:
             _ = private_file.write(content)
             private_file.flush()
             os.fsync(private_file.fileno())
         _ = temporary.replace(path)
-        prepare_private_database_file(None, path)
+        _ = prepare_private_database_file(None, path)
     finally:
         with suppress(FileNotFoundError):
             temporary.unlink()
@@ -196,7 +196,7 @@ def _read_windows_private_text(path: Path) -> str | None:
     _ = open_private_parent(path)
     if not path.exists():
         return None
-    prepare_private_database_file(None, path)
+    _ = prepare_private_database_file(None, path)
     return path.read_text(encoding="utf-8")
 
 
@@ -204,5 +204,5 @@ def _delete_windows_private_file(path: Path) -> None:
     _ = open_private_parent(path)
     if not path.exists():
         return
-    prepare_private_database_file(None, path)
+    _ = prepare_private_database_file(None, path)
     path.unlink()

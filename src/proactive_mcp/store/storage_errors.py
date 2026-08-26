@@ -21,7 +21,7 @@ class ReceiptErasurePendingError(Exception):
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class UnsafeDatabasePathError(Exception):
     """Raised when the database path could expose or redirect private data."""
 

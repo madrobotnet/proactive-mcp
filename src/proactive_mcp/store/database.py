@@ -97,6 +97,7 @@ class Store:
             close_connection(
                 collaborators.connection,
                 collaborators.directory_fd,
+                (collaborators.database_fd, self._path),
                 collaborators.database_guard,
             )
 

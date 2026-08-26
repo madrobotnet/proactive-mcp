@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Final
 import keyring as os_keyring
 from keyring.errors import InitError, KeyringError, NoKeyringError, PasswordDeleteError
 
-from proactive_mcp.paths import DEFAULT_DATABASE
+from proactive_mcp.paths import DEFAULT_DATABASE, normalize_state_path
 
 from ._credential_cleanup import (
     canonical_state_root,
@@ -74,7 +74,11 @@ class CredentialStore:
         keyring: CredentialKeyring | None = None,
     ) -> None:
         """Bind a state directory and, by default, the platform keyring."""
-        object.__setattr__(self, "state_directory", state_directory)
+        object.__setattr__(
+            self,
+            "state_directory",
+            normalize_state_path(state_directory),
+        )
         object.__setattr__(
             self,
             "keyring",
