@@ -163,9 +163,7 @@ host-owned: Hermes, not proactive-mcp, creates the job, starts the agent run,
 selects the model, and delivers through its channel. The Owner may validate it
 only with a dedicated scheduled host profile containing `serve-scheduled` and
 without a simultaneous everyday profile. Do not add a Hermes adapter, package,
-handshake, session tracker, helper, or plugin-managed cron artifact, and do not
-put Hermes Native Cron in tester onboarding. Named testers must not execute the
-following recipe.
+handshake, session tracker, helper, or plugin-managed cron artifact.
 
 #### Native Cron Owner recipe
 
@@ -247,8 +245,7 @@ hermes cron list
 hermes mcp list
 ```
 
-Do not ship this job or copy it into tester sheets. Do not treat this Owner
-result as a substitute for Grok or Codex acceptance.
+Do not treat this Owner result as a substitute for Grok or Codex acceptance.
 
 ### Claude Code Desktop
 

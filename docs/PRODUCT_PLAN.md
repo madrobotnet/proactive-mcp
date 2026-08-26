@@ -45,16 +45,16 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | 코드베이스 | 새 저장소, MCP-first. 기존 repo는 참고자료만 |
 | 언어/스택 | Python ≥3.11, 공식 MCP Python SDK, SQLite, uv |
 | 전달 구조 | 에이전트 의존 — 데몬은 로컬 sync·규칙 평가·queue·문서화된 OS 폴백만 수행하고 에이전트/LLM을 절대 호출하지 않음. 주 전달은 이미 실행 중이거나 호스트가 예약한 에이전트가 MCP 도구를 명시적으로 호출한 뒤 자체 채널로 수행 |
-| Hermes Agent | Grok CLI와 Codex CLI는 클로즈드 알파의 기본 **interactive stdio** 경로. 자동 예약은 §5.3의 host isolation 조건을 충족할 때만 가능. Hermes는 Owner가 직접 수행하는 일반 stdio MCP 상호운용 및 host-owned Hermes Native Cron 검증만 허용하며 테스터 온보딩 경로에서는 제외. 별도 adapter, helper, profile, plugin, handshake, 세션 추적, 배포 cron artifact는 만들지 않음 (2026-08-25 Owner 결정, 2026-08-26 예약 경계 명확화) |
+| Hermes Agent | Grok CLI와 Codex CLI는 기본 **interactive stdio** 경로. 자동 예약은 §5.3의 host isolation 조건을 충족할 때만 가능. Hermes는 Owner가 직접 수행하는 일반 stdio MCP 상호운용 및 host-owned Hermes Native Cron 검증만 허용. 별도 adapter, helper, profile, plugin, handshake, 세션 추적, 배포 cron artifact는 만들지 않음 (2026-08-25 Owner 결정, 2026-08-26 예약 경계 명확화) |
 | 전달 영수증 | `proactive_check`는 짧은 lease로 상황을 예약하고, 호스트가 결과를 받은 뒤 검토한 lease 전체를 `confirm_delivery`로 확정. 사용자에게 보여 주지 않기로 확신한 후보도 같은 전체 lease 확정에 포함. 미확인 lease는 만료 후 pending으로 복귀 (2026-08-24 Owner 보안 수정 승인, 2026-08-25 전체 lease 명확화) |
 | 호스트 전달 판단 | 서버의 `reply_deadline`은 행동 판정이 아니라 보수적인 후보. 호스트가 사용자별 action filter, 불확실성 처리, 사용자 언어 전달을 담당하며 MCP 도구명·설명·필드·값은 영어를 유지. 일상 대화와 예약 대화는 각각 `serve`, `serve-scheduled` 하나만 로드하고 한 대화에 둘을 함께 로드하지 않음. 이 per-run profile 격리는 plugin 밖의 host/operator 책임이며 plugin은 host를 시작하거나 설정 격리를 검증하지 않음 (2026-08-26 Owner 명확화) |
 | MVP 범위 | 읽기 + 알림만. 외부 쓰기는 2단계 |
 | MVP Situation | Reply Deadline, Calendar Conflict, Personal Occasion 3종 |
 | 메모리 | MVP 포함 — `remember`/`recall` 도구, 상황 감지가 메모리를 근거로 사용 |
-| Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트(BYO), read-only scope만 — 공개 후 **유일한** 기본 경로. Owner OAuth JSON은 클로즈드 알파 핸드오프에서만 썼고, 공개 패키지·wheel·저장소에 넣지 않는다 (2026-08-20 확정, 2026-08-26 공개 준비에서 재확인) |
+| Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트(BYO), read-only scope만 — **유일한** 기본 경로. Owner OAuth JSON은 공개 패키지·wheel·저장소에 넣지 않는다 (2026-08-20 확정, 2026-08-26 공개 준비에서 재확인) |
 | Gmail reply_deadline 읽기 창 | 기본 최근 7일. `[sources]`의 `gmail_lookback_days`로 조정 가능. 7일보다 오래된 미회신·날짜성 마감 백로그는 V1 범위 밖이며, 설정된 창 안의 불완전 읽기는 §9에 따라 계속 degraded (2026-08-24 Owner 결정 #25 C(7d configurable)) |
 | 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 — 구체 기준은 §7 폴백 항목 (critical만·30분, 2026-08-21 확정 #14) |
-| 배포 | 사용자 문서의 정본 artifact는 PyPI `proactive-mcp` 0.1.0 + `uvx`. 클로즈드 알파 wheel은 끝난 경로. 저장소 public과 실제 `uv publish`는 Owner가 같은 날 실행한다. 에이전트는 승인 없이 visibility 변경이나 게시를 하지 않는다 (2026-08-26 #32, Owner: 문서는 PyPI 전제로 작성) |
+| 배포 | 사용자 문서의 정본 artifact는 PyPI `proactive-mcp` 0.1.0 + `uvx`. 저장소 public과 실제 `uv publish`는 Owner가 같은 날 실행한다. 에이전트는 승인 없이 visibility 변경이나 게시를 하지 않는다 (2026-08-26 #32, Owner: 문서는 PyPI 전제로 작성) |
 | 사람 온보딩 | 첫 경로는 쓰는 에이전트에 붙여 넣기 + BYO. 에이전트가 설치·등록·검증을 맡고, 사람은 Google 동의와 blocker 보고만 한다. 사람은 `setup` / `google-smoke` / `mcp add`를 몰라도 된다. 기본 경로에는 wizard, 수동 `mcp add`, JSON 편집이 없다 (2026-08-24 Owner 결정 #26, 2026-08-26 공개 준비) |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
 
@@ -141,7 +141,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 
 - `proactive_check`가 상황을 반환한 것만으로는 `delivered`로 기록하지 않는다. 호스트는 반환된 모든 행을 검토한 뒤 확정하기로 선택할 때만 응답의 `receipt_token`을 `confirm_delivery`에 전달해 lease 전체를 확정한다. 사용자의 대화에 보여 주지 않기로 확신한 후보도 전체 lease에 포함된다. 이후 동일 상황은 기본적으로 재반환되지 않는다(에이전트가 `list_situations`로는 조회 가능).
 - 활성 lease 동안에는 다른 에이전트와 OS 폴백이 같은 상황을 가져가지 않는다. 호스트가 결과를 확인하지 못하면 lease가 만료되어 pending으로 다시 제공되므로 전송 실패가 알림 유실로 바뀌지 않는다.
-- 기존에 `proactive_check`만 호출하던 private-alpha 연동은 반드시 `confirm_delivery` 호출을 추가해야 한다. 이를 생략하면 안전한 실패 방식으로 lease 만료 후 상황이 재제공된다.
+- `proactive_check`만 호출하는 연동은 반드시 `confirm_delivery` 호출을 추가해야 한다. 이를 생략하면 안전한 실패 방식으로 lease 만료 후 상황이 재제공된다.
 - `delivered` 후 사용자 반응 없이 상황이 소스에서 해소되면 `resolved`로 자동 정리한다.
 
 ### 5.2 세션 시작 전달
@@ -172,7 +172,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 |---|---|---|---|
 | Grok CLI 0.2.112 | O, 하지만 Grok/Claude/Cursor/project source를 병합 | host 밖 OS scheduler 가능 | immutable per-run 격리를 증명할 수 없으므로 unattended scheduling 광고·지원 금지. dedicated restricted profile의 수동 대화만 가능 |
 | Codex CLI | O — config layer 사용 | host 밖 OS scheduler 가능 | plugin은 config layer 격리를 보증하지 않음. 설치된 host/operator가 dedicated per-run profile을 외부에서 보장할 때만 자동 사용, 아니면 예약하지 않음 |
-| Hermes | Owner 검증용 stdio만 | Hermes Native Cron | Owner 전용·host-owned. 테스터 경로 제외, plugin-managed cron/adapter 없음 |
+| Hermes | Owner 검증용 stdio만 | Hermes Native Cron | Owner 전용·host-owned. plugin-managed cron/adapter 없음 |
 | Claude Code Desktop | O | 로컬 예약 작업 | 해당 version이 per-task dedicated MCP profile을 제공할 때만 가능. 아니면 예약하지 않음 |
 | ChatGPT 웹/데스크톱 | X — 웹은 원격 HTTPS 커넥터만. 데스크톱은 stdio를 표방하나 도구가 채팅 세션에 노출되지 않는 미해결 버그([openai/codex#38162](https://github.com/openai/codex/issues/38162)) | Tasks (클라우드 실행) | **V2 HTTP transport 대기** |
 | Claude 클라우드 Routines | X — 로컬 파일·프로세스 접근 없음 | O | **V2 HTTP transport 대기** |
@@ -286,9 +286,9 @@ CREATE TABLE memory_items (
 | **M3 Situation 엔진** | 3종 감지기, Attention 정책(Quiet Hours·예산·cooldown·dedupe), 상태 머신 | fake clock 결정론 테스트로 3종 감지·정책 검증 |
 | **M4 전달** | `proactive_check`/`confirm_delivery`/`acknowledge`/`snooze`/`mute`, watcher 데몬, degraded 모드, OS 알림 폴백 | **Mother's Birthday E2E (hermetic) 통과** (§11.3) |
 | **M5 연동 레시피** | agent-owned lifecycle과 profile isolation 계약, 수동 restricted flow, host-native scheduling 조건 문서화. plugin이 Grok/Codex/Hermes/model을 시작·선택·검증하는 wrapper는 없음 | agent-off 시 host process/conversation 미생성 및 pending 유지, 이후 실행 중인 host의 명시적 restricted MCP 호출로 queue 회수 실증. 자동 예약은 dedicated per-run profile을 보장하는 host에서만 host-owned로 검증 |
-| **M6 클로즈드 알파 릴리스** | README 정비, GCP OAuth 설정 가이드, wheel 빌드와 테스터 배포 절차 (PyPI 미사용) | 새 환경에서 clean install → 온보딩 완료까지 15분 이내, 지정 테스터에게 전달 가능한 상태 |
+| **M6 온보딩** | README 정비, GCP OAuth 설정 가이드 | 새 환경에서 clean install → 온보딩 완료까지 15분 이내 |
 
-**M6 이후 — 공개 전환 (Owner 결정):** M6(#7)는 완료로 닫혀 있다. 2026-08-26 Owner CLI: 사용자 문서는 PyPI에 올린다는 전제로 쓴다. README·INTEGRATIONS·SETUP_GOOGLE은 `uvx proactive-mcp`와 BYO를 현재 경로로 적고, “아직 PyPI 없음” 경고와 closed-alpha 배지는 쓰지 않는다.
+**M6 이후 — 공개 전환 (Owner 결정):** M6(#7)는 완료로 닫혀 있다. 2026-08-26 Owner CLI: 사용자 문서는 PyPI에 올린다는 전제로 쓴다. README·INTEGRATIONS·SETUP_GOOGLE은 `uvx proactive-mcp`와 BYO를 현재 경로로 적는다.
 
 저장소 `public` 전환과 `uv publish`는 문서와 별개다. PyPI만 올리면 저장소가 private여도 패키지가 공개되므로, 게시는 저장소 공개와 같은 날에 끝낸다. 에이전트는 Owner 승인 없이 둘 다 실행하지 않는다.
 
@@ -325,8 +325,8 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 
 ## 12. 배포·온보딩
 
-- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.1.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 클로즈드 알파 wheel은 끝난 경로다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시와 저장소 public은 Owner가 같은 날 실행한다.
-- **기존 에이전트에 붙여 넣기 + BYO:** 사람은 쓰는 에이전트에 붙여 넣기 블록 하나를 넣고 Google 동의만 한다. 에이전트가 `uvx` 설치·MCP 등록·읽기 전용 Google 연결·검증을 맡는다. 공개 후 Google은 BYO만 — Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 클로즈드 알파에서만 Owner OAuth JSON을 별도 채널로 전달했다. 토큰과 데이터는 사용자 머신에만 저장된다.
+- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.1.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시와 저장소 public은 Owner가 같은 날 실행한다.
+- **기존 에이전트에 붙여 넣기 + BYO:** 사람은 쓰는 에이전트에 붙여 넣기 블록 하나를 넣고 Google 동의만 한다. 에이전트가 `uvx` 설치·MCP 등록·읽기 전용 Google 연결·검증을 맡는다. Google은 BYO만 — Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 토큰과 데이터는 사용자 머신에만 저장된다.
 - **권장 데몬:** 에이전트가 MCP 등록과 setup을 마친 뒤 `proactive-mcp daemon` local service를 등록한다. 데몬은 sync·평가·queue·문서화된 OS 폴백만 담당하며 agent/LLM을 호출하거나 prompt를 보내지 않는다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, periodic sync와 폴백 알림은 동작하지 않는다.
 - **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고 §5.2에 따라 전체 후보를 검토한다. 반환값에 `receipt_token`이 있고 lease를 확정하기로 했다면 사용자에게 보여 주지 않기로 확신한 후보까지 포함한 lease 전체를 `confirm_delivery(receipt_token)`로 한 번 확정한다. 불확실한 후보는 알리거나 전체 lease를 미확정 상태로 두거나 일상 대화에서 확정 후 snooze하며, 비실행 항목이라고 조용히 버리지 않는다. 토큰이 없으면 확정하지 않는다.
 - **언어와 대화 분리:** MCP 도구명·설명·필드·값은 영어를 유지하고 호스트는 사용자의 언어로 말한다. 일상 대화에는 `serve`만, 별도 수동/예약 대화에는 `serve-scheduled`만 로드하며 한 대화에 두 프로필을 함께 로드하지 않는다. Host/operator가 이 isolation과 agent lifecycle을 소유한다. Host가 dedicated per-run profile을 제공하지 못하면 자동 예약은 지원하지 않고 구성하지 않는다. Grok 0.2.112 merged source와 Codex config layer의 immutable isolation을 plugin이 보장한다고 주장하지 않는다.
