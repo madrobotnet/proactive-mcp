@@ -3,6 +3,13 @@ name = "proactive-mcp"
 version = "0.1.0"
 description = "A proactive layer for every AI agent."
 readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Kyungwoo Seo"},
+]
+maintainers = [
+    {name = "Kyungwoo Seo"},
+]
 requires-python = ">=3.11"
 dependencies = [
     "google-auth>=2.0,<3.0",
@@ -13,6 +20,11 @@ dependencies = [
     "tzdata>=2024.1 ; sys_platform == 'win32'",
     "tzlocal>=5.0,<6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/madrobotnet/proactive-mcp"
+Repository = "https://github.com/madrobotnet/proactive-mcp"
+Issues = "https://github.com/madrobotnet/proactive-mcp/issues"
 
 [project.scripts]
 proactive-mcp = "proactive_mcp.cli:entrypoint"

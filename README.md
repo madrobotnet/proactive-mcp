@@ -8,14 +8,11 @@ A local-first MCP server that turns read-only signals and local memory into grou
 
 <strong>English</strong> · <a href="README.ko.md">한국어</a>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![Closed alpha](https://img.shields.io/badge/status-closed%20alpha-D97706?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square)
 
-[Why](#why-proactive-mcp) · [How it works](#how-it-works) · [Get started](#get-started) · [Connect an agent](#connect-an-agent) · [Alpha testers](#closed-alpha-testers) · [Documentation](#documentation)
+[Why](#why-proactive-mcp) · [How it works](#how-it-works) · [Get started](#get-started) · [Connect an agent](#connect-an-agent) · [Documentation](#documentation)
 
 </div>
-
-> [!IMPORTANT]
-> **proactive-mcp is in closed alpha.** The package isn't on PyPI yet, so the public package path below is written for launch day and doesn't work today. What works right now is a source checkout or the private tester artifact in [Closed-alpha testers](#closed-alpha-testers).
 
 ## Why proactive-mcp?
 
@@ -69,22 +66,15 @@ flowchart LR
 
 ## Get started
 
-### Public release path (not active yet)
-
-> [!WARNING]
-> `uvx proactive-mcp` becomes available only after the Owner approves the public release. During the closed alpha it fails by design because nothing is published to PyPI.
-
-After public release, open the local agent you already use and paste this request:
+Open the local agent you already use and paste the block below. You only handle Google consent. You need your own Google Cloud Desktop OAuth client (BYO).
 
 ```text
-Install proactive-mcp with uvx, register it as a local stdio MCP server for this agent with absolute paths, complete its read-only Google setup, start the recommended watcher, and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not configure automated scheduling unless this host guarantees a dedicated per-run MCP profile; proactive-mcp must never launch or verify the host. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
+Install proactive-mcp with uvx from PyPI. Register it as a local stdio MCP server for this agent using absolute paths. Complete read-only Google authorization using my own Google Cloud Desktop OAuth client JSON (BYO). Do not use or request someone else's client secret. Start the recommended watcher and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md and https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not configure automated scheduling unless this host guarantees a dedicated per-run MCP profile; proactive-mcp must never launch or verify the host. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
 ```
 
-You approve the Google consent screen. The expected status progression is `not_configured`, then `never_synced`, then `ok` after the first successful read. For BYO Google OAuth details, see [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
+You approve the Google consent screen. After a successful first read the sources should show `ok`. Command names and host recipes live in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). BYO Google details for the agent are in [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
 
-### Source checkout
-
-Repository collaborators can ask their existing agent to install from its checkout and complete the same request. Give the agent the checkout's absolute path; it can follow the source-specific instructions in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). The public path uses the package through `uvx`; the alpha path uses the delivered artifact.
+If you are developing from a checkout, give the agent that checkout's absolute path. The public install is `uvx` from PyPI.
 
 ## Connect an agent
 
@@ -96,7 +86,7 @@ The host loads `serve` only in an interactive everyday conversation and `serve-s
 |:---|:---|
 | Grok CLI 0.2.112 | Manual dedicated restricted profile only; merged config sources cannot prove immutable per-run isolation, so unattended scheduling is not advertised |
 | Codex CLI | Local stdio; config layers are not claimed isolated by this plugin, so schedule only when the host/operator independently guarantees a dedicated per-run profile |
-| Hermes Agent | Owner-only, host-owned Hermes Native Cron validation; not a tester path |
+| Hermes Agent | Owner-only Native Cron. Not a tester or general-user path |
 | Claude Code Desktop | Local stdio; local tasks only when that version provides a dedicated per-task MCP profile |
 
 The daemon may perform local sync, deterministic evaluation, queue maintenance, and the documented critical-only OS fallback. It never invokes an agent/LLM or sends prompts. Exact host responsibilities and command shapes are in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
@@ -115,29 +105,6 @@ When an agent calls `proactive_check`:
 
 This receipt rule keeps delivery history accurate across crashes, retries, and multiple agents.
 
-## Closed-alpha testers
-
-Thank you for validating this path before public release.
-
-> [!TIP]
-> Receive the private wheel first, its SHA-256 checksum through a different authenticated channel, and, unless you are validating BYO, the OAuth client JSON in a separate private message. Do not install anything until the checksum matches.
-
-### Use your OS tester sheet
-
-The Owner sends the OS tester sheet alongside the wheel. Open [`docs/testers/README.md`](docs/testers/README.md), choose your operating system, and paste exactly its one block into the agent you already use. The agent performs installation, MCP registration, and setup. You only handle the Google consent screen and report blocked steps. Private handoff, evidence, and rollback rules are in [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md).
-
-### Alpha completion checklist
-
-- The wheel checksum matches the Owner's value.
-- `--help` shows `serve`, `serve-scheduled`, `status`, `setup`, `disconnect`, `google-smoke`, `daemon`, and `service`.
-- `status` reports migration version `10` and the expected database path.
-- Gmail and Calendar become `ok` after a successful read.
-- The agent can call `get_status`, memory tools, and `proactive_check`.
-- No database, credentials, raw logs, message content, or screenshots are attached to a public issue.
-- Clean install through first working agent connection is timed and reported.
-
-Find safe evidence and rollback instructions in [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md).
-
 ## Tool surface
 
 ### Memory
@@ -148,27 +115,16 @@ Find safe evidence and rollback instructions in [`docs/RELEASE_ALPHA.md`](docs/R
 
 `proactive_check` · `confirm_delivery` · `list_situations` · `get_situation` · `acknowledge_situation` · `snooze_situation` · `mute_situation` · `get_status`
 
-### Command line
-
-| Command | What it does |
-|:---|:---|
-| `serve` | Run the MCP server over stdio |
-| `serve-scheduled` | Run the restricted MCP profile over stdio; does not schedule or launch an agent |
-| `status` | Print connection and database status as JSON |
-| `setup` | Connect read-only Google sources (`--reauth`, `--headless`, `--client-secrets PATH`) |
-| `google-smoke` | Confirmed read-only smoke test against a real account |
-| `daemon` | Run local sync/evaluation/queue and OS-fallback work (`--once`, `--poll-interval-minutes`); never launches an agent |
-
 ## Release status
 
-| Area | Closed alpha now | Public release target |
-|:---|:---|:---|
-| Distribution | Private tester artifact or source checkout | PyPI package and public repository |
-| Google OAuth | Owner-provided client or BYO validation | BYO OAuth client by default |
-| Validation | Named testers, Linux automation, Owner Windows smoke | Published support matrix |
-| Data model | Local SQLite with migrations and private-path checks | Same local-first contract |
+| Area | Now |
+|:---|:---|
+| Distribution | PyPI package `proactive-mcp` 0.1.0, installed with `uvx` |
+| Google OAuth | Your own Desktop OAuth client (BYO) |
+| Hosts | Grok CLI and Codex CLI for interactive use; Hermes Native Cron is Owner-only |
+| Data | Local SQLite under `~/.proactive-mcp/` |
 
-The public transition requires Owner approval after the designated alpha tests pass. Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md).
+Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md).
 
 ## Development
 
@@ -188,13 +144,17 @@ Python 3.11 or newer is required. Tests use fake clocks and local fixtures; norm
 | Guide | Purpose |
 |:---|:---|
 | [`README.ko.md`](README.ko.md) | Korean README |
-| [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth setup |
-| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Grok, Codex, Hermes, Claude Desktop, and schedulers |
-| [`docs/testers/README.md`](docs/testers/README.md) | Closed-alpha OS tester sheets |
-| [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) | Private wheel build, handoff, evidence, and rollback |
-| [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Owner-only Windows smoke and low-level diagnostic reference |
+| [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (the public default) |
+| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Host recipes and command shapes for agents |
+| [`docs/testers/README.md`](docs/testers/README.md) | Historical closed-alpha OS sheets; not the first path |
+| [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) | Historical private-wheel record; not the first path |
+| [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Owner-only diagnostics; not a tester or user path |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | Memory model and tool contracts |
 | [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) | Canonical product and release plan |
+
+## Closed-alpha record
+
+Named testers used a private wheel and an OS sheet in [`docs/testers/`](docs/testers/README.md). That path is finished. Keep the sheets and [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) as history. Do not treat them as the public first path. Hermes Native Cron stays Owner-only.
 
 ## License
 

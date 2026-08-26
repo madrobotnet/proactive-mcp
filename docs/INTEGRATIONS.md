@@ -5,10 +5,10 @@ situations, but it does not contain an agent, model, conversation runtime, or
 message-delivery channel. It never launches Grok, Codex, Hermes, another host
 agent, or an LLM, and it never sends a prompt to one.
 
-Named closed-alpha testers start with the matching sheet in
-[`docs/testers/`](testers/README.md). The examples here are host/operator
-reference. The alpha artifact is private; `uvx proactive-mcp` is a future public
-release path.
+Install from PyPI with `uvx proactive-mcp`. A source checkout
+(`uv run --directory …`) is for development. Closed-alpha wheels in
+[`docs/testers/`](testers/README.md) are history, not the first user path.
+Hermes Native Cron is Owner-only.
 
 ## Runtime ownership
 
@@ -86,23 +86,27 @@ received.
 
 ## Installation command shapes
 
-Use an absolute executable path in host MCP configuration. A source checkout
-uses:
+Use an absolute executable path in host MCP configuration. The public shape
+is:
+
+```bash
+uvx proactive-mcp serve
+```
+
+The restricted registration is the same command with `serve-scheduled`:
+
+```bash
+uvx proactive-mcp serve-scheduled
+```
+
+A development checkout uses:
 
 ```bash
 /home/you/.local/bin/uv run --directory /home/you/src/proactive-mcp proactive-mcp serve
 ```
 
-A closed-alpha wheel installed in a private virtual environment uses:
-
-```bash
-/home/you/venvs/proactive/bin/proactive-mcp serve
-```
-
-The restricted registration changes only the final argument to
-`serve-scheduled`. Windows uses the matching absolute
-`C:\Users\you\venvs\proactive\Scripts\proactive-mcp.exe` path. V1 supports local
-stdio only; do not configure an HTTP URL.
+Windows uses the matching absolute `uvx` path. V1 supports local stdio only;
+do not configure an HTTP URL.
 
 ## Host notes
 
@@ -133,17 +137,20 @@ the two surfaces:
 
 ```toml
 [mcp_servers.proactive]
-command = "/home/you/venvs/proactive/bin/proactive-mcp"
-args = ["serve"]
+command = "uvx"
+args = ["proactive-mcp", "serve"]
 enabled = true
 default_tools_approval_mode = "prompt"
 
 [mcp_servers.proactive_scheduled]
-command = "/home/you/venvs/proactive/bin/proactive-mcp"
-args = ["serve-scheduled"]
+command = "uvx"
+args = ["proactive-mcp", "serve-scheduled"]
 enabled = false
 default_tools_approval_mode = "approve"
 ```
+
+A development checkout substitutes
+`uv run --directory /home/you/src/proactive-mcp proactive-mcp`.
 
 Never auto-approve the full profile. Automated scheduled use is supported only
 if the installed Codex host and operator can create a dedicated per-run MCP
@@ -266,8 +273,11 @@ HTTP, adapters, or a server-side LLM.
 The recommended local watcher is:
 
 ```bash
-/home/you/venvs/proactive/bin/proactive-mcp daemon
+uvx proactive-mcp daemon
 ```
+
+A development checkout uses that environment's `proactive-mcp daemon`
+instead.
 
 A user service, LaunchAgent, or Windows scheduled task may keep **this daemon
 process** running. That service starts proactive-mcp local background work only;
