@@ -31,11 +31,14 @@ def current_executable() -> Path | None:
         os.close(descriptor)
     trusted_owner = True if os.name == "nt" else observed.st_uid in (0, os.getuid())
     executable = True if os.name == "nt" else bool(observed.st_mode & _EXECUTE_BITS)
+    trusted_permissions = (
+        True if os.name == "nt" else not observed.st_mode & _UNTRUSTED_WRITE_BITS
+    )
     trusted = (
         stat.S_ISREG(observed.st_mode)
         and trusted_owner
         and observed.st_nlink == 1
-        and not observed.st_mode & _UNTRUSTED_WRITE_BITS
+        and trusted_permissions
         and executable
         and (current.st_dev, current.st_ino) == (observed.st_dev, observed.st_ino)
         and current.st_nlink == 1

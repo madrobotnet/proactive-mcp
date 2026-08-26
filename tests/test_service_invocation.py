@@ -8,6 +8,10 @@ import pytest
 
 from proactive_mcp.cli.service_invocation import current_executable
 
+_UNTRUSTED_KINDS = ["relative", "symlink", "hardlink"]
+if os.name != "nt":
+    _UNTRUSTED_KINDS.append("writable")
+
 
 def _executable(path: Path) -> Path:
     _ = path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -26,7 +30,7 @@ def test_current_absolute_invocation_is_used_without_path(
     assert current_executable() == executable
 
 
-@pytest.mark.parametrize("kind", ["relative", "symlink", "hardlink", "writable"])
+@pytest.mark.parametrize("kind", _UNTRUSTED_KINDS)
 def test_ambiguous_or_untrusted_invocation_is_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
