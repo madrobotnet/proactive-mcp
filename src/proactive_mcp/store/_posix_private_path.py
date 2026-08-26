@@ -116,6 +116,20 @@ def enforce_private_sidecars(directory_fd: int, path: Path) -> None:
 
 def _secure_existing_sidecar(directory_fd: int, name: str, path: Path) -> None:
     """Secure one sidecar through a stable descriptor without following links."""
+    if sys.platform == "darwin":
+        try:
+            existing = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            raise UnsafeDatabasePathError(
+                path,
+                "database sidecar cannot be inspected safely",
+            ) from error
+        verify_private_file(existing, path, "database sidecar")
+        if stat.S_IMODE(existing.st_mode) == _PRIVATE_FILE_MODE:
+            return
+
     flags = os.O_PATH if sys.platform == "linux" else os.O_RDONLY
     try:
         descriptor = os.open(name, flags | os.O_NOFOLLOW, dir_fd=directory_fd)

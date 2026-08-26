@@ -65,6 +65,36 @@ def test_sidecar_enforcement_rejects_hardlinks(tmp_path: Path, suffix: str) -> N
         os.close(directory_fd)
 
 
+def test_darwin_does_not_reopen_private_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "proactive.db"
+    sidecar = tmp_path / "proactive.db-shm"
+    database.touch(mode=0o600)
+    sidecar.touch(mode=0o600)
+    original_open = os.open
+
+    def reject_sidecar_open(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if path == sidecar.name:
+            raise AssertionError
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(os, "open", reject_sidecar_open)
+    directory_fd = os.open(tmp_path, os.O_RDONLY)
+    try:
+        enforce_private_sidecars(directory_fd, database)
+    finally:
+        os.close(directory_fd)
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux deterministic open race")
 def test_database_replacement_during_sqlite_open_is_rejected(
     tmp_path: Path,
