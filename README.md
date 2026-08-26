@@ -146,15 +146,8 @@ Python 3.11 or newer is required. Tests use fake clocks and local fixtures; norm
 | [`README.ko.md`](README.ko.md) | Korean README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (the public default) |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Host recipes and command shapes for agents |
-| [`docs/testers/README.md`](docs/testers/README.md) | Historical closed-alpha OS sheets; not the first path |
-| [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) | Historical private-wheel record; not the first path |
-| [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Owner-only diagnostics; not a tester or user path |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | Memory model and tool contracts |
 | [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) | Canonical product and release plan |
-
-## Closed-alpha record
-
-Named testers used a private wheel and an OS sheet in [`docs/testers/`](docs/testers/README.md). That path is finished. Keep the sheets and [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) as history. Do not treat them as the public first path. Hermes Native Cron stays Owner-only.
 
 ## License
 

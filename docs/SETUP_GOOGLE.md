@@ -541,7 +541,6 @@ since the URL carries your client ID.
 
 You're authorized, but nothing is watching yet. Register proactive-mcp with
 your agent and set up the local-only watcher daemon using
-[`docs/INTEGRATIONS.md`](INTEGRATIONS.md). [`docs/WINDOWS_SMOKE_TEST.md`](WINDOWS_SMOKE_TEST.md)
-is Owner-only diagnostics, not a tester or public path. The product decisions
+[`docs/INTEGRATIONS.md`](INTEGRATIONS.md). The product decisions
 behind the read-only, BYO design are in
 [`docs/PRODUCT_PLAN.md`](PRODUCT_PLAN.md) sections 3, 9, and 12, in Korean.

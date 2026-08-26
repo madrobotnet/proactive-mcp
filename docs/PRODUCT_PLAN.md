@@ -325,7 +325,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 
 ## 12. 배포·온보딩
 
-- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.1.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 클로즈드 알파 wheel은 끝난 경로이며 테스터 기록(`docs/RELEASE_ALPHA.md`, `docs/testers/`)으로만 남긴다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시와 저장소 public은 Owner가 같은 날 실행한다.
+- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.1.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 클로즈드 알파 wheel은 끝난 경로다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시와 저장소 public은 Owner가 같은 날 실행한다.
 - **기존 에이전트에 붙여 넣기 + BYO:** 사람은 쓰는 에이전트에 붙여 넣기 블록 하나를 넣고 Google 동의만 한다. 에이전트가 `uvx` 설치·MCP 등록·읽기 전용 Google 연결·검증을 맡는다. 공개 후 Google은 BYO만 — Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 클로즈드 알파에서만 Owner OAuth JSON을 별도 채널로 전달했다. 토큰과 데이터는 사용자 머신에만 저장된다.
 - **권장 데몬:** 에이전트가 MCP 등록과 setup을 마친 뒤 `proactive-mcp daemon` local service를 등록한다. 데몬은 sync·평가·queue·문서화된 OS 폴백만 담당하며 agent/LLM을 호출하거나 prompt를 보내지 않는다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, periodic sync와 폴백 알림은 동작하지 않는다.
 - **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고 §5.2에 따라 전체 후보를 검토한다. 반환값에 `receipt_token`이 있고 lease를 확정하기로 했다면 사용자에게 보여 주지 않기로 확신한 후보까지 포함한 lease 전체를 `confirm_delivery(receipt_token)`로 한 번 확정한다. 불확실한 후보는 알리거나 전체 lease를 미확정 상태로 두거나 일상 대화에서 확정 후 snooze하며, 비실행 항목이라고 조용히 버리지 않는다. 토큰이 없으면 확정하지 않는다.

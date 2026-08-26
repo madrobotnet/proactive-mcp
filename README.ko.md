@@ -146,15 +146,8 @@ Python 3.11 이상이 필요합니다. 테스트는 fake clock과 로컬 fixture
 | [`README.md`](README.md) | 영어 README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (공개 후 기본) |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | 에이전트가 읽는 호스트 레시피와 명령 형태 |
-| [`docs/testers/README.md`](docs/testers/README.md) | 클로즈드 알파 OS 시트 기록. 첫 경로가 아닙니다 |
-| [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md) | 비공개 wheel 기록. 첫 경로가 아닙니다 |
-| [`docs/WINDOWS_SMOKE_TEST.md`](docs/WINDOWS_SMOKE_TEST.md) | Owner 전용 진단. 테스터·일반 사용자 경로가 아닙니다 |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | 메모리 모델과 도구 계약 |
 | [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) | 제품·릴리스 정본 기획서 |
-
-## 클로즈드 알파 기록
-
-지정 테스터는 비공개 wheel과 [`docs/testers/`](docs/testers/README.md) OS 시트를 썼습니다. 그 경로는 끝났습니다. 시트와 [`docs/RELEASE_ALPHA.md`](docs/RELEASE_ALPHA.md)는 기록으로 둡니다. 공개 첫 경로로 쓰지 마세요. Hermes Native Cron은 Owner 전용입니다.
 
 ## 라이선스
 
