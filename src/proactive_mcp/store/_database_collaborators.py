@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -84,6 +85,9 @@ def open_collaborators(
             verify_database_identity(directory_fd, path, database_fd)
             enforce_private_sidecars(directory_fd, path)
             verify_database_identity(directory_fd, path, database_fd)
+        if database_fd is not None and sys.platform == "darwin":
+            os.close(database_fd)
+            database_fd = None
     except (
         OSError,
         sqlite3.Error,
@@ -125,14 +129,15 @@ def close_connection(
 ) -> None:
     """Revalidate close boundaries and release retained filesystem identities."""
     database_fd, path = database_identity
+    validate_identity = validate and database_fd is not None
     try:
         if connection is not None:
             try:
-                if validate:
+                if validate_identity:
                     verify_database_identity(directory_fd, path, database_fd)
             finally:
                 connection.close()
-            if validate:
+            if validate_identity:
                 verify_database_identity(directory_fd, path, database_fd)
     finally:
         if database_guard is not None:
