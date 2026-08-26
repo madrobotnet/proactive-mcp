@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import os
-import shutil
 import sqlite3
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from proactive_mcp.cli.service_invocation import current_executable
 from proactive_mcp.cli.service_models import (
     HeartbeatState,
     LingerState,
@@ -83,6 +83,9 @@ def run_service(action: ServiceAction) -> int:
     except OSError:
         response = _result(action, "failed", code="io_failed")
         success = False
+    except ValueError:
+        response = _result(action, "failed", code="invalid_value")
+        success = False
     return _emit(response, success=success)
 
 
@@ -96,7 +99,7 @@ def _layout() -> _Layout:
 
 
 def _install(layout: _Layout) -> tuple[ServiceResponse, bool]:
-    executable = shutil.which("proactive-mcp")
+    executable = current_executable()
     if executable is None:
         return _result("install", "failed", code="binary_not_found"), False
     previous = layout.unit.read_text(encoding="utf-8") if layout.unit.exists() else None
@@ -107,7 +110,7 @@ def _install(layout: _Layout) -> tuple[ServiceResponse, bool]:
         active=_MANAGER.is_active(),
     )
     layout.unit.parent.mkdir(parents=True, exist_ok=True)
-    rendered = render_user_unit(Path(executable).resolve(), layout.database)
+    rendered = render_user_unit(executable, layout.database)
     if previous != rendered:
         _ = layout.unit.write_text(rendered, encoding="utf-8")
     if not (_MANAGER.reload() and _MANAGER.enable() and _MANAGER.start()):
