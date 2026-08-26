@@ -2,22 +2,26 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
-from datetime import datetime, timedelta
-from threading import Barrier
+from dataclasses import dataclass
+from datetime import UTC
+from threading import Barrier, Event
 from typing import TYPE_CHECKING
 
 import pytest
 
-import proactive_mcp.store._situation_claim as claim_module
-from proactive_mcp.store import (
-    DeliveryClaim,
-    DeliveryReceiptError,
-    Detection,
-    InvalidSituationTransitionError,
-    Situation,
-    SituationEvidence,
-    Store,
+from proactive_mcp.delivery.evaluation import (
+    EvaluationDependencies,
+    EvaluationPass,
+    EvaluationService,
+    PreparedSources,
+)
+from proactive_mcp.situations.engine import SituationEngine
+from proactive_mcp.situations.inputs import EngineInputs, SourceSnapshot
+from proactive_mcp.store import Store
+from proactive_mcp.store.sync import (
+    SourceReadDiagnostics,
+    SourceReadReason,
+    SourceReadReasonCount,
 )
 from tests.situation_test_support import FakeClock, utc_datetime
 
@@ -25,279 +29,222 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _detection(
-    key: str,
-    *,
-    expires_at: datetime | None = None,
-) -> Detection:
-    return Detection(
-        situation_type="reply_deadline",
-        dedupe_key=key,
-        priority="routine",
-        title="Fixture reply deadline",
-        why_now="Fixture threshold elapsed",
-        evidence=SituationEvidence(facts={"source_id": key}),
-        expires_at=expires_at,
+def _diagnostics(
+    request_count: int,
+    reason: SourceReadReason,
+) -> SourceReadDiagnostics:
+    return SourceReadDiagnostics(
+        outcome="partial",
+        request_count=request_count,
+        page_count=1,
+        projected_count=1,
+        excluded_count=1,
+        byte_budget=8_000_000,
+        reason_counts=(SourceReadReasonCount(reason, request_count),),
     )
 
 
-def _delivery_claim(clock: FakeClock, daily_budget: int) -> DeliveryClaim:
-    now = clock.now()
-    return DeliveryClaim(
-        delivered_at=now.isoformat(),
-        cooldown_after=(now - timedelta(hours=24)).isoformat(),
-        local_day_start=now.replace(hour=0).isoformat(),
-        local_day_end=(now.replace(hour=0) + timedelta(days=1)).isoformat(),
-        daily_budget=daily_budget,
-        allow_noncritical=True,
+def test_gmail_diagnostic_transaction_failure_preserves_prior_row(
+    tmp_path: Path,
+) -> None:
+    # Given: one accepted diagnostic row and a trigger interrupting replacement.
+    database = tmp_path / "situations.db"
+    prior = _diagnostics(2, "body_truncated")
+    replacement = _diagnostics(9, "pagination_limit")
+    with Store(database) as store:
+        store.record_gmail_sync(prior, error_code="degraded")
+        _ = store.connection().execute(
+            """
+            CREATE TRIGGER interrupt_gmail_diagnostic_reasons
+            BEFORE INSERT ON gmail_diagnostic_reason_counts
+            WHEN NEW.reason = 'pagination_limit'
+            BEGIN
+                SELECT RAISE(ABORT, 'synthetic interruption');
+            END
+            """
+        )
+
+        # When: SQLite aborts after the replacement transaction has begun.
+        with pytest.raises(sqlite3.IntegrityError, match="synthetic interruption"):
+            store.record_gmail_sync(replacement, error_code="degraded")
+        persisted = store.gmail_diagnostics()
+        freshness = store.get_source_sync("gmail")
+
+    # Then: rollback retains the complete prior diagnostic and freshness row.
+    assert persisted == prior
+    assert freshness.last_error_code == "degraded"
+
+
+@dataclass(frozen=True, slots=True)
+class _FixedSources:
+    inputs: EngineInputs
+
+    def prepare_sources(self) -> PreparedSources:
+        return PreparedSources(self.inputs)
+
+
+def test_rejected_delayed_generation_cannot_leak_candidate_diagnostics(
+    tmp_path: Path,
+) -> None:
+    # Given: two stores reserve Gmail generations with distinct aggregate results.
+    database = tmp_path / "situations.db"
+    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    start = Barrier(3)
+    newer_accepted = Event()
+    older_diagnostics = _diagnostics(91, "body_truncated")
+    newer_diagnostics = _diagnostics(4, "pagination_limit")
+    with Store(database, clock=clock) as reservation_store:
+        older_generation = reservation_store.reserve_source_generation("gmail")
+        newer_generation = reservation_store.reserve_source_generation("gmail")
+    older_inputs = EngineInputs(
+        gmail_threads=SourceSnapshot(
+            generation=older_generation,
+            items=(),
+            complete=False,
+        ),
+        gmail_diagnostics=older_diagnostics,
+    )
+    newer_inputs = EngineInputs(
+        gmail_threads=SourceSnapshot(
+            generation=newer_generation,
+            items=(),
+            complete=False,
+        ),
+        gmail_diagnostics=newer_diagnostics,
     )
 
-
-def test_store_persists_supported_state_transitions(tmp_path: Path) -> None:
-    # Given: pending situations for each terminal transition.
-    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    with Store(tmp_path / "situations.db", clock=clock) as store:
-        detections = tuple(
-            _detection(key, expires_at=clock.now() if key == "expire" else None)
-            for key in ("ack", "mute", "expire", "resolve")
-        )
-        assert store.situations.upsert_detections(detections).created == 4
-        by_key = {
-            situation.dedupe_key: situation
-            for situation in store.situations.list_situations()
-        }
-
-        # When: each valid state path is applied.
-        delivered_ack, delivered_mute, _ = store.situations.mark_delivered(
-            (
-                by_key["ack"].id,
-                by_key["mute"].id,
-                by_key["expire"].id,
+    def run_older() -> EvaluationPass:
+        with Store(database, clock=clock) as older_store:
+            service = EvaluationService(
+                EvaluationDependencies(
+                    SituationEngine(older_store, clock, UTC),
+                    _FixedSources(older_inputs),
+                )
             )
-        )
-        acknowledged = store.situations.acknowledge_situation(delivered_ack.id)
-        muted = store.situations.mute_situation(delivered_mute.id)
-        expired_count = store.situations.expire_lapsed()
-        resolved_count = store.situations.resolve_absent(
-            "reply_deadline",
-            {"ack", "mute", "expire"},
-        )
+            assert start.wait(timeout=10) >= 0
+            assert newer_accepted.wait(timeout=10)
+            return service.run_once()
 
-        # Then: transitions and their timestamps are durable.
-        assert acknowledged.state == "acknowledged"
-        assert acknowledged.delivered_at == clock.now().isoformat()
-        assert muted.state == "muted"
-        assert expired_count == 1
-        assert resolved_count == 1
-        expired = store.situations.get_situation(by_key["expire"].id)
-        resolved = store.situations.get_situation(by_key["resolve"].id)
-        assert expired is not None
-        assert resolved is not None
-        assert expired.state == "expired"
-        assert resolved.state == "resolved"
-
-
-def test_snoozed_situation_returns_to_pending_only_when_due(tmp_path: Path) -> None:
-    # Given: a delivered situation snoozed for one hour.
-    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    with Store(tmp_path / "situations.db", clock=clock) as store:
-        _ = store.situations.upsert_detections((_detection("snooze"),))
-        pending = store.situations.list_situations()[0]
-        delivered = store.situations.mark_delivered((pending.id,))[0]
-        snoozed = store.situations.snooze_situation(
-            delivered.id,
-            clock.now() + timedelta(hours=1),
-        )
-
-        # When: due snoozes are released before and at the exact instant.
-        before = store.situations.wake_snoozed()
-        clock.advance(timedelta(hours=1))
-        at_boundary = store.situations.wake_snoozed()
-
-        # Then: release is inclusive at the specified instant.
-        assert snoozed.state == "snoozed"
-        assert before == 0
-        assert at_boundary == 1
-        released = store.situations.get_situation(pending.id)
-        assert released is not None
-        assert released.state == "pending"
-
-
-def test_state_transition_rejects_acknowledgement_before_delivery(
-    tmp_path: Path,
-) -> None:
-    # Given: a situation that has never been delivered.
-    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    with Store(tmp_path / "situations.db", clock=clock) as store:
-        _ = store.situations.upsert_detections((_detection("invalid"),))
-        pending = store.situations.list_situations()[0]
-
-        # When/Then: acknowledgement cannot skip the delivered state.
-        with pytest.raises(InvalidSituationTransitionError):
-            _ = store.situations.acknowledge_situation(pending.id)
-
-
-def test_state_transition_rejects_snooze_and_mute_before_delivery(
-    tmp_path: Path,
-) -> None:
-    # Given: a situation that has never been delivered.
-    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    with Store(tmp_path / "situations.db", clock=clock) as store:
-        _ = store.situations.upsert_detections((_detection("invalid"),))
-        pending = store.situations.list_situations()[0]
-
-        # When/Then: user actions cannot skip the delivered state.
-        with pytest.raises(InvalidSituationTransitionError):
-            _ = store.situations.snooze_situation(
-                pending.id,
-                clock.now() + timedelta(hours=1),
+    def run_newer() -> EvaluationPass:
+        with Store(database, clock=clock) as newer_store:
+            service = EvaluationService(
+                EvaluationDependencies(
+                    SituationEngine(newer_store, clock, UTC),
+                    _FixedSources(newer_inputs),
+                )
             )
-        with pytest.raises(InvalidSituationTransitionError):
-            _ = store.situations.mute_situation(pending.id)
+            assert start.wait(timeout=10) >= 0
+            result = service.run_once()
+            newer_accepted.set()
+            return result
 
-
-def test_resync_dedupes_without_resetting_delivery_state(tmp_path: Path) -> None:
-    # Given: one delivered situation.
-    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    with Store(tmp_path / "situations.db", clock=clock) as store:
-        _ = store.situations.upsert_detections((_detection("same-key"),))
-        pending = store.situations.list_situations()[0]
-        _ = store.situations.mark_delivered((pending.id,))
-
-        # When: the same source identity is upserted on resync.
-        summary = store.situations.upsert_detections((_detection("same-key"),))
-        persisted = store.situations.list_situations()
-
-        # Then: there is one row and delivery ownership is preserved.
-        assert summary.created == 0
-        assert summary.refreshed == 1
-        assert len(persisted) == 1
-        assert persisted[0].state == "delivered"
-
-
-def _race_delivery(path: Path, situation_id: int, barrier: Barrier) -> bool:
-    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    with Store(path, clock=clock) as store:
-        assert barrier.wait(timeout=10) >= 0
-        try:
-            _ = store.situations.mark_delivered((situation_id,))
-        except InvalidSituationTransitionError:
-            return False
-        return True
-
-
-def test_multi_instance_delivery_claim_succeeds_once(tmp_path: Path) -> None:
-    # Given: two server instances racing for one pending situation.
-    path = tmp_path / "situations.db"
-    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    with Store(path, clock=clock) as store:
-        _ = store.situations.upsert_detections((_detection("shared"),))
-        situation_id = store.situations.list_situations()[0].id
-    barrier = Barrier(2)
-
-    # When: both instances claim delivery at one synchronization point.
+    # When: both workers start together but generation two commits first.
     with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = tuple(
-            executor.submit(_race_delivery, path, situation_id, barrier)
-            for _ in range(2)
-        )
-    outcomes = tuple(future.result(timeout=10) for future in futures)
+        older_future = executor.submit(run_older)
+        newer_future = executor.submit(run_newer)
+        assert start.wait(timeout=10) >= 0
+        newer_pass = newer_future.result(timeout=10)
+        delayed_pass = older_future.result(timeout=10)
+    with Store(database, clock=clock) as reopened:
+        persisted = reopened.gmail_diagnostics()
 
-    # Then: one process owns delivery and duplicate delivery is rejected.
-    assert sorted(outcomes) == [False, True]
+    # Then: store and both public pass results expose only accepted generation two.
+    assert isinstance(newer_pass.sources, PreparedSources)
+    assert isinstance(delayed_pass.sources, PreparedSources)
+    assert newer_pass.sources.inputs.gmail_diagnostics == newer_diagnostics
+    assert delayed_pass.sources.inputs.gmail_diagnostics == older_diagnostics
+    assert delayed_pass.result.accepted_gmail_diagnostics == newer_diagnostics
+    assert "gmail: delayed source generation ignored" in delayed_pass.warnings
+    assert persisted == newer_diagnostics
 
 
-def test_receipt_confirmation_rolls_back_after_first_row_update_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given: three pending rows leased by one receipt.
+def test_split_source_health_reads_reproduce_impossible_mixture(tmp_path: Path) -> None:
+    # Given: the old split reads straddle an atomic failure commit on connection two.
+    database = tmp_path / "situations.db"
     clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    start = clock.now().replace(hour=0)
-    end = start + timedelta(days=1)
-    with Store(tmp_path / "situations.db", clock=clock) as store:
-        detections = tuple(
-            replace(_detection(f"rollback-{index}"), situation_type="calendar_conflict")
-            for index in range(3)
-        )
-        _ = store.situations.upsert_detections(detections)
-        claim_token = str(clock.now().timestamp())
-        reservation = store.situations.reserve_for_delivery(
-            _delivery_claim(clock, 3),
-            claim_token=claim_token,
-            expires_at=clock.now() + timedelta(minutes=2),
-        )
-        original_record_delivery = claim_module.record_delivery
+    healthy = SourceReadDiagnostics("healthy", 1, 1, 0, 0, 8_000_000)
+    failure = SourceReadDiagnostics(
+        "transport_error",
+        0,
+        0,
+        0,
+        0,
+        8_000_000,
+        (SourceReadReasonCount("network", 1),),
+    )
+    state_read = Event()
+    failure_committed = Event()
+    with Store(database, clock=clock) as reader:
+        reader.record_gmail_sync(healthy)
+        reader.record_sync_success("calendar")
 
-        def fail_after_update(
-            connection: sqlite3.Connection,
-            situation: Situation,
-            timestamp: str,
-        ) -> None:
-            del connection, situation, timestamp
-            raise sqlite3.OperationalError
+        def commit_failure() -> None:
+            with Store(database, clock=clock) as writer:
+                assert state_read.wait(timeout=10)
+                writer.record_gmail_sync(failure, error_code="network")
+                failure_committed.set()
 
-        monkeypatch.setattr(claim_module, "record_delivery", fail_after_update)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            committed = executor.submit(commit_failure)
+            old_gmail, _ = reader.list_source_sync()
+            state_read.set()
+            assert failure_committed.wait(timeout=10)
+            old_diagnostics = reader.gmail_diagnostics()
+            committed.result(timeout=10)
 
-        # When: persistence fails immediately after the first situation update.
-        with pytest.raises(sqlite3.OperationalError):
-            _ = store.situations.confirm_delivery(reservation.claim_token)
-
-        # Then: state, history, budget reservation, and token all roll back.
-        assert store.situations.count_situations("pending") == 3
-        assert store.situations.count_situations("delivered") == 0
-        assert store.situations.count_deliveries() == 0
-        assert store.situations.count_reserved_between(start, end, clock.now()) == 3
-
-        # When: the same receipt is retried after the failure clears.
-        monkeypatch.setattr(
-            claim_module,
-            "record_delivery",
-            original_record_delivery,
-        )
-        delivered = store.situations.confirm_delivery(reservation.claim_token)
-
-    # Then: the retry consumes the token only after all three rows succeed.
-    assert len(delivered) == 3
+    # Then: the split contract reports a state that never existed.
+    assert old_gmail.last_error_code is None
+    assert old_diagnostics == failure
 
 
-def test_receipt_confirmation_rejects_partial_success_without_consuming_token(
-    tmp_path: Path,
-) -> None:
-    # Given: one of three leased situations changed before receipt confirmation.
+def test_source_health_snapshot_is_coherent_during_commit(tmp_path: Path) -> None:
+    # Given: a healthy snapshot and a failure ready on connection two.
+    database = tmp_path / "situations.db"
     clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    start = clock.now().replace(hour=0)
-    end = start + timedelta(days=1)
-    with Store(tmp_path / "situations.db", clock=clock) as store:
-        detections = tuple(
-            replace(_detection(f"conflict-{index}"), situation_type="calendar_conflict")
-            for index in range(3)
-        )
-        _ = store.situations.upsert_detections(detections)
-        claim_token = str(clock.now().timestamp())
-        reservation = store.situations.reserve_for_delivery(
-            _delivery_claim(clock, 3),
-            claim_token=claim_token,
-            expires_at=clock.now() + timedelta(minutes=2),
-        )
-        first_id = reservation.situations[0].id
-        _ = store.situations.mark_delivered((first_id,))
+    healthy = SourceReadDiagnostics("healthy", 1, 1, 0, 0, 8_000_000)
+    failure = SourceReadDiagnostics(
+        "transport_error",
+        0,
+        0,
+        0,
+        0,
+        8_000_000,
+        (SourceReadReasonCount("network", 1),),
+    )
+    snapshot_started = Event()
+    concurrent_failure_committed = Event()
+    progress_calls = 0
+    with Store(database, clock=clock) as reader:
+        reader.record_gmail_sync(healthy)
+        reader.record_sync_success("calendar")
 
-        # When: confirmation cannot transition every row owned by the token.
-        with pytest.raises(DeliveryReceiptError):
-            _ = store.situations.confirm_delivery(reservation.claim_token)
+        def commit_concurrent_failure() -> None:
+            with Store(database, clock=clock) as writer:
+                assert snapshot_started.wait(timeout=10)
+                writer.record_gmail_sync(failure, error_code="network")
+                concurrent_failure_committed.set()
 
-        # Then: no additional state/history commits and the token remains leased.
-        pending_count = store.situations.count_situations("pending")
-        delivered_count = store.situations.count_situations("delivered")
-        history_count = store.situations.count_deliveries()
-        reserved_count = store.situations.count_reserved_between(
-            start,
-            end,
-            clock.now(),
-        )
+        def pause_snapshot() -> int:
+            nonlocal progress_calls
+            progress_calls += 1
+            if progress_calls == 1:
+                snapshot_started.set()
+                assert concurrent_failure_committed.wait(timeout=10)
+            return 0
 
-    assert pending_count == 2
-    assert delivered_count == 1
-    assert history_count == 1
-    assert reserved_count == 3
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            committed = executor.submit(commit_concurrent_failure)
+            reader.connection().set_progress_handler(pause_snapshot, 5)
+            try:
+                snapshot = reader.source_health_snapshot()
+            finally:
+                reader.connection().set_progress_handler(None, 0)
+            committed.result(timeout=10)
+        persisted = reader.source_health_snapshot()
+
+    # Then: the active and subsequent snapshots each belong to one commit.
+    assert progress_calls > 1
+    assert snapshot.gmail.last_error_code is None
+    assert snapshot.gmail_diagnostics == healthy
+    assert persisted.gmail.last_error_code == "network"
+    assert persisted.gmail_diagnostics == failure

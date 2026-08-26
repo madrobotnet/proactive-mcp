@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC
 from typing import TYPE_CHECKING
 
-from ._situation_consistency import (
-    DetectionSourceMismatchError,
-    SituationConsistencyStore,
-)
+from ._situation_consistency import SituationConsistencyStore
 from ._situation_models import (
     DeliveryClaim,
+    DeliveryConfirmation,
     DeliveryReservation,
     Detection,
     DetectionApplySummary,
@@ -31,8 +28,12 @@ from ._situation_sql import (
     SNOOZE_SITUATION,
     WAKE_SNOOZED,
 )
+from ._situation_time import utc_iso as _utc_iso
+from ._situation_upsert import DetectionSourceMismatchError
 from ._source_generation import DelayedSourceGenerationError
 from ._sqlite_transaction import ImmediateTransaction
+
+DetectionSourceMismatchError.__module__ = __name__
 
 if TYPE_CHECKING:
     import sqlite3
@@ -43,7 +44,7 @@ if TYPE_CHECKING:
 
     from ._situation_reader import SituationReader
     from ._source_generation import SourceGeneration, SourceGenerationStatus
-    from .sync import SourceErrorCode, SyncStore
+    from .sync import SourceErrorCode, SourceReadDiagnostics, SyncStore
 
 __all__ = [
     "DelayedSourceGenerationError",
@@ -95,6 +96,7 @@ class SituationStore:
         status: SourceGenerationStatus,
         sync_cursor: str | None = None,
         error_code: SourceErrorCode | None = None,
+        diagnostics: SourceReadDiagnostics | None = None,
         resolve_absent: bool = False,
         resolution_scope_ids: Collection[str] = (),
         resolution_excluded_ids: Collection[str] = (),
@@ -106,6 +108,7 @@ class SituationStore:
             status,
             sync_cursor=sync_cursor,
             error_code=error_code,
+            diagnostics=diagnostics,
             resolve_absent=resolve_absent,
             resolution_scope_ids=resolution_scope_ids,
             resolution_excluded_ids=resolution_excluded_ids,
@@ -175,8 +178,8 @@ class SituationStore:
             expires_at=_utc_iso(expires_at),
         )
 
-    def confirm_delivery(self, claim_token: str) -> tuple[Situation, ...]:
-        """Confirm that a host received one leased proactive result."""
+    def confirm_delivery(self, claim_token: str) -> DeliveryConfirmation:
+        """Confirm a leased proactive result or replay its receipt."""
         return self._consistency.confirm_delivery(
             claim_token,
             confirmed_at=self._now_iso(),
@@ -310,13 +313,5 @@ class SituationStore:
             raise SituationNotFoundError(situation_id)
         return situation
 
-    def _situation_by_dedupe_key(self, dedupe_key: str) -> Situation | None:
-        return self._reader.situation_by_dedupe_key(dedupe_key)
-
     def _now_iso(self) -> str:
         return _utc_iso(self._clock.now())
-
-
-def _utc_iso(value: datetime) -> str:
-    """Serialize one timezone-aware datetime as a lexicographic UTC ISO string."""
-    return value.astimezone(UTC).isoformat()

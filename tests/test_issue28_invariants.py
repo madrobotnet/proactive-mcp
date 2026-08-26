@@ -26,8 +26,7 @@ from proactive_mcp.sources.google_sync import (
     InvalidGrantError,
 )
 from proactive_mcp.store import Store
-from tests.situation_test_support import FakeClock, utc_datetime
-from tests.test_google_sync import (
+from tests.google_sync_test_support import (
     FailingGmailReader,
     FakeCalendarReader,
     FakeCredentials,
@@ -35,6 +34,7 @@ from tests.test_google_sync import (
     calendar_result,
     gmail_inbox_result,
 )
+from tests.situation_test_support import FakeClock, utc_datetime
 
 _CANARIES: Final = (
     "message_7f34c912_body",

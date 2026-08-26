@@ -94,11 +94,13 @@ class SituationToolService:
             completed = self._dependencies.evaluation.run_once()
             gmail_freshness = completed.result.gmail_freshness
             calendar_freshness = completed.result.calendar_freshness
+            gmail_diagnostics = completed.result.accepted_gmail_diagnostics
             warnings = completed.warnings
         else:
-            gmail_state, calendar_state = self._dependencies.store.list_source_sync()
-            gmail_freshness = evaluate_source_freshness(gmail_state, now)
-            calendar_freshness = evaluate_source_freshness(calendar_state, now)
+            sources = self._dependencies.store.source_health_snapshot()
+            gmail_freshness = evaluate_source_freshness(sources.gmail, now)
+            calendar_freshness = evaluate_source_freshness(sources.calendar, now)
+            gmail_diagnostics = sources.gmail_diagnostics
             warnings = tuple(
                 f"{source}: source is {freshness.status}"
                 for source, freshness in (
@@ -111,12 +113,15 @@ class SituationToolService:
         reservation = attention.reserve_for_delivery(now)
         claimed = reservation.situations
         held_count = max(0, self._situations.count_situations("pending") - len(claimed))
+        receipt_token = reservation.claim_token if claimed else None
         return ProactiveCheckResponse(
+            requires_confirmation=bool(claimed) and receipt_token is not None,
             situations=tuple(situation_response(item) for item in claimed),
-            receipt_token=reservation.claim_token if claimed else None,
+            receipt_token=receipt_token,
             freshness=google_freshness_response(
                 gmail_freshness,
                 calendar_freshness,
+                gmail_diagnostics,
             ),
             budget=budget_response(attention.budget_usage(now)),
             held_count=held_count,
@@ -151,8 +156,11 @@ class SituationToolService:
 
     def confirm_delivery(self, receipt_token: str) -> ConfirmDeliveryResponse:
         """Confirm that the MCP host received a proactive-check result."""
-        delivered = self._situations.confirm_delivery(receipt_token)
-        return ConfirmDeliveryResponse(delivered_count=len(delivered))
+        confirmation = self._situations.confirm_delivery(receipt_token)
+        return ConfirmDeliveryResponse(
+            status=confirmation.status,
+            delivered_count=confirmation.delivered_count,
+        )
 
     def acknowledge_situation(self, situation_id: int) -> SituationResponse:
         """Record that the user handled one delivered situation."""

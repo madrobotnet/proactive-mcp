@@ -32,6 +32,7 @@ ServiceCode: TypeAlias = Literal[
     "unmanaged_unit",
     "command_failed",
     "heartbeat_unavailable",
+    "invalid_value",
     "io_failed",
 ]
 LingerState: TypeAlias = Literal["enabled", "disabled", "unknown", "not_applicable"]

@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, ClassVar, Final
 from mcp.types import TextContent
 from pydantic import BaseModel, ConfigDict, Field
 
-from proactive_mcp.delivery import EvaluationDependencies, EvaluationService
+from proactive_mcp.delivery import (
+    EvaluationDependencies,
+    EvaluationService,
+    PreparedSources,
+)
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server.situation_tools import (
     SituationToolDependencies,
@@ -30,11 +34,13 @@ if TYPE_CHECKING:
 
     from mcp.types import CallToolResult, Tool
 
-    from proactive_mcp.delivery.evaluation import SourceSkipReason
+    from proactive_mcp.delivery import EvaluationRunner
+    from proactive_mcp.delivery.evaluation import EvaluationPass, SourceSkipReason
     from proactive_mcp.server.situation_responses import (
         ProactiveCheckResponse,
         SituationResponse,
     )
+    from proactive_mcp.situations.inputs import EngineInputs
     from proactive_mcp.store import SituationPriority
 
 UNTRUSTED_SUBJECT: Final = "CANARY_SUBJECT_quoted-external-text"
@@ -55,6 +61,31 @@ class ToolSchema(BaseModel):
 
     properties: dict[str, ToolProperty] = Field(default_factory=dict)
     required: tuple[str, ...] = ()
+
+
+class CountingEvaluation:
+    """Count evaluation calls while delegating each mutable observation."""
+
+    __slots__: ClassVar[tuple[str, str]] = ("calls", "delegate")
+
+    delegate: EvaluationRunner
+    calls: int
+
+    def __init__(self, delegate: EvaluationRunner) -> None:
+        self.delegate = delegate
+        self.calls = 0
+
+    def run_once(self) -> EvaluationPass:
+        self.calls += 1
+        return self.delegate.run_once()
+
+
+@dataclass(frozen=True, slots=True)
+class FixedSources:
+    inputs: EngineInputs
+
+    def prepare_sources(self) -> PreparedSources:
+        return PreparedSources(self.inputs)
 
 
 @dataclass(frozen=True, slots=True)

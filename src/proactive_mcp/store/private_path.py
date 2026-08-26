@@ -8,6 +8,7 @@ import sys
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Protocol, TypeGuard
 
+from ._posix_identity import verify_open_name
 from .storage_errors import UnsafeDatabasePathError
 
 if TYPE_CHECKING:
@@ -22,7 +23,7 @@ class _PosixBackend(Protocol):
 
     def open_private_parent(self, path: Path) -> int: ...
 
-    def prepare_private_database_file(self, directory_fd: int, path: Path) -> None: ...
+    def prepare_private_database_file(self, directory_fd: int, path: Path) -> int: ...
 
     def private_initialization_lock(
         self,
@@ -98,6 +99,8 @@ def _windows_backend(path: Path) -> _WindowsBackend:
 
 def open_private_parent(path: Path) -> int | None:
     """Prepare a private parent, pinning a descriptor on POSIX platforms."""
+    if not path.is_absolute():
+        raise UnsafeDatabasePathError(path, "private path must be absolute")
     if ".." in path.parts:
         raise UnsafeDatabasePathError(path, "parent traversal is not allowed")
     if sys.platform not in ("linux", "darwin", "win32"):
@@ -108,14 +111,33 @@ def open_private_parent(path: Path) -> int | None:
     return _posix_backend(path).open_private_parent(path)
 
 
-def prepare_private_database_file(directory_fd: int | None, path: Path) -> None:
-    """Create or open the database file and reject unsafe sidecars."""
+def prepare_private_database_file(directory_fd: int | None, path: Path) -> int | None:
+    """Create the database and retain its verified descriptor on POSIX."""
     if _uses_windows_backend():
         _windows_backend(path).prepare_private_database_file(path)
-        return
+        return None
     if directory_fd is None:
         raise UnsafeDatabasePathError(path, "POSIX directory handle is unavailable")
-    _posix_backend(path).prepare_private_database_file(directory_fd, path)
+    return _posix_backend(path).prepare_private_database_file(directory_fd, path)
+
+
+def verify_database_identity(
+    directory_fd: int | None,
+    path: Path,
+    database_fd: int | None,
+) -> None:
+    """Revalidate the retained path and, when provided, SQLite's live inode."""
+    if _uses_windows_backend():
+        return
+    if directory_fd is None or database_fd is None:
+        raise UnsafeDatabasePathError(path, "POSIX database handle is unavailable")
+    _ = verify_open_name(
+        directory_fd,
+        path.name,
+        database_fd,
+        path,
+        "database",
+    )
 
 
 @contextmanager
@@ -158,8 +180,13 @@ def private_database_guard(
     yield
 
 
-def sqlite_connection_target(directory_fd: int | None, path: Path) -> str:
-    """Return the Linux descriptor-pinned target or the real absolute path."""
+def sqlite_connection_target(
+    directory_fd: int | None,
+    path: Path,
+    database_fd: int | None = None,
+) -> str:
+    """Return a sidecar-capable path under the pinned parent when supported."""
+    del database_fd
     if directory_fd is not None and sys.platform == "linux":
         return f"/proc/self/fd/{directory_fd:d}/{path.name}"
     return str(path)
@@ -173,4 +200,5 @@ __all__ = [
     "private_database_guard",
     "private_initialization_lock",
     "sqlite_connection_target",
+    "verify_database_identity",
 ]

@@ -8,14 +8,13 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 
 from proactive_mcp.config import load_config
-from proactive_mcp.delivery.daemon import DaemonFailureError, DaemonFailureKind
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server import StatusResponse, build_status
-from proactive_mcp.server.status import DaemonDiagnosticResponse, status_response
-from proactive_mcp.store import FallbackClaim, SourceSyncFailureCode, Store
+from proactive_mcp.server.status import status_response
+from proactive_mcp.store import FallbackClaim, Store
+from tests.daemon_cli_test_support import start_live_overridden_watcher
 from tests.situation_test_support import FakeClock, utc_datetime
 from tests.situation_tool_support import UNTRUSTED_SUBJECT, pending_detection
-from tests.test_daemon_cli import start_live_overridden_watcher
 
 _PID = 4242
 _FALLBACK_WAIT = timedelta(minutes=30)
@@ -139,35 +138,6 @@ def test_status_reports_daemon_liveness_and_redacted_fallback_failures(
     assert status.overall == "degraded"
 
 
-@pytest.mark.parametrize(
-    ("error_code", "expected_outcome"),
-    [
-        ("degraded", "partial"),
-        ("network", "transport_error"),
-    ],
-)
-def test_status_maps_persisted_gmail_failures_to_typed_outcomes(
-    tmp_path: Path,
-    error_code: SourceSyncFailureCode,
-    expected_outcome: str,
-) -> None:
-    # Given: one normalized Gmail failure in existing migration-9 state.
-    paths = ProactivePaths.for_database(tmp_path / "proactive.db")
-    clock = FakeClock(utc_datetime(2026, 8, 21, 12))
-    with Store(paths.database, clock=clock) as store:
-        store.set_google_auth_state("configured")
-        store.record_sync_failure("gmail", error_code=error_code)
-
-        # When: status projects the persisted freshness/error state.
-        status = status_response(store, clock, paths)
-
-    # Then: legacy freshness remains while the additive outcome is distinct.
-    assert status.google.gmail.status == "error"
-    assert status.google.gmail.error_code == error_code
-    assert status.google.gmail.diagnostics.outcome == expected_outcome
-    assert status.google.gmail.diagnostics.reason_counts == {error_code: 1}
-
-
 def test_status_is_healthy_only_when_no_surface_warns(tmp_path: Path) -> None:
     # Given: fresh Google sources and a live daemon heartbeat.
     paths = ProactivePaths.for_database(tmp_path / "proactive.db")
@@ -271,17 +241,3 @@ def test_status_never_started_falls_back_to_configured_cadence(
     assert status.daemon.liveness == "never_started"
     assert status.daemon.status == "not_running"
     assert any("never run" in warning for warning in status.warnings)
-
-
-@pytest.mark.parametrize("kind", tuple(DaemonFailureKind))
-def test_daemon_diagnostic_taxonomy_serializes_only_phase_and_code(
-    kind: DaemonFailureKind,
-) -> None:
-    # Given: one member of the closed daemon failure taxonomy.
-    failure = DaemonFailureError(kind)
-
-    # When: the journal-facing response is serialized.
-    payload = DaemonDiagnosticResponse(phase=failure.phase, code=failure.code)
-
-    # Then: only bounded routing values cross the status boundary.
-    assert payload.model_dump() == {"phase": failure.phase, "code": failure.code}

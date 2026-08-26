@@ -9,7 +9,9 @@ from ._delivery_eligibility import (
     reserved_non_reply_slots_for_claim,
     reserved_non_reply_slots_for_reservation,
 )
+from ._delivery_receipt import DeliveryReceipts, receipt_digest
 from ._situation_models import (
+    DeliveryConfirmation,
     DeliveryReceiptError,
     DeliveryReservation,
     Situation,
@@ -112,12 +114,11 @@ def reserve_for_delivery(
     expires_at: str,
 ) -> DeliveryReservation:
     """Lease bounded pending rows without recording delivery history."""
+    digest = receipt_digest(claim_token)
+    receipts = DeliveryReceipts(connection)
     reserved: list[Situation] = []
     with ImmediateTransaction(connection):
-        _ = connection.execute(
-            "DELETE FROM situation_delivery_claims WHERE expires_at <= ?",
-            (claim.delivered_at,),
-        )
+        receipts.expire(claim.delivered_at)
         candidates = reader.pending_for_delivery(limit=_MAX_DELIVERY_CANDIDATES)
         reserved_non_reply_slots = reserved_non_reply_slots_for_reservation(
             reader,
@@ -130,7 +131,7 @@ def reserve_for_delivery(
             cursor = connection.execute(
                 f"""
                 INSERT INTO situation_delivery_claims(
-                    claim_token, situation_id, claimed_at, expires_at
+                    receipt_digest, situation_id, claimed_at, expires_at
                 )
                 SELECT ?, id, ?, ? FROM situations
                 WHERE id = ? AND state = 'pending'
@@ -183,7 +184,7 @@ def reserve_for_delivery(
                        ) < MAX(0, ? - ?))
                 """,  # noqa: S608
                 (
-                    claim_token,
+                    digest,
                     claim.delivered_at,
                     expires_at,
                     candidate.id,
@@ -215,39 +216,39 @@ def confirm_delivery(
     claim_token: str,
     *,
     confirmed_at: str,
-) -> tuple[Situation, ...]:
-    """Record delivery only after the host returns the opaque receipt token."""
-    delivered: list[Situation] = []
+) -> DeliveryConfirmation:
+    """Confirm one active lease or replay its immutable result."""
+    digest = receipt_digest(claim_token)
+    receipts = DeliveryReceipts(connection)
     with ImmediateTransaction(connection):
-        _ = connection.execute(
-            "DELETE FROM situation_delivery_claims WHERE expires_at <= ?",
-            (confirmed_at,),
-        )
-        while situation_ids := reader.delivery_claim_ids(claim_token):
-            for situation_id in situation_ids:
-                cursor = connection.execute(
-                    """
-                    UPDATE situations
-                    SET state = 'delivered', delivered_at = ?, updated_at = ?,
-                        snoozed_until = NULL, snooze_cooldown_exempt = 0
-                    WHERE id = ? AND state = 'pending'
-                    """,
-                    (confirmed_at, confirmed_at, situation_id),
-                )
-                if cursor.rowcount == 0:
-                    raise DeliveryReceiptError
-                situation = reader.get_situation(situation_id)
-                if situation is None:
-                    raise SituationNotFoundError(situation_id)
-                record_delivery(connection, situation, confirmed_at)
-                delivered.append(situation)
-                _ = connection.execute(
-                    "DELETE FROM situation_delivery_claims WHERE situation_id = ?",
-                    (situation_id,),
-                )
-        if not delivered:
+        replay = receipts.replay(digest)
+        if replay is not None:
+            return replay
+
+        receipts.expire(confirmed_at)
+        situation_ids = reader.delivery_claim_ids(digest)
+        if not situation_ids:
             raise DeliveryReceiptError
-    return tuple(delivered)
+
+        for situation_id in situation_ids:
+            cursor = connection.execute(
+                """
+                UPDATE situations
+                SET state = 'delivered', delivered_at = ?, updated_at = ?,
+                    snoozed_until = NULL, snooze_cooldown_exempt = 0
+                WHERE id = ? AND state = 'pending'
+                """,
+                (confirmed_at, confirmed_at, situation_id),
+            )
+            if cursor.rowcount == 0:
+                raise DeliveryReceiptError
+            situation = reader.get_situation(situation_id)
+            if situation is None:
+                raise SituationNotFoundError(situation_id)
+            record_delivery(connection, situation, confirmed_at)
+
+        receipts.consume(digest)
+        return receipts.record(digest, len(situation_ids), confirmed_at)
 
 
 def record_delivery(

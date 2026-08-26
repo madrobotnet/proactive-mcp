@@ -22,6 +22,8 @@ from proactive_mcp.config_parse import (
 )
 from proactive_mcp.config_raw import RawConfig
 
+ConfigError.__module__ = __name__
+
 if TYPE_CHECKING:
     from pathlib import Path
 

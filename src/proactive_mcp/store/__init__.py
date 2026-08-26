@@ -16,6 +16,7 @@ from ._lazy_sync_lease import InvalidLazySyncLeaseDurationError, LazySyncLease
 from ._situation_models import (
     ACTIVE_SITUATION_STATES,
     DeliveryClaim,
+    DeliveryConfirmation,
     DeliveryReceiptError,
     DeliveryReservation,
     Detection,
@@ -68,10 +69,14 @@ from .memory import (
 )
 from .private_path import UnsafeDatabasePathError
 from .situations import SituationStore
+from .storage_errors import ReceiptErasurePendingError
 from .sync import (
     SourceAuthState,
     SourceErrorCode,
+    SourceHealthSnapshot,
     SourceName,
+    SourceReadDiagnostics,
+    SourceReadReasonCount,
     SourceSyncFailureCode,
     SourceSyncState,
     SyncStore,
@@ -90,6 +95,7 @@ __all__ = [
     "DatabaseStatus",
     "DelayedSourceGenerationError",
     "DeliveryClaim",
+    "DeliveryConfirmation",
     "DeliveryReceiptError",
     "DeliveryReservation",
     "Detection",
@@ -117,6 +123,7 @@ __all__ = [
     "MemorySource",
     "MemoryValidationError",
     "NewMemory",
+    "ReceiptErasurePendingError",
     "Situation",
     "SituationEvidence",
     "SituationNotFoundError",
@@ -132,7 +139,10 @@ __all__ = [
     "SourceGeneration",
     "SourceGenerationState",
     "SourceGenerationStatus",
+    "SourceHealthSnapshot",
     "SourceName",
+    "SourceReadDiagnostics",
+    "SourceReadReasonCount",
     "SourceSyncFailureCode",
     "SourceSyncState",
     "Store",

@@ -1,122 +1,42 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, Final
+from typing import TYPE_CHECKING
 
-import anyio
 import pytest
-from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp.server.situation_responses import (
     ConfirmDeliveryResponse,
     ProactiveCheckResponse,
 )
-from proactive_mcp.store import Store
-from tests.memory_tools_stdio import json_text, memory_session
-from tests.situation_tool_support import pending_detection, tool_schema, write_config
+from tests.mcp_session_contract_support import (
+    DAILY_TOOLS as _DAILY_TOOLS,
+)
+from tests.mcp_session_contract_support import (
+    SCHEDULED as _SCHEDULED,
+)
+from tests.mcp_session_contract_support import (
+    SCHEDULED_TOOLS as _SCHEDULED_TOOLS,
+)
+from tests.mcp_session_contract_support import (
+    SERVE as _SERVE,
+)
+from tests.mcp_session_contract_support import (
+    delivery_counts as _delivery_counts,
+)
+from tests.mcp_session_contract_support import (
+    listed_tools as _listed_tools,
+)
+from tests.mcp_session_contract_support import (
+    seed_critical_conflict as _seed_critical_conflict,
+)
+from tests.mcp_session_contract_support import (
+    session as _session,
+)
+from tests.memory_tools_stdio import json_text
+from tests.situation_tool_support import tool_schema
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
     from pathlib import Path
-
-    from mcp import ClientSession
-    from mcp.types import Tool
-
-_DAILY_TOOLS: Final = frozenset(
-    {
-        "acknowledge_situation",
-        "confirm_delivery",
-        "forget",
-        "get_situation",
-        "get_status",
-        "list_entities",
-        "list_situations",
-        "mute_situation",
-        "proactive_check",
-        "recall",
-        "remember",
-        "snooze_situation",
-        "update",
-    }
-)
-_SCHEDULED_TOOLS: Final = frozenset(
-    {"confirm_delivery", "get_status", "proactive_check"}
-)
-_SERVE: Final = ("-m", "proactive_mcp", "serve")
-_SCHEDULED: Final = ("-m", "proactive_mcp", "serve-scheduled")
-_TIMEOUT_SECONDS: Final = 20
-_DATABASE_NAME: Final = "memory.db"
-
-
-@dataclass(frozen=True, slots=True)
-class _DeliveryCounts:
-    pending: int
-    delivered: int
-    events: int
-
-
-class _FieldSchema(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="allow")
-
-    description: str | None = None
-
-
-class _ModelSchema(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="allow")
-
-    properties: dict[str, _FieldSchema]
-
-
-@asynccontextmanager
-async def _session(
-    tmp_path: Path,
-    server_args: tuple[str, ...],
-) -> AsyncGenerator[ClientSession, None]:
-    with anyio.fail_after(_TIMEOUT_SECONDS):
-        async with memory_session(tmp_path, server_args=server_args) as session:
-            yield session
-
-
-async def _listed_tools(
-    tmp_path: Path,
-    server_args: tuple[str, ...],
-) -> dict[str, Tool]:
-    async with _session(tmp_path, server_args) as session:
-        listed = await session.list_tools()
-    return {tool.name: tool for tool in listed.tools}
-
-
-def _delivery_counts(tmp_path: Path) -> _DeliveryCounts:
-    with Store(tmp_path / _DATABASE_NAME) as store:
-        return _DeliveryCounts(
-            pending=store.situations.count_situations("pending"),
-            delivered=store.situations.count_situations("delivered"),
-            events=store.situations.count_deliveries(),
-        )
-
-
-def _seed_critical_conflict(tmp_path: Path) -> None:
-    write_config(tmp_path, quiet_hours_start="00:00", quiet_hours_end="00:00")
-    with Store(tmp_path / _DATABASE_NAME) as store:
-        _ = store.situations.upsert_detections(
-            (pending_detection("session-contract", priority="critical"),)
-        )
-
-
-def _folded_routing(text: str) -> str:
-    return " ".join(text.casefold().replace("-", " ").replace("_", " ").split())
-
-
-def _require_conditional_confirm_routing(description: str) -> str:
-    folded = _folded_routing(description)
-    assert "exactly once" in folded
-    assert "only when" in folded
-    assert "nonempty" in folded or "non empty" in folded
-    assert "non null" in folded or "nonnull" in folded
-    assert "situations" in folded
-    assert "receipt token" in folded
-    return folded
 
 
 @pytest.mark.anyio
@@ -161,6 +81,31 @@ async def test_confirm_delivery_input_schema_requires_receipt_token(
     tools = await _listed_tools(tmp_path, _SCHEDULED)
     # Then: confirm_delivery requires exactly receipt_token.
     assert set(tool_schema(tools["confirm_delivery"]).required) == {"receipt_token"}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("server_args", [_SERVE, _SCHEDULED])
+@pytest.mark.parametrize("with_situation", [False, True])
+async def test_every_proactive_check_exposes_fixed_delivery_protocol_fields(
+    tmp_path: Path,
+    server_args: tuple[str, ...],
+    *,
+    with_situation: bool,
+) -> None:
+    if with_situation:
+        _seed_critical_conflict(tmp_path)
+
+    async with _session(tmp_path, server_args) as session:
+        checked = await session.call_tool("proactive_check")
+
+    payload = ProactiveCheckResponse.model_validate_json(json_text(checked))
+    requires_confirmation = len(payload.situations) > 0 and (
+        payload.receipt_token is not None
+    )
+    assert payload.protocol_version == "1"
+    assert payload.confirmation.model_dump() == {"tool": "confirm_delivery"}
+    assert payload.requires_confirmation is requires_confirmation
+    assert requires_confirmation is with_situation
 
 
 @pytest.mark.anyio
@@ -267,7 +212,7 @@ async def test_valid_scheduled_confirm_delivers_the_exact_leased_count(
 
 
 @pytest.mark.anyio
-async def test_replayed_receipt_token_is_rejected_without_extra_mutation(
+async def test_replayed_receipt_token_returns_typed_success_without_extra_mutation(
     tmp_path: Path,
 ) -> None:
     # Given: one already-consumed scheduled receipt.
@@ -276,89 +221,19 @@ async def test_replayed_receipt_token_is_rejected_without_extra_mutation(
         checked = await session.call_tool("proactive_check")
         payload = ProactiveCheckResponse.model_validate_json(json_text(checked))
         assert payload.receipt_token is not None
-        _ = await session.call_tool(
+        first_result = await session.call_tool(
             "confirm_delivery",
             {"receipt_token": payload.receipt_token},
         )
         # When: the host replays the same token.
-        replayed = await session.call_tool(
+        replay_result = await session.call_tool(
             "confirm_delivery",
             {"receipt_token": payload.receipt_token},
         )
 
-    # Then: replay is rejected and the delivery event count stays exact.
-    assert replayed.is_error is True
+    first = ConfirmDeliveryResponse.model_validate_json(json_text(first_result))
+    replay = ConfirmDeliveryResponse.model_validate_json(json_text(replay_result))
+    # Then: replay succeeds from the immutable result and history stays exact.
+    assert (first.status, first.delivered_count) == ("confirmed", 1)
+    assert (replay.status, replay.delivered_count) == ("already_confirmed", 1)
     assert _delivery_counts(tmp_path).events == 1
-
-
-@pytest.mark.anyio
-async def test_proactive_check_description_omits_automatic_repeat_rule(
-    tmp_path: Path,
-) -> None:
-    # Given: the scheduled profile over stdio.
-    # When: the host lists tools.
-    tools = await _listed_tools(tmp_path, _SCHEDULED)
-    description = tools["proactive_check"].description or ""
-    # Then: the host-facing copy has no automatic long-gap repeat rule.
-    assert "long gap" not in description
-    assert "again after" not in description
-
-
-@pytest.mark.anyio
-async def test_proactive_check_description_requires_exactly_once(
-    tmp_path: Path,
-) -> None:
-    # Given: the scheduled profile over stdio.
-    # When: the host lists tools.
-    tools = await _listed_tools(tmp_path, _SCHEDULED)
-    # Then: the host is told to check exactly once per new session.
-    assert "exactly once" in (tools["proactive_check"].description or "")
-
-
-@pytest.mark.anyio
-async def test_confirm_delivery_description_is_conditional_on_token_and_situations(
-    tmp_path: Path,
-) -> None:
-    # Given: the scheduled profile over stdio.
-    # When: the host lists tools.
-    tools = await _listed_tools(tmp_path, _SCHEDULED)
-    description = tools["confirm_delivery"].description or ""
-    # Then: confirmation is gated on nonempty situations and a non-null token.
-    _ = _require_conditional_confirm_routing(description)
-
-
-def test_receipt_token_field_description_is_conditional() -> None:
-    # Given: the serialized proactive_check response schema.
-    schema = _ModelSchema.model_validate(ProactiveCheckResponse.model_json_schema())
-    # When: the host reads the receipt_token field description.
-    description = schema.properties["receipt_token"].description
-    # Then: confirmation is gated on nonempty situations and a non-null token.
-    assert description is not None
-    folded = _require_conditional_confirm_routing(description)
-    assert "confirm delivery" in folded
-
-
-@pytest.mark.anyio
-async def test_proactive_check_meta_session_contract_is_one_check(
-    tmp_path: Path,
-) -> None:
-    # Given: the scheduled profile over stdio.
-    # When: the host lists tools.
-    tools = await _listed_tools(tmp_path, _SCHEDULED)
-    meta = tools["proactive_check"].meta
-    # Then: the machine contract is one_check.
-    assert meta is not None
-    assert meta["session_contract"] == "one_check"
-
-
-@pytest.mark.anyio
-async def test_confirm_delivery_meta_session_contract_is_conditional_confirm(
-    tmp_path: Path,
-) -> None:
-    # Given: the scheduled profile over stdio.
-    # When: the host lists tools.
-    tools = await _listed_tools(tmp_path, _SCHEDULED)
-    meta = tools["confirm_delivery"].meta
-    # Then: the machine contract is conditional_confirm.
-    assert meta is not None
-    assert meta["session_contract"] == "conditional_confirm"

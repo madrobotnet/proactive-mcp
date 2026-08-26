@@ -16,13 +16,14 @@ from .personal_occasion import detect_personal_occasions
 from .reply_deadline import detect_reply_deadlines
 
 if TYPE_CHECKING:
-    from datetime import datetime, tzinfo
+    from datetime import tzinfo
 
     from proactive_mcp.clock import Clock
     from proactive_mcp.store import (
         DetectionApplySummary,
         SourceFreshness,
         SourceName,
+        SourceReadDiagnostics,
         Store,
     )
 
@@ -52,6 +53,7 @@ class EvaluationResult:
     warnings: tuple[str, ...]
     gmail_freshness: SourceFreshness
     calendar_freshness: SourceFreshness
+    accepted_gmail_diagnostics: SourceReadDiagnostics | None = None
 
 
 class SituationEngine:
@@ -112,6 +114,7 @@ class SituationEngine:
                         status="complete" if gmail.complete else "degraded",
                         sync_cursor=gmail.sync_cursor,
                         error_code=gmail.error_code,
+                        diagnostics=inputs.gmail_diagnostics,
                         resolve_absent=gmail.resolve_absent,
                         resolution_scope_ids=gmail.resolution_scope_ids,
                         resolution_excluded_ids=gmail.resolution_excluded_ids,
@@ -146,7 +149,9 @@ class SituationEngine:
                 f"calendar: {code}" for code in calendar.warning_codes
             )
             source_warnings.extend(f"calendar: {code}" for code in run.warning_codes)
-        gmail_freshness, calendar_freshness = self._freshness(now)
+        source_health = self._store.source_health_snapshot()
+        gmail_freshness = evaluate_source_freshness(source_health.gmail, now)
+        calendar_freshness = evaluate_source_freshness(source_health.calendar, now)
         capacity_skipped = sum(item.upsert.capacity_skipped for item in applied)
         if capacity_skipped:
             source_warnings.append(
@@ -174,16 +179,7 @@ class SituationEngine:
             warnings=warnings,
             gmail_freshness=gmail_freshness,
             calendar_freshness=calendar_freshness,
-        )
-
-    def _freshness(
-        self,
-        now: datetime,
-    ) -> tuple[SourceFreshness, SourceFreshness]:
-        gmail_state, calendar_state = self._store.list_source_sync()
-        return (
-            evaluate_source_freshness(gmail_state, now),
-            evaluate_source_freshness(calendar_state, now),
+            accepted_gmail_diagnostics=source_health.gmail_diagnostics,
         )
 
 

@@ -12,6 +12,8 @@ from proactive_mcp.config import load_config
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.store import Store
 
+from ._google_setup import GoogleSourceConfigurationError
+from ._google_setup import persist_google_setup_state as _persist_google_state
 from .calendar import CalendarAdapter, CalendarHttpResponse
 from .credentials import (
     CredentialScopeError,
@@ -36,11 +38,15 @@ from .google_sync import (
     InvalidGrantError,
 )
 from .oauth import (
+    GoogleOAuthAuthorizationError,
     GoogleOAuthAuthorizationTimeoutError,
     GoogleOAuthAuthorizer,
     OAuthClientConfigError,
+    write_headless_setup_success,
 )
 from .transport import GoogleAuthenticatedGetTransport
+
+GoogleSourceConfigurationError.__module__ = __name__
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -118,8 +124,8 @@ def configure_google_sources(
         reauth=options.reauth,
         headless=options.headless,
     )
-    with Store(database_path) as store:
-        store.set_google_auth_state("configured")
+    _persist_google_state(database_path, Store)
+    write_headless_setup_success()
 
 
 def disconnect_google_sources(database_path: Path) -> None:
@@ -266,6 +272,7 @@ __all__ = [
     "CredentialStorageError",
     "GmailProfileReader",
     "GoogleCredentialStore",
+    "GoogleOAuthAuthorizationError",
     "GoogleOAuthAuthorizationTimeoutError",
     "GoogleOAuthAuthorizer",
     "GoogleReadDependencies",
@@ -273,6 +280,7 @@ __all__ = [
     "GoogleReadSmokeDisabledError",
     "GoogleReadSummary",
     "GoogleSetupOptions",
+    "GoogleSourceConfigurationError",
     "GoogleSyncService",
     "InvalidGrantError",
     "MissingGoogleCredentialsError",

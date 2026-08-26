@@ -49,7 +49,7 @@ def test_v4_creates_entities_and_entity_aliases_tables(tmp_path: Path) -> None:
     db_path = tmp_path / "proactive.db"
 
     with Store(db_path) as store:
-        assert store.status().migration_version == 9
+        assert store.status().migration_version == 10
 
     with closing(sqlite3.connect(db_path)) as connection:
         assert table_names(connection) >= {
@@ -87,7 +87,7 @@ def test_v4_creates_entities_and_entity_aliases_tables(tmp_path: Path) -> None:
             )
             == 1
         )
-        assert applied_versions(connection) == {1, 2, 3, 4, 5, 6, 7, 8, 9}
+        assert applied_versions(connection) == set(range(1, 11))
 
 
 def test_v4_reconstructs_memory_items_schema(tmp_path: Path) -> None:

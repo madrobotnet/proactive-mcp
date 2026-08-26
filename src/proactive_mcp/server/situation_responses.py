@@ -46,6 +46,7 @@ __all__ = [
     "UNTRUSTED_MEMORY_NOTICE",
     "BudgetResponse",
     "ConfirmDeliveryResponse",
+    "ConfirmationDirectiveResponse",
     "GmailFreshnessResponse",
     "GoogleFreshnessResponse",
     "ListSituationsResponse",
@@ -164,6 +165,14 @@ class SituationResponse(BaseModel):
     evidence: SituationEvidenceResponse
 
 
+class ConfirmationDirectiveResponse(BaseModel):
+    """Fixed application-level routing for a leased delivery receipt."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    tool: Literal["confirm_delivery"] = "confirm_delivery"
+
+
 class ProactiveCheckResponse(BaseModel):
     """The situations one check received and everything it held back.
 
@@ -173,6 +182,9 @@ class ProactiveCheckResponse(BaseModel):
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
+    protocol_version: Literal["1"] = "1"
+    requires_confirmation: bool
+    confirmation: ConfirmationDirectiveResponse = ConfirmationDirectiveResponse()
     situations: tuple[SituationResponse, ...]
     receipt_token: str | None = Field(
         description=(
@@ -197,10 +209,11 @@ class ListSituationsResponse(BaseModel):
 
 
 class ConfirmDeliveryResponse(BaseModel):
-    """Result of consuming one short-lived host receipt token."""
+    """Typed result of confirming or replaying a host receipt."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
+    status: Literal["confirmed", "already_confirmed"]
     delivered_count: int
 
 
