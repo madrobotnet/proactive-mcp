@@ -134,7 +134,6 @@ Daemon은 local sync·결정론 평가·queue·문서화된 critical OS fallback
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (공개 후 기본) |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | 에이전트가 읽는 호스트 레시피와 명령 형태 |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | 메모리 모델과 도구 계약 |
-| [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) | 제품·릴리스 정본 기획서 |
 
 ## 라이선스
 
