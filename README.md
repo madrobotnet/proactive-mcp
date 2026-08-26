@@ -14,6 +14,18 @@ A local-first MCP server that turns read-only signals and local memory into grou
 
 </div>
 
+## Get started
+
+Open the local agent you already use and paste the block below. You only handle Google consent. You need your own Google Cloud Desktop OAuth client (BYO).
+
+```text
+Install proactive-mcp with uvx from PyPI. Register it as a local stdio MCP server for this agent using absolute paths. Complete read-only Google authorization using my own Google Cloud Desktop OAuth client JSON (BYO). Do not use or request someone else's client secret. Start the recommended watcher and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md and https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not configure automated scheduling unless this host guarantees a dedicated per-run MCP profile; proactive-mcp must never launch or verify the host. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
+```
+
+You approve the Google consent screen. After a successful first read the sources should show `ok`. Command names and host recipes live in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). BYO Google details for the agent are in [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
+
+If you are developing from a checkout, give the agent that checkout's absolute path. The public install is `uvx` from PyPI.
+
 ## Why proactive-mcp?
 
 AI agents know how to answer. They rarely know when to start.
@@ -63,18 +75,6 @@ flowchart LR
 - No LLM or third-party cloud service sits inside the detection pipeline. proactive-mcp never launches a host agent/model or sends it a prompt.
 - Stale or incomplete sources produce visible degraded status, never a false "nothing to report."
 - The SQLite database, `config.toml`, credential authority marker, and any file-backed credential fallback live under `~/.proactive-mcp/`. A keyring credential stays in the operating-system keyring, outside that directory. `PROACTIVE_DATABASE` moves the file-backed state, not the keyring entry.
-
-## Get started
-
-Open the local agent you already use and paste the block below. You only handle Google consent. You need your own Google Cloud Desktop OAuth client (BYO).
-
-```text
-Install proactive-mcp with uvx from PyPI. Register it as a local stdio MCP server for this agent using absolute paths. Complete read-only Google authorization using my own Google Cloud Desktop OAuth client JSON (BYO). Do not use or request someone else's client secret. Start the recommended watcher and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md and https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not configure automated scheduling unless this host guarantees a dedicated per-run MCP profile; proactive-mcp must never launch or verify the host. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
-```
-
-You approve the Google consent screen. After a successful first read the sources should show `ok`. Command names and host recipes live in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). BYO Google details for the agent are in [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
-
-If you are developing from a checkout, give the agent that checkout's absolute path. The public install is `uvx` from PyPI.
 
 ## Connect an agent
 
