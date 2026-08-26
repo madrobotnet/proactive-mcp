@@ -160,7 +160,7 @@ def test_private_sidecar_is_revalidated_through_stable_descriptor(
     database = tmp_path / "proactive.db"
     database.touch(mode=0o600)
     sidecar = tmp_path / "proactive.db-shm"
-    sidecar.touch(mode=0o600)
+    sidecar.touch(mode=0o600 if sys.platform == "linux" else 0o644)
     original_open = os.open
     linked = False
 

@@ -71,6 +71,9 @@ def open_collaborators(
     database_guard_entered = False
     try:
         database_fd = prepare_private_database_file(directory_fd, path)
+        if database_fd is not None and sys.platform == "darwin":
+            os.close(database_fd)
+            database_fd = None
         _ = database_guard.__enter__()
         database_guard_entered = True
         with private_initialization_lock(directory_fd, path):
@@ -78,16 +81,16 @@ def open_collaborators(
                 sqlite_connection_target(directory_fd, path, database_fd),
                 timeout=busy_timeout_ms / 1000,
             )
-            verify_database_identity(directory_fd, path, database_fd)
+            if database_fd is not None:
+                verify_database_identity(directory_fd, path, database_fd)
             connection.execute(f"PRAGMA busy_timeout = {busy_timeout_ms:d}").close()
             reader = ScalarReader(connection)
             initialize_connection(connection, reader)
-            verify_database_identity(directory_fd, path, database_fd)
+            if database_fd is not None:
+                verify_database_identity(directory_fd, path, database_fd)
             enforce_private_sidecars(directory_fd, path)
-            verify_database_identity(directory_fd, path, database_fd)
-        if database_fd is not None and sys.platform == "darwin":
-            os.close(database_fd)
-            database_fd = None
+            if database_fd is not None:
+                verify_database_identity(directory_fd, path, database_fd)
     except (
         OSError,
         sqlite3.Error,
