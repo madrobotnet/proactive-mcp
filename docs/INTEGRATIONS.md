@@ -195,8 +195,15 @@ creating the job. Do not use `--script` or `--no-agent`: this is a Hermes agent
 conversation that explicitly calls MCP tools. No plugin gate, counter, selector,
 or host-launch wrapper is involved.
 
-Create the Native Cron job. The prompt carries the delivery contract because
-this is a separate scheduled conversation:
+Create the private workdir before creating the Native Cron job. Hermes requires
+an existing absolute directory for `--workdir`:
+
+```bash
+install -d -m 700 /home/you/.proactive-mcp/agent-cwd
+```
+
+The prompt carries the delivery contract because this is a separate scheduled
+conversation:
 
 ```bash
 hermes cron create \
@@ -208,7 +215,9 @@ hermes cron create \
 ```
 
 `hermes cron create` prints the job ID. Substitute that exact value for
-`JOB_ID`, inspect the native scheduler, then request one manual run:
+`JOB_ID`. `hermes cron list` is the Hermes v0.20 job-information surface; it
+shows the created job's state, schedule, delivery, workdir, and execution
+fields. Inspect it and the scheduler before requesting one manual run:
 
 ```bash
 hermes cron list
@@ -217,10 +226,12 @@ hermes cron run JOB_ID
 hermes cron runs --limit 5 JOB_ID
 ```
 
-`hermes cron run` requests the job on the next scheduler tick. Inspect that one
-run for exactly one check, conditional whole-lease confirmation, user-language
-speech, freshness warnings, and no everyday profile. It is not a repeated-run
-suite.
+`hermes cron run` requests one execution. Depending on gateway state, Hermes
+may dispatch it immediately or at the next scheduler tick. Inspect the one
+recorded attempt with `hermes cron runs --limit 5 JOB_ID`; do not retry it as a
+suite. Inspect that one run for exactly one check, conditional whole-lease
+confirmation, user-language speech, freshness warnings, and no everyday
+profile.
 
 Remove the Owner check and its restricted registration when finished:
 
