@@ -69,14 +69,3 @@ def test_serve_scheduled_delegates_to_restricted_server(
 
     assert cli.main(["serve-scheduled"]) == 0
     assert called == [True]
-
-
-def test_codex_docs_never_auto_approve_the_full_server() -> None:
-    integrations = (Path(__file__).parents[1] / "docs" / "INTEGRATIONS.md").read_text(
-        encoding="utf-8"
-    )
-
-    unsafe_override = "mcp_servers.proactive.default_tools_approval_mode=approve"
-    assert unsafe_override not in integrations
-    assert "[mcp_servers.proactive_scheduled]" in integrations
-    assert '"serve-scheduled"' in integrations

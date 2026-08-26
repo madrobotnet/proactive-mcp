@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import proactive_mcp.store._situation_consistency as consistency_module
+import proactive_mcp.store._situation_upsert as upsert_module
 from proactive_mcp.store import SituationEvidence, SituationNotFoundError
 from tests.situation_test_support import utc_datetime
 from tests.situation_tool_support import (
@@ -66,7 +66,7 @@ def test_situation_row_quota_skips_new_remote_id_growth(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(consistency_module, "_MAX_SITUATION_ROWS", 1)
+    monkeypatch.setattr(upsert_module, "_MAX_SITUATION_ROWS", 1)
     with open_harness(tmp_path, _NOON) as harness:
         summary = harness.store.situations.upsert_detections(
             (pending_detection("first"), pending_detection("second"))

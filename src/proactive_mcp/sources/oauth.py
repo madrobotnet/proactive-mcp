@@ -32,6 +32,11 @@ from proactive_mcp.sources.credentials import (
     GoogleCredential,
 )
 
+GoogleInstalledApplicationConfig.__module__ = __name__
+GoogleClientConfig.__module__ = __name__
+LocalInstalledAppFlow.__module__ = __name__
+InstalledAppFlowFactory.__module__ = __name__
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -182,6 +187,7 @@ __all__ = [
     "HEADLESS_AUTHORIZATION_URL_EVENT",
     "HEADLESS_SETUP_SUCCESS_EVENT",
     "GoogleClientConfig",
+    "GoogleInstalledApplicationConfig",
     "GoogleOAuthAuthorizationError",
     "GoogleOAuthAuthorizationTimeoutError",
     "GoogleOAuthAuthorizer",

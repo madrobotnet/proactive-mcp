@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC
 from typing import TYPE_CHECKING
 
-from ._situation_consistency import (
-    DetectionSourceMismatchError,
-    SituationConsistencyStore,
-)
+from ._situation_consistency import SituationConsistencyStore
 from ._situation_models import (
     DeliveryClaim,
     DeliveryConfirmation,
@@ -32,8 +28,12 @@ from ._situation_sql import (
     SNOOZE_SITUATION,
     WAKE_SNOOZED,
 )
+from ._situation_time import utc_iso as _utc_iso
+from ._situation_upsert import DetectionSourceMismatchError
 from ._source_generation import DelayedSourceGenerationError
 from ._sqlite_transaction import ImmediateTransaction
+
+DetectionSourceMismatchError.__module__ = __name__
 
 if TYPE_CHECKING:
     import sqlite3
@@ -313,13 +313,5 @@ class SituationStore:
             raise SituationNotFoundError(situation_id)
         return situation
 
-    def _situation_by_dedupe_key(self, dedupe_key: str) -> Situation | None:
-        return self._reader.situation_by_dedupe_key(dedupe_key)
-
     def _now_iso(self) -> str:
         return _utc_iso(self._clock.now())
-
-
-def _utc_iso(value: datetime) -> str:
-    """Serialize one timezone-aware datetime as a lexicographic UTC ISO string."""
-    return value.astimezone(UTC).isoformat()

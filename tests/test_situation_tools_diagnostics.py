@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-import proactive_mcp.store._situation_consistency as consistency_module
+import proactive_mcp.store._situation_upsert as upsert_module
 from proactive_mcp.delivery import EvaluationDependencies, EvaluationService
 from proactive_mcp.server.situation_tools import SituationToolService
 from proactive_mcp.situations.inputs import EngineInputs, SourceSnapshot
@@ -201,7 +201,7 @@ def test_proactive_check_warns_when_situation_capacity_rejects_a_detection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(consistency_module, "_MAX_SITUATION_ROWS", 0)
+    monkeypatch.setattr(upsert_module, "_MAX_SITUATION_ROWS", 0)
     with open_harness(tmp_path, _BIRTHDAY_MORNING, "already_fresh") as harness:
         harness.store.set_google_auth_state("configured")
         harness.store.record_sync_success("gmail")

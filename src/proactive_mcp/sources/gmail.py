@@ -28,6 +28,19 @@ from ._gmail_projection import (
     project_thread,
 )
 
+for _public_type in (
+    GmailError,
+    GmailAuthError,
+    GmailParseError,
+    GmailHttpResponse,
+    GmailProfile,
+    GmailThread,
+    GmailReadResult,
+    GmailInboxReadResult,
+):
+    _public_type.__module__ = __name__
+del _public_type
+
 if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
     from proactive_mcp.situations.inputs import InboxThreadSnapshot
