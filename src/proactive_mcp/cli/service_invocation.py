@@ -17,7 +17,7 @@ def current_executable() -> Path | None:
     candidate = Path(sys.argv[0])
     if not candidate.is_absolute():
         return None
-    flags = getattr(os, "O_PATH", os.O_RDONLY) | os.O_NOFOLLOW
+    flags = getattr(os, "O_PATH", os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(candidate, flags)
     except OSError:
@@ -29,13 +29,14 @@ def current_executable() -> Path | None:
         return None
     finally:
         os.close(descriptor)
-    trusted_owner = observed.st_uid in (0, os.getuid())
+    trusted_owner = True if os.name == "nt" else observed.st_uid in (0, os.getuid())
+    executable = True if os.name == "nt" else bool(observed.st_mode & _EXECUTE_BITS)
     trusted = (
         stat.S_ISREG(observed.st_mode)
         and trusted_owner
         and observed.st_nlink == 1
         and not observed.st_mode & _UNTRUSTED_WRITE_BITS
-        and bool(observed.st_mode & _EXECUTE_BITS)
+        and executable
         and (current.st_dev, current.st_ino) == (observed.st_dev, observed.st_ino)
         and current.st_nlink == 1
     )
