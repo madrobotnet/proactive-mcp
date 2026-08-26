@@ -185,11 +185,8 @@ def sqlite_connection_target(
     path: Path,
     database_fd: int | None = None,
 ) -> str:
-    """Return the Linux inode-pinned target or the real absolute path."""
-    if database_fd is not None and sys.platform == "linux":
-        return f"/proc/self/fd/{database_fd:d}"
-    if database_fd is not None and sys.platform == "darwin":
-        return f"/dev/fd/{database_fd:d}"
+    """Return a sidecar-capable path under the pinned parent when supported."""
+    del database_fd
     if directory_fd is not None and sys.platform == "linux":
         return f"/proc/self/fd/{directory_fd:d}/{path.name}"
     return str(path)

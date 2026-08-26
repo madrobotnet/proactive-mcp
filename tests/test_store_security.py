@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from proactive_mcp.store import Store, UnsafeDatabasePathError
+from proactive_mcp.store.private_path import sqlite_connection_target
 
 if TYPE_CHECKING or os.name == "nt":
     from proactive_mcp.store import windows_path
@@ -42,6 +43,27 @@ def test_macos_platform_creates_private_store(
     assert status.path == (tmp_path / "proactive.db").absolute()
     assert status.journal_mode.lower() == "wal"
     assert status.migration_version == 10
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected_target"),
+    [
+        ("linux", "/proc/self/fd/7/proactive.db"),
+        ("darwin", None),
+    ],
+)
+def test_sqlite_uses_portable_database_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    expected_target: str | None,
+) -> None:
+    db_path = (tmp_path / "proactive.db").absolute()
+    monkeypatch.setattr(sys, "platform", platform)
+
+    target = sqlite_connection_target(7, db_path, 11)
+
+    assert target == (str(db_path) if expected_target is None else expected_target)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows permissions use ACLs")
