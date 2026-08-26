@@ -126,18 +126,6 @@ Daemon은 local sync·결정론 평가·queue·문서화된 critical OS fallback
 
 범위와 릴리스 결정의 정본은 [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md)입니다.
 
-## 개발
-
-```bash
-uv sync --locked
-uv run ruff check .
-uv run ruff format --check .
-uv run basedpyright
-uv build
-```
-
-Python 3.11 이상이 필요합니다.
-
 ## 문서
 
 | 가이드 | 내용 |

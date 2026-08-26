@@ -126,18 +126,6 @@ This confirmation step keeps delivery history accurate across crashes, retries, 
 
 Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md).
 
-## Development
-
-```bash
-uv sync --locked
-uv run ruff check .
-uv run ruff format --check .
-uv run basedpyright
-uv build
-```
-
-Python 3.11 or newer is required.
-
 ## Documentation
 
 | Guide | Purpose |
