@@ -14,6 +14,18 @@
 
 </div>
 
+## 시작하기
+
+이미 쓰고 있는 로컬 에이전트를 열고 아래 블록을 붙여 넣어 주세요. 직접 하실 일은 Google 동의뿐입니다. Google Cloud Desktop OAuth 클라이언트는 본인 것(BYO)을 쓰세요.
+
+```text
+PyPI에서 uvx로 proactive-mcp를 설치하세요. 절대 경로를 사용해 이 에이전트의 로컬 stdio MCP 서버로 등록하세요. 읽기 전용 Google 연결은 제 Google Cloud Desktop OAuth 클라이언트 JSON(BYO)으로 하세요. 다른 사람 클라이언트 secret을 쓰거나 요청하지 마세요. 권장 watcher를 시작하고 연결을 확인하세요. 설정을 바꾸기 전에 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md와 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md를 읽어 주세요. reply_deadline은 행동 필요 판정이 아니라 보수적으로 뽑은 후보로 취급하세요. 사용자에게 말하기 전에 뉴스레터, 마케팅, 자동 영수증, 요청이 없는 FYI 또는 FYI-CC, 다른 사람이 맡은 스레드, 저에게 답해야 할 질문·요청·결정이 없는 행은 확신할 수 있을 때 제외하세요. 명시적인 회신·RSVP·결정 요청, 제가 책임진 마감, 저에게 직접 묻고 아직 답하지 않은 질문은 유지하세요. 불확실한 후보는 저에게 알리거나 lease 전체를 미확정 상태로 두거나 일상 대화에서 snooze하세요. 비실행 항목이라고 조용히 버리지 마세요. 모든 행을 검토한 뒤 확정하기로 선택할 때만, 보여 주지 않기로 확신한 후보까지 포함해 검토한 lease 전체를 정확히 한 번 confirm_delivery 하세요. MCP 도구명·설명·필드·값은 영어로 유지하되 저에게는 제 언어로 말하세요. 일상 대화에는 serve만 로드하고 별도 예약 대화에는 serve-scheduled만 로드하세요. 한 대화에 두 프로필을 함께 로드하지 마세요. 이 host가 dedicated per-run MCP profile을 보장하지 못하면 자동 예약을 구성하지 말고, proactive-mcp가 host를 시작하거나 검증하게 만들지 마세요. HTTP transport는 사용하지 말고, 메일을 보내거나 일정을 만들지 마세요. 실행한 모든 명령과 변경한 파일, 제 승인이 필요한 항목을 보고해 주세요.
+```
+
+Google 동의 화면은 직접 승인해 주세요. 첫 읽기에 성공하면 소스가 `ok`여야 합니다. 명령 이름과 호스트 레시피는 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)에 있습니다. 에이전트가 볼 BYO 안내는 [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md)에 있습니다.
+
+체크아웃으로 개발하시면 에이전트에게 그 절대 경로를 알려 주세요. 공개 설치는 PyPI의 `uvx`입니다.
+
 ## 왜 proactive-mcp인가
 
 AI 에이전트는 답하는 방법은 알지만 언제 먼저 말을 걸어야 하는지는 거의 모릅니다.
@@ -63,18 +75,6 @@ flowchart LR
 - 감지 파이프라인은 LLM이나 외부 클라우드 서비스를 사용하지 않습니다. proactive-mcp는 호스트 에이전트·모델을 시작하거나 prompt를 보내지 않습니다.
 - 소스가 오래되었거나 불완전하면 degraded 상태로 표시합니다. 거짓 "알릴 것 없음"은 절대 보고하지 않습니다.
 - SQLite 데이터베이스, `config.toml`, 자격 증명 권한 표식, 파일 기반 자격 증명 대체본은 `~/.proactive-mcp/` 아래에 있습니다. Keyring 자격 증명은 이 디렉터리 밖의 OS keyring에 남습니다. `PROACTIVE_DATABASE`는 파일 기반 상태만 옮기며 keyring 항목은 옮기지 않습니다.
-
-## 시작하기
-
-이미 쓰고 있는 로컬 에이전트를 열고 아래 블록을 붙여 넣어 주세요. 직접 하실 일은 Google 동의뿐입니다. Google Cloud Desktop OAuth 클라이언트는 본인 것(BYO)을 쓰세요.
-
-```text
-PyPI에서 uvx로 proactive-mcp를 설치하세요. 절대 경로를 사용해 이 에이전트의 로컬 stdio MCP 서버로 등록하세요. 읽기 전용 Google 연결은 제 Google Cloud Desktop OAuth 클라이언트 JSON(BYO)으로 하세요. 다른 사람 클라이언트 secret을 쓰거나 요청하지 마세요. 권장 watcher를 시작하고 연결을 확인하세요. 설정을 바꾸기 전에 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md와 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md를 읽어 주세요. reply_deadline은 행동 필요 판정이 아니라 보수적으로 뽑은 후보로 취급하세요. 사용자에게 말하기 전에 뉴스레터, 마케팅, 자동 영수증, 요청이 없는 FYI 또는 FYI-CC, 다른 사람이 맡은 스레드, 저에게 답해야 할 질문·요청·결정이 없는 행은 확신할 수 있을 때 제외하세요. 명시적인 회신·RSVP·결정 요청, 제가 책임진 마감, 저에게 직접 묻고 아직 답하지 않은 질문은 유지하세요. 불확실한 후보는 저에게 알리거나 lease 전체를 미확정 상태로 두거나 일상 대화에서 snooze하세요. 비실행 항목이라고 조용히 버리지 마세요. 모든 행을 검토한 뒤 확정하기로 선택할 때만, 보여 주지 않기로 확신한 후보까지 포함해 검토한 lease 전체를 정확히 한 번 confirm_delivery 하세요. MCP 도구명·설명·필드·값은 영어로 유지하되 저에게는 제 언어로 말하세요. 일상 대화에는 serve만 로드하고 별도 예약 대화에는 serve-scheduled만 로드하세요. 한 대화에 두 프로필을 함께 로드하지 마세요. 이 host가 dedicated per-run MCP profile을 보장하지 못하면 자동 예약을 구성하지 말고, proactive-mcp가 host를 시작하거나 검증하게 만들지 마세요. HTTP transport는 사용하지 말고, 메일을 보내거나 일정을 만들지 마세요. 실행한 모든 명령과 변경한 파일, 제 승인이 필요한 항목을 보고해 주세요.
-```
-
-Google 동의 화면은 직접 승인해 주세요. 첫 읽기에 성공하면 소스가 `ok`여야 합니다. 명령 이름과 호스트 레시피는 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)에 있습니다. 에이전트가 볼 BYO 안내는 [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md)에 있습니다.
-
-체크아웃으로 개발하시면 에이전트에게 그 절대 경로를 알려 주세요. 공개 설치는 PyPI의 `uvx`입니다.
 
 ## 에이전트 연결
 
