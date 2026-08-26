@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import os
 import sqlite3
 import sys
@@ -10,6 +9,11 @@ import pytest
 
 from proactive_mcp.store import Store, UnsafeDatabasePathError
 from proactive_mcp.store.private_path import enforce_private_sidecars
+
+if os.name == "nt":
+    fcntl = None
+else:
+    import fcntl
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -92,15 +96,17 @@ def test_initialization_lock_is_revalidated_after_flock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    posix_fcntl = fcntl
+    assert posix_fcntl is not None
     database = tmp_path / "proactive.db"
-    original_flock = fcntl.flock
+    original_flock = posix_fcntl.flock
     directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
     linked = False
 
     def link_after_lock(descriptor: int, operation: int) -> None:
         nonlocal linked
         original_flock(descriptor, operation)
-        if operation == fcntl.LOCK_EX and not linked:
+        if operation == posix_fcntl.LOCK_EX and not linked:
             linked = True
             os.link(
                 ".proactive.db.init.lock",
@@ -109,7 +115,7 @@ def test_initialization_lock_is_revalidated_after_flock(
                 dst_dir_fd=directory_fd,
             )
 
-    monkeypatch.setattr(fcntl, "flock", link_after_lock)
+    monkeypatch.setattr(posix_fcntl, "flock", link_after_lock)
     try:
         with pytest.raises(UnsafeDatabasePathError), Store(database):
             pass
