@@ -133,11 +133,10 @@ uv sync --locked
 uv run ruff check .
 uv run ruff format --check .
 uv run basedpyright
-uv run pytest
 uv build
 ```
 
-Python 3.11 이상이 필요합니다. 테스트는 fake clock과 로컬 fixture를 사용합니다. 일반 테스트를 실행할 때는 실제 Google API를 호출하지 않습니다.
+Python 3.11 이상이 필요합니다.
 
 ## 문서
 
