@@ -8,7 +8,7 @@
 
 <a href="README.md">English</a> · <strong>한국어</strong>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.2.0](https://img.shields.io/badge/PyPI-0.2.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
 
 [왜](#왜-proactive-mcp인가) · [작동 방식](#작동-방식) · [시작하기](#시작하기) · [에이전트 연결](#에이전트-연결) · [문서](#문서)
 
@@ -119,7 +119,7 @@ Daemon은 local sync·결정론 평가·queue·문서화된 critical OS fallback
 
 | 영역 | 지금 |
 |:---|:---|
-| 배포 | PyPI 패키지 `proactive-mcp` 0.1.0, `uvx`로 설치 |
+| 배포 | PyPI 패키지 `proactive-mcp` 0.2.0, `uvx`로 설치 |
 | Google OAuth | 본인 Desktop OAuth 클라이언트 (BYO) |
 | 호스트 | 일상 사용은 Grok CLI와 Codex CLI |
 | 데이터 | `~/.proactive-mcp/` 아래 로컬 SQLite |

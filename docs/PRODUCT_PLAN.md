@@ -4,7 +4,7 @@
 > **작성일:** 2026-08-20
 > **Owner:** 경우 (Kyungwoo Seo, @madrobotnet) — 범위 변경·릴리스·실계정 연동은 Owner 승인 사항
 > **개발 주체:** AI 코딩 에이전트 (별도 Linux 서버, GitHub 저장소 중심 워크플로)
-> **저장소:** https://github.com/madrobotnet/proactive-mcp (사용자 문서는 PyPI `proactive-mcp` 0.1.0 + `uvx`를 현재 경로로 적는다. 저장소 visibility와 실제 게시는 Owner가 같은 날 실행, §10)
+> **저장소:** https://github.com/madrobotnet/proactive-mcp (사용자 문서는 PyPI `proactive-mcp` 0.2.0 + `uvx`를 현재 경로로 적는다. 저장소 visibility와 실제 게시는 Owner가 같은 날 실행, §10)
 
 ---
 
@@ -43,7 +43,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트(BYO), read-only scope만 — **유일한** 기본 경로. Owner OAuth JSON은 공개 패키지·wheel·저장소에 넣지 않는다 (2026-08-20 확정, 2026-08-26 공개 준비에서 재확인) |
 | Gmail reply_deadline 읽기 창 | 기본 최근 7일. `[sources]`의 `gmail_lookback_days`로 조정 가능. 7일보다 오래된 미회신·날짜성 마감 백로그는 V1 범위 밖이며, 설정된 창 안의 불완전 읽기는 §9에 따라 계속 degraded (2026-08-24 Owner 결정 #25 C(7d configurable)) |
 | 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 — 구체 기준은 §7 폴백 항목 (critical만·30분, 2026-08-21 확정 #14) |
-| 배포 | 사용자 문서의 정본 artifact는 PyPI `proactive-mcp` 0.1.0 + `uvx`. 저장소 public과 실제 `uv publish`는 Owner가 같은 날 실행한다. 에이전트는 승인 없이 visibility 변경이나 게시를 하지 않는다 (2026-08-26 #32, Owner: 문서는 PyPI 전제로 작성) |
+| 배포 | 사용자 문서의 정본 artifact는 PyPI `proactive-mcp` 0.2.0 + `uvx`. 저장소 public과 실제 Trusted Publishing release는 Owner가 승인한다. 에이전트는 승인 없이 visibility 변경이나 게시를 하지 않는다 (2026-08-29, Owner: PR #38에서 `0.2.0`과 Trusted Publishing workflow 추가 승인) |
 | 사람 온보딩 | 첫 경로는 쓰는 에이전트에 붙여 넣기 + BYO. 에이전트가 설치·등록·검증을 맡고, 사람은 Google 동의와 blocker 보고만 한다. 사람은 `setup` / `google-smoke` / `mcp add`를 몰라도 된다. 기본 경로에는 wizard, 수동 `mcp add`, JSON 편집이 없다 (2026-08-24 Owner 결정 #26, 2026-08-26 공개 준비) |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
 
@@ -317,7 +317,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 
 ## 11. 배포·온보딩
 
-- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.1.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시와 저장소 public은 Owner가 같은 날 실행한다.
+- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.2.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시는 Owner 승인 후 GitHub Release와 PyPI Trusted Publishing으로 실행한다.
 - **기존 에이전트에 붙여 넣기 + BYO:** 사람은 쓰는 에이전트에 붙여 넣기 블록 하나를 넣고 Google 동의만 한다. 에이전트가 `uvx` 설치·MCP 등록·읽기 전용 Google 연결·검증을 맡는다. Google은 BYO만 — Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 토큰과 데이터는 사용자 머신에만 저장된다.
 - **권장 데몬:** 에이전트가 MCP 등록과 setup을 마친 뒤 `proactive-mcp daemon` local service를 등록한다. 데몬은 sync·평가·queue·문서화된 OS 폴백만 담당하며 agent/LLM을 호출하거나 prompt를 보내지 않는다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, periodic sync와 폴백 알림은 동작하지 않는다.
 - **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고 §5.2에 따라 전체 후보를 검토한다. 반환값에 `receipt_token`이 있고 lease를 확정하기로 했다면 사용자에게 보여 주지 않기로 확신한 후보까지 포함한 lease 전체를 `confirm_delivery(receipt_token)`로 한 번 확정한다. 불확실한 후보는 알리거나 전체 lease를 미확정 상태로 두거나 일상 대화에서 확정 후 snooze하며, 비실행 항목이라고 조용히 버리지 않는다. 토큰이 없으면 확정하지 않는다.

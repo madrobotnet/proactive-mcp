@@ -1,6 +1,6 @@
 [project]
 name = "proactive-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "A proactive layer for every AI agent."
 readme = "README.md"
 license = {text = "MIT"}
