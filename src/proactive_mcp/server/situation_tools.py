@@ -99,39 +99,38 @@ class SituationToolService:
         profile: CollectorProfile = "full",
     ) -> ProactiveCheckResponse:
         """Evaluate, lease what attention policy allows, report what is held."""
-        self._dependencies.store.collectors.record_check(profile)
         now = self._dependencies.clock.now()
+        evaluation_warnings: tuple[str, ...] = ()
         if self._dependencies.store.try_start_evaluation(
             minimum_interval=_MIN_EVALUATION_INTERVAL
         ):
             completed = self._dependencies.evaluation.run_once()
-            gmail_freshness = completed.result.gmail_freshness
-            calendar_freshness = completed.result.calendar_freshness
-            gmail_diagnostics = completed.result.accepted_gmail_diagnostics
-            warnings = completed.warnings
+            evaluation_warnings = tuple(
+                warning
+                for warning in completed.warnings
+                if not warning.startswith(("gmail:", "calendar:"))
+            )
             if completed.sources == SkippedSources("credential_storage_unavailable"):
                 self._dependencies.store.record_credential_state("unavailable")
             elif completed.sources == SkippedSources("missing_credentials"):
                 self._dependencies.store.record_credential_state("missing")
-        else:
-            sources = self._dependencies.store.source_health_snapshot()
-            gmail_freshness = evaluate_source_freshness(sources.gmail, now)
-            calendar_freshness = evaluate_source_freshness(sources.calendar, now)
-            gmail_diagnostics = sources.gmail_diagnostics
-            warnings = tuple(
-                f"{source}: source is {freshness.status}"
-                for source, freshness in (
-                    ("gmail", gmail_freshness),
-                    ("calendar", calendar_freshness),
-                )
-                if freshness.status != "ok"
-            )
         attention = self._dependencies.runtime.attention
         reservation = attention.reserve_for_delivery(now)
         claimed = reservation.situations
         held_count = max(0, self._situations.count_situations("pending") - len(claimed))
         receipt_token = reservation.claim_token if claimed else None
         source_health = self._dependencies.store.source_health_snapshot()
+        gmail_freshness = evaluate_source_freshness(source_health.gmail, now)
+        calendar_freshness = evaluate_source_freshness(source_health.calendar, now)
+        source_warnings = tuple(
+            f"{source}: source is {freshness.status}"
+            for source, freshness in (
+                ("gmail", gmail_freshness),
+                ("calendar", calendar_freshness),
+            )
+            if freshness.status != "ok"
+        )
+        warnings = tuple(dict.fromkeys((*evaluation_warnings, *source_warnings)))
         authorization_override: SourceAuthorizationState | None = (
             "credential_unavailable"
             if source_health.credential.state == "unavailable"
@@ -141,7 +140,7 @@ class SituationToolService:
                 else None
             )
         )
-        return ProactiveCheckResponse(
+        response = ProactiveCheckResponse(
             requires_confirmation=bool(claimed) and receipt_token is not None,
             situations=tuple(
                 situation_response(
@@ -154,7 +153,7 @@ class SituationToolService:
             freshness=google_freshness_response(
                 gmail_freshness,
                 calendar_freshness,
-                gmail_diagnostics,
+                source_health.gmail_diagnostics,
                 gmail_state=source_health.gmail,
                 calendar_state=source_health.calendar,
                 gmail_generation=source_health.gmail_generation,
@@ -167,6 +166,8 @@ class SituationToolService:
             warnings=warnings,
             all_clear=not claimed and held_count == 0 and not warnings,
         )
+        self._dependencies.store.collectors.record_check(profile)
+        return response
 
     def list_situations(
         self,

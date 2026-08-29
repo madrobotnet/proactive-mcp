@@ -27,6 +27,11 @@ clear only after a later credential load reports `available` or `missing`.
 `credential_missing` distinguishes a configured source whose credential was
 removed from a source that was never configured.
 
+`proactive_check` derives freshness, diagnostics, generation, authorization,
+warnings, and `all_clear` from one post-evaluation source snapshot. Evaluation
+warnings may be retained conservatively, but a newer degraded source state can
+never be omitted from the response warnings.
+
 ## Situation delivery state
 
 `Situation.state` remains the lifecycle state for compatibility. The additive
@@ -35,13 +40,15 @@ removed from a source that was never configured.
 - `available`: pending and not leased.
 - `leased`: reserved by an unexpired host receipt.
 - `host_confirmed`: the host confirmed the whole lease.
-- `not_applicable`: a non-deliverable lifecycle state with no prior host
-  confirmation.
+- `not_applicable`: a terminal or muted lifecycle state where no delivery is
+  active in the current cycle. Historical confirmation never makes a later
+  cycle host-confirmed.
 
 For `pending`, the current lease always takes precedence over historical
-delivery timestamps. Waking or reactivating a Situation clears lifecycle
-timestamps from its previous delivery cycle; immutable delivery history remains
-in `situation_deliveries`.
+delivery timestamps. Waking or reactivating may retain the previous
+`delivered_at` for cooldown compatibility, but that historical timestamp never
+confirms the new cycle; immutable delivery history remains in
+`situation_deliveries`.
 
 `delivery.presentation` is `unknown`. A host confirmation proves receipt by the
 host, not that every candidate was shown to the user. Per-item
@@ -76,7 +83,9 @@ Daemon `liveness` remains independent from `last_run_state`:
 
 `unknown` identifies a migrated or started row whose prior result cannot be
 truthfully inferred. A failed owned run persists only bounded phase, code, and
-timestamps, and non-failed rows reject any partial failure metadata.
+timestamps, and non-failed rows reject any partial failure metadata. Failures
+after ownership but before the continuous loop, including systemd readiness
+notification, are persisted as failed run outcomes before ownership is released.
 
 Fallback state is `disabled`, `unavailable`, `healthy`, or `degraded`.
 `[fallback] enabled = false` is the supported headless/self-hosted setting.

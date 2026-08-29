@@ -241,6 +241,10 @@ class Store:
         """Persist the shared Google authorization state for both sources."""
         self._require().sync.set_google_auth_state(auth_state)
 
+    def disconnect_google_auth(self) -> None:
+        """Atomically clear shared auth and credential availability."""
+        self._require().sync.disconnect_google_auth()
+
     def record_credential_state(self, state: SourceCredentialState) -> None:
         """Persist bounded credential availability for later status calls."""
         self._require().sync.record_credential_state(state)

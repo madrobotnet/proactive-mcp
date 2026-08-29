@@ -202,11 +202,27 @@ def run_daemon(*, once: bool, poll_interval_minutes: float | None) -> int:
                         DaemonFailureKind.SERVICE_NOTIFY_FAILED,
                         notify_service_ready,
                     )
-                except DaemonFailureError:
-                    run_daemon_phase(
-                        DaemonFailureKind.HEARTBEAT_FAILED,
-                        store.daemon.record_stop,
-                    )
+                except DaemonFailureError as failure:
+                    failure_phase = failure.phase
+                    failure_code = failure.code
+                    try:
+                        run_daemon_phase(
+                            DaemonFailureKind.HEARTBEAT_FAILED,
+                            lambda: store.daemon.record_run_started("continuous"),
+                        )
+                        run_daemon_phase(
+                            DaemonFailureKind.HEARTBEAT_FAILED,
+                            lambda: store.daemon.record_run_outcome(
+                                "failed",
+                                failure_phase=failure_phase,
+                                failure_code=failure_code,
+                            ),
+                        )
+                    finally:
+                        run_daemon_phase(
+                            DaemonFailureKind.HEARTBEAT_FAILED,
+                            store.daemon.record_stop,
+                        )
                     raise
                 _ = daemon.run_forever(DaemonSchedule(stopping_scheduler(), interval))
     except ConfigError:

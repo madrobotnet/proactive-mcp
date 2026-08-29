@@ -603,6 +603,9 @@ def _situation_delivery_state(
 ) -> SituationDeliveryState:
     if situation.state == "pending":
         return "leased" if lease_expires_at is not None else "available"
-    if situation.delivered_at is not None:
+    if (
+        situation.state in {"delivered", "acknowledged", "snoozed"}
+        and situation.delivered_at is not None
+    ):
         return "host_confirmed"
     return "not_applicable"

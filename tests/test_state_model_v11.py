@@ -4,20 +4,45 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+import pytest
+
 import proactive_mcp.server.status as status_module
+import proactive_mcp.sources as sources_module
+from proactive_mcp.delivery import EvaluationDependencies, EvaluationService
 from proactive_mcp.paths import ProactivePaths
+from proactive_mcp.server.situation_tools import SituationToolService
 from proactive_mcp.server.status import status_response
+from proactive_mcp.situations import AttentionPolicy
+from proactive_mcp.situations.inputs import EngineInputs, SourceSnapshot
+from proactive_mcp.sources.credentials import CredentialStore
 from proactive_mcp.store import FallbackClaim, Store
-from proactive_mcp.store.sync import SourceReadDiagnostics, SourceReadReasonCount
+from proactive_mcp.store.sync import (
+    GMAIL_READ_BYTE_BUDGET,
+    SourceReadDiagnostics,
+    SourceReadReasonCount,
+)
+from tests.cli_oauth_test_support import FakeKeyring
 from tests.situation_test_support import FakeClock, utc_datetime
-from tests.situation_tool_support import open_harness, pending_detection
+from tests.situation_tool_support import (
+    FixedSources,
+    deliver_one,
+    open_harness,
+    pending_detection,
+)
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
 
-    import pytest
+    from proactive_mcp.store import DeliveryReservation
 
 _GENERATION_SNAPSHOT_FAILURE = "generation must come from source snapshot"
+_CHECK_FAILURE = "injected proactive check failure"
+
+
+class _FailedEvaluation:
+    def run_once(self) -> None:
+        raise RuntimeError(_CHECK_FAILURE)
 
 
 def test_status_separates_source_authorization_freshness_and_read_state(
@@ -139,6 +164,36 @@ def test_missing_credentials_survive_coalesced_checks_and_status(
     assert observed.google.gmail.authorization.state == "credential_missing"
 
 
+def test_disconnect_clears_credential_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = ProactivePaths.for_database(tmp_path / "proactive.db")
+    clock = FakeClock(utc_datetime(2026, 8, 29, 12))
+
+    def credential_store(path: Path) -> CredentialStore:
+        return CredentialStore(path, keyring=FakeKeyring())
+
+    monkeypatch.setattr(
+        sources_module,
+        "CredentialStore",
+        credential_store,
+    )
+    with Store(paths.database, clock=clock) as store:
+        store.set_google_auth_state("configured")
+        store.record_credential_state("missing")
+
+    sources_module.disconnect_google_sources(paths.database)
+
+    with Store(paths.database, clock=clock) as store:
+        snapshot = store.source_health_snapshot()
+        observed = status_response(store, clock, paths)
+
+    assert snapshot.credential.state == "unknown"
+    assert observed.google.gmail.status == "not_configured"
+    assert observed.google.gmail.authorization.state == "not_configured"
+
+
 def test_freshness_age_remains_stale_after_a_newer_transport_error(
     tmp_path: Path,
 ) -> None:
@@ -225,6 +280,80 @@ def test_status_uses_one_source_snapshot_without_followup_generation_reads(
     assert status.google.gmail.generation.issued == generation.number
 
 
+def test_proactive_response_uses_one_post_evaluation_source_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = utc_datetime(2026, 8, 29, 12)
+    with open_harness(tmp_path, now) as harness:
+        harness.store.set_google_auth_state("configured")
+        gmail = harness.store.reserve_source_generation("gmail")
+        calendar = harness.store.reserve_source_generation("calendar")
+        evaluation = EvaluationService(
+            EvaluationDependencies(
+                evaluator=harness.dependencies.runtime.engine,
+                sources=FixedSources(
+                    EngineInputs(
+                        gmail_threads=SourceSnapshot(
+                            gmail,
+                            (),
+                            resolve_absent=True,
+                        ),
+                        calendar_events=SourceSnapshot(
+                            calendar,
+                            (),
+                            resolve_absent=True,
+                        ),
+                        gmail_diagnostics=SourceReadDiagnostics(
+                            outcome="healthy",
+                            request_count=0,
+                            page_count=0,
+                            projected_count=0,
+                            excluded_count=0,
+                            byte_budget=GMAIL_READ_BYTE_BUDGET,
+                        ),
+                    )
+                ),
+            )
+        )
+        service = SituationToolService(
+            replace(harness.dependencies, evaluation=evaluation)
+        )
+        with Store(harness.paths.database, clock=harness.clock) as writer:
+            original_reserve = AttentionPolicy.reserve_for_delivery
+            interleaved = False
+
+            def interleave_after_evaluation(
+                policy: AttentionPolicy,
+                evaluated_at: datetime,
+            ) -> DeliveryReservation:
+                nonlocal interleaved
+                reservation = original_reserve(policy, evaluated_at)
+                if not interleaved:
+                    interleaved = True
+                    generation = writer.reserve_source_generation("gmail")
+                    _ = writer.situations.apply_source_generation(
+                        generation,
+                        (),
+                        status="degraded",
+                        error_code="network",
+                    )
+                return reservation
+
+            monkeypatch.setattr(
+                AttentionPolicy,
+                "reserve_for_delivery",
+                interleave_after_evaluation,
+            )
+
+            response = service.proactive_check()
+
+    assert response.freshness.gmail.status == "error"
+    assert response.freshness.gmail.generation.state == "degraded"
+    assert "gmail: source is error" in response.warnings
+    assert response.all_clear is False
+
+
 def test_situation_delivery_state_distinguishes_available_leased_and_confirmed(
     tmp_path: Path,
 ) -> None:
@@ -274,6 +403,27 @@ def test_woken_pending_situation_reports_current_lease_not_old_confirmation(
     assert repeated.receipt_token is not None
     assert repeated.situations[0].state == "pending"
     assert repeated.situations[0].delivery.state == "leased"
+
+
+def test_terminal_state_does_not_reuse_prior_cycle_confirmation(
+    tmp_path: Path,
+) -> None:
+    now = utc_datetime(2026, 8, 29, 12)
+    with open_harness(tmp_path, now) as harness:
+        delivered = deliver_one(harness, "delivery-cycle")
+        _ = harness.service.snooze_situation(
+            delivered.id,
+            (harness.clock.now() + timedelta(minutes=1)).isoformat(),
+        )
+        harness.clock.advance(timedelta(minutes=2))
+
+        leased = harness.service.proactive_check()
+        assert leased.receipt_token is not None
+        _ = harness.store.situations.resolve_absent("calendar_conflict", ())
+        terminal = harness.service.get_situation(delivered.id)
+
+    assert terminal.state == "resolved"
+    assert terminal.delivery.state == "not_applicable"
 
 
 def test_source_backed_situation_exposes_generation_provenance(
@@ -379,6 +529,23 @@ def test_collector_observation_timestamps_never_regress(
 
     assert observed.last_check_at == newer.now().isoformat()
     assert observed.last_confirm_at == newer.now().isoformat()
+
+
+def test_failed_proactive_check_does_not_activate_collector(
+    tmp_path: Path,
+) -> None:
+    with open_harness(tmp_path, utc_datetime(2026, 8, 29, 12)) as harness:
+        service = SituationToolService(
+            replace(harness.dependencies, evaluation=_FailedEvaluation())
+        )
+
+        with pytest.raises(RuntimeError, match=_CHECK_FAILURE):
+            _ = service.proactive_check(profile="scheduled")
+
+        observed = harness.store.collectors.status("scheduled")
+
+    assert observed.state == "never_seen"
+    assert observed.last_check_at is None
 
 
 def test_daemon_status_persists_last_run_mode_and_bounded_failure(

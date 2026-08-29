@@ -167,6 +167,12 @@ class SyncStore:
         with ImmediateTransaction(self._connection):
             self._states.write_google_auth(auth_state, None)
 
+    def disconnect_google_auth(self) -> None:
+        """Atomically clear shared auth and credential availability."""
+        with ImmediateTransaction(self._connection):
+            self._states.write_google_auth("not_configured", None)
+            self._states.record_credential_state("unknown")
+
     def record_credential_state(self, state: SourceCredentialState) -> None:
         """Persist bounded credential availability without credential data."""
         self._states.record_credential_state(state)
