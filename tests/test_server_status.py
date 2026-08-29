@@ -7,6 +7,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 
+import proactive_mcp.server.status as status_module
 from proactive_mcp.config import load_config
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server import StatusResponse, build_status
@@ -138,10 +139,14 @@ def test_status_reports_daemon_liveness_and_redacted_fallback_failures(
     assert status.overall == "degraded"
 
 
-def test_status_is_healthy_only_when_no_surface_warns(tmp_path: Path) -> None:
+def test_status_is_healthy_only_when_no_surface_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Given: fresh Google sources and a live daemon heartbeat.
     paths = ProactivePaths.for_database(tmp_path / "proactive.db")
     clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    monkeypatch.setattr(status_module, "notification_available", lambda: True)
     with Store(paths.database, clock=clock) as store:
         store.set_google_auth_state("configured")
         store.record_sync_success("gmail")

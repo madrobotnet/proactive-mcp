@@ -39,6 +39,7 @@ class RawSlice(BaseModel):
     poll_interval_minutes: TomlValue | None = None
     priorities: list[TomlValue] | None = None
     wait_minutes: TomlValue | None = None
+    enabled: TomlValue | None = None
 
 
 class RawSources(BaseModel):

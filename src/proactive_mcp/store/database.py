@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from ._lazy_sync_lease import LazySyncLease
     from ._source_generation import SourceGeneration, SourceGenerationState
+    from .collectors import CollectorStore
     from .daemon_status import DaemonStatusStore
     from .fallbacks import FallbackStore
     from .memory import (
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from .situations import SituationStore
     from .sync import (
         SourceAuthState,
+        SourceCredentialState,
         SourceErrorCode,
         SourceHealthSnapshot,
         SourceName,
@@ -188,6 +190,11 @@ class Store:
         """Return the one-shot OS notification fallback operations."""
         return self._require().fallbacks
 
+    @property
+    def collectors(self) -> CollectorStore:
+        """Return profile-scoped host-call observations."""
+        return self._require().collectors
+
     def acquire_lazy_sync_lease(
         self,
         *,
@@ -233,6 +240,10 @@ class Store:
     def set_google_auth_state(self, auth_state: SourceAuthState) -> None:
         """Persist the shared Google authorization state for both sources."""
         self._require().sync.set_google_auth_state(auth_state)
+
+    def record_credential_state(self, state: SourceCredentialState) -> None:
+        """Persist bounded credential availability for later status calls."""
+        self._require().sync.record_credential_state(state)
 
     def record_gmail_sync(
         self,

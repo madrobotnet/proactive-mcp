@@ -26,6 +26,7 @@ __all__ = [
     "NotificationPlatform",
     "NotificationRunner",
     "SubprocessNotificationRunner",
+    "notification_available",
     "parse_notification_platform",
     "send_os_notification",
     "trusted_notifier_path",
@@ -126,6 +127,16 @@ def parse_notification_platform(raw: str) -> NotificationPlatform:
         return _PLATFORMS[raw]
     except KeyError:
         raise NotificationError(_UNSUPPORTED) from None
+
+
+def notification_available() -> bool:
+    """Return whether this host exposes its trusted notifier executable."""
+    try:
+        platform = parse_notification_platform(sys.platform)
+        notifier = Path(trusted_notifier_path(platform))
+    except (NotificationError, OSError):
+        return False
+    return notifier.is_file()
 
 
 def send_os_notification(

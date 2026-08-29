@@ -82,6 +82,13 @@ An unconfirmed lease expires back to pending. This is the intended fail-closed
 behavior when an agent is absent, a conversation ends, or output is not
 received.
 
+`delivered` means the host confirmed the whole receipt, not that every
+candidate was shown to the user. Read the additive `delivery.state` and keep
+`delivery.presentation=unknown`; do not invent a presentation result. An
+unknown or expired supplied receipt returns `invalid_or_expired` with count
+zero. Profile-scoped collector observations report actual calls only and never
+claim to verify host configuration. See [`STATE_MODEL.md`](STATE_MODEL.md).
+
 ## Installation command shapes
 
 Use an absolute executable path in host MCP configuration. The public shape

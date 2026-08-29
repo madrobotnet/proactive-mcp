@@ -105,7 +105,7 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 | 도구 | 목적 | 핵심 입출력 |
 |---|---|---|
 | `proactive_check` | **핵심 도구.** 미전달 상황 요약을 짧은 lease로 예약해 반환. 가볍고 빨라야 함(<1s, sync 필요 시 예외) | 입력 없음 → `{protocol_version: "1", requires_confirmation, confirmation: {tool: "confirm_delivery"}, situations[], receipt_token, freshness, budget, held_count, warnings, all_clear}`. `requires_confirmation`은 situations가 비어 있지 않고 token이 있을 때만 true |
-| `confirm_delivery` | 호스트가 `proactive_check` 결과를 수령한 뒤 lease를 전달 완료로 확정 | `receipt_token` → `{status: "confirmed"\|"already_confirmed", delivered_count}`. 최초 확정은 `confirmed`; replay는 `already_confirmed`와 최초 확정의 동일 count를 반환 |
+| `confirm_delivery` | 호스트가 `proactive_check` 결과를 수령한 뒤 lease를 전달 완료로 확정 | `receipt_token` → `{status: "confirmed"\|"already_confirmed"\|"invalid_or_expired", delivered_count}`. 최초 확정은 `confirmed`; replay는 `already_confirmed`; 알 수 없거나 만료된 supplied token은 존재 여부를 구분하지 않는 `invalid_or_expired`와 count 0을 반환 |
 | `list_situations` | 상황 목록 조회 (상태 필터) | `state?` → 상황 배열 |
 | `get_situation` | 상황 상세 + 근거(evidence) | `id` → 상세 |
 | `acknowledge_situation` | 사용자가 인지/처리함 | `id` |
@@ -118,6 +118,8 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 
 메모리 도구의 시그니처는 M2.5부터 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md)가 정본이다 — `remember`/`recall` 확장과 `update`/`list_entities` 추가 (2026-08-21 개정, §8 참조).
 
+상태 응답은 legacy `status`/`state`를 유지하면서 source 인증·신선도·읽기·generation, Situation lifecycle·lease·host confirmation, collector 관측, daemon liveness·last run, fallback capability를 독립 축으로 제공한다. 정본 필드와 migration 011 호환성은 [`STATE_MODEL.md`](STATE_MODEL.md)를 따른다.
+
 ### 4.1 전달 상태 머신
 
 ```text
@@ -129,6 +131,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 ```
 
 - `proactive_check`가 상황을 반환한 것만으로는 `delivered`로 기록하지 않는다. 호스트는 반환된 모든 행을 검토한 뒤 확정하기로 선택할 때만 응답의 `receipt_token`을 `confirm_delivery`에 전달해 lease 전체를 확정한다. 사용자의 대화에 보여 주지 않기로 확신한 후보도 전체 lease에 포함된다. 이후 동일 상황은 기본적으로 재반환되지 않는다(에이전트가 `list_situations`로는 조회 가능).
+- `delivered`는 호스트가 전체 lease receipt를 확정했다는 legacy lifecycle 값이다. 사용자에게 실제로 보였다는 뜻이 아니며 additive `delivery.state=host_confirmed`, `delivery.presentation=unknown`으로 그 경계를 명시한다.
 - 활성 lease 동안에는 다른 에이전트와 OS 폴백이 같은 상황을 가져가지 않는다. 호스트가 결과를 확인하지 못하면 lease가 만료되어 pending으로 다시 제공되므로 전송 실패가 알림 유실로 바뀌지 않는다.
 - `proactive_check`만 호출하는 연동은 반드시 `confirm_delivery` 호출을 추가해야 한다. 이를 생략하면 안전한 실패 방식으로 lease 만료 후 상황이 재제공된다.
 - `delivered` 후 사용자 반응 없이 상황이 소스에서 해소되면 `resolved`로 자동 정리한다.

@@ -6,9 +6,13 @@ from dataclasses import dataclass
 from datetime import (
     datetime,  # noqa: TC003 - Pydantic resolves this annotation at runtime.
 )
-from typing import Final, Literal, TypeAlias
+from typing import TYPE_CHECKING, Final, Literal, TypeAlias
+
+if TYPE_CHECKING:
+    from ._source_generation import SourceGenerationState
 
 SourceName = Literal["gmail", "calendar"]
+SourceCredentialState = Literal["unknown", "available", "missing", "unavailable"]
 SourceAuthState = Literal["not_configured", "configured", "needs_reauth"]
 SourceErrorCode = Literal[
     "invalid_grant",
@@ -113,12 +117,23 @@ class SourceSyncState:
 
 
 @dataclass(frozen=True, slots=True)
+class CredentialOperationalState:
+    """Credential storage availability without credential material."""
+
+    state: SourceCredentialState
+    observed_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
 class SourceHealthSnapshot:
     """Google source states and accepted Gmail diagnostics from one read."""
 
     gmail: SourceSyncState
     calendar: SourceSyncState
     gmail_diagnostics: SourceReadDiagnostics | None
+    gmail_generation: SourceGenerationState
+    calendar_generation: SourceGenerationState
+    credential: CredentialOperationalState
 
 
 class InvalidSourceReadDiagnosticsError(ValueError):

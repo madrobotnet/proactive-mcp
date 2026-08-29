@@ -133,6 +133,7 @@ Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PR
 | [`README.ko.md`](README.ko.md) | Korean README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (the public default) |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Host recipes and command shapes for agents |
+| [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md) | Source, lease, collector, daemon, fallback, and receipt state semantics |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | Memory model and tool contracts |
 
 ## License

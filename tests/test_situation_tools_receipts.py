@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from proactive_mcp.store import DeliveryReceiptError
 from tests.situation_test_support import utc_datetime
 from tests.situation_tool_support import open_harness, pending_detection, write_config
 
@@ -27,11 +26,11 @@ def test_unconfirmed_delivery_lease_expires_back_to_pending(tmp_path: Path) -> N
         harness.clock.advance(timedelta(minutes=3))
         second = harness.service.proactive_check()
         assert second.receipt_token is not None
-        with pytest.raises(DeliveryReceiptError):
-            _ = harness.service.confirm_delivery(first.receipt_token)
+        expired = harness.service.confirm_delivery(first.receipt_token)
         confirmation = harness.service.confirm_delivery(second.receipt_token)
 
     assert tuple(item.id for item in second.situations) == (first.situations[0].id,)
+    assert (expired.status, expired.delivered_count) == ("invalid_or_expired", 0)
     assert confirmation.delivered_count == 1
 
 

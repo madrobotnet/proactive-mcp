@@ -9,9 +9,13 @@ from uuid import uuid4
 from ._daemon_models import (
     DAEMON_HEARTBEAT_ADAPTER,
     NEVER_STARTED,
+    DaemonFailureCode,
+    DaemonFailurePhase,
     DaemonHeartbeat,
+    DaemonLastRunState,
     DaemonLiveness,
     DaemonNotStartedError,
+    DaemonRunMode,
     DaemonStatus,
 )
 from ._sqlite_transaction import ImmediateTransaction
@@ -57,7 +61,12 @@ _SELECT_HEARTBEAT: Final = """
                 'state', state, 'pid', pid, 'started_at', started_at,
                 'heartbeat_at', heartbeat_at, 'cycle_count', cycle_count,
                 'owner_token', owner_token,
-                'poll_interval_seconds', poll_interval_seconds
+                'poll_interval_seconds', poll_interval_seconds,
+                'mode', mode, 'last_run_state', last_run_state,
+                'last_failure_phase', last_failure_phase,
+                'last_failure_code', last_failure_code,
+                'last_failure_at', last_failure_at,
+                'last_completed_at', last_completed_at
             )))
             FROM daemon_status WHERE id = 1
             """
@@ -69,6 +78,14 @@ class InvalidDaemonPollIntervalError(ValueError):
     def __init__(self) -> None:
         """Initialize the stable boundary-safe message."""
         super().__init__("poll interval must be positive")
+
+
+class InvalidDaemonRunOutcomeError(ValueError):
+    """Raised when a failed run omits its bounded failure identity."""
+
+    def __init__(self) -> None:
+        """Initialize the stable boundary-safe message."""
+        super().__init__("failed daemon outcome requires phase and code")
 
 
 class DaemonStatusStore:
@@ -174,6 +191,57 @@ class DaemonStatusStore:
         """Stop the row only when this daemon instance owns the running row."""
         self._record_owned(_RECORD_STOP)
 
+    def record_run_started(self, mode: DaemonRunMode) -> None:
+        """Persist the current run mode without erasing its previous outcome."""
+        with ImmediateTransaction(self._connection):
+            cursor = self._connection.execute(
+                """
+                UPDATE daemon_status SET mode = ?
+                WHERE id = 1 AND state = 'running' AND owner_token = ?
+                """,
+                (mode, self._owner_token),
+            )
+            if cursor.rowcount == 0 and self._heartbeat() is None:
+                raise DaemonNotStartedError
+
+    def record_run_outcome(
+        self,
+        state: DaemonLastRunState,
+        *,
+        failure_phase: DaemonFailurePhase | None = None,
+        failure_code: DaemonFailureCode | None = None,
+    ) -> None:
+        """Persist one bounded run result while this process owns the row."""
+        if state == "failed":
+            if failure_phase is None or failure_code is None:
+                raise InvalidDaemonRunOutcomeError
+            failure_at = self._now_iso()
+        else:
+            failure_phase = None
+            failure_code = None
+            failure_at = None
+        completed_at = self._now_iso()
+        with ImmediateTransaction(self._connection):
+            cursor = self._connection.execute(
+                """
+                UPDATE daemon_status
+                SET last_run_state = ?, last_failure_phase = ?,
+                    last_failure_code = ?, last_failure_at = ?,
+                    last_completed_at = ?
+                WHERE id = 1 AND state = 'running' AND owner_token = ?
+                """,
+                (
+                    state,
+                    failure_phase,
+                    failure_code,
+                    failure_at,
+                    completed_at,
+                    self._owner_token,
+                ),
+            )
+            if cursor.rowcount == 0 and self._heartbeat() is None:
+                raise DaemonNotStartedError
+
     def status(self, *, stale_after: timedelta | None = None) -> DaemonStatus:
         """Return liveness and the effective persisted polling cadence.
 
@@ -199,6 +267,12 @@ class DaemonStatusStore:
             heartbeat_at=heartbeat.heartbeat_at,
             cycle_count=heartbeat.cycle_count,
             poll_interval=poll_interval,
+            mode=heartbeat.mode,
+            last_run_state=heartbeat.last_run_state,
+            last_failure_phase=heartbeat.last_failure_phase,
+            last_failure_code=heartbeat.last_failure_code,
+            last_failure_at=heartbeat.last_failure_at,
+            last_completed_at=heartbeat.last_completed_at,
         )
 
     def _liveness(

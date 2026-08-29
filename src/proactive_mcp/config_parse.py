@@ -59,6 +59,20 @@ def parse_count(value: TomlValue | None, key: str, spec: tuple[int, int]) -> int
     return value
 
 
+def parse_bool(
+    value: TomlValue | None,
+    key: str,
+    *,
+    default: bool,
+) -> bool:
+    """Parse one strict boolean setting."""
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ConfigError(field=key, reason="must be a boolean")
+    return value
+
+
 def parse_span(value: TomlValue | None, key: str, default: timedelta) -> timedelta:
     """Parse a positive numeric TOML duration into a timedelta."""
     if value is None:

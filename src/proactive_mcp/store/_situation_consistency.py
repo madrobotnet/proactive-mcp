@@ -81,7 +81,13 @@ class SituationConsistencyStore:
         """Persist one compatibility detection batch atomically."""
         timestamp = self._now_iso()
         with ImmediateTransaction(self._connection):
-            return self._upserter.upsert_batch(detections, timestamp, None)
+            return self._upserter.upsert_batch(
+                detections,
+                timestamp,
+                None,
+                "local",
+                None,
+            )
 
     def apply_source_generation(  # noqa: PLR0913
         self,
@@ -101,13 +107,20 @@ class SituationConsistencyStore:
         timestamp = self._now_iso()
         with ImmediateTransaction(self._connection):
             self._sync.accept_source_generation(generation, status, diagnostics)
-            summary = self._upserter.upsert_batch(detections, timestamp, expected_type)
+            summary = self._upserter.upsert_batch(
+                detections,
+                timestamp,
+                expected_type,
+                generation.source,
+                generation.number,
+            )
             resolved = 0
             if _RESOLVES_ABSENT[status]:
                 resolved = self._upserter.resolve(
                     expected_type,
                     {item.dedupe_key for item in detections},
                     timestamp,
+                    generation.source,
                 )
             elif resolve_absent:
                 resolved = self._upserter.resolve_by_source_ids(
@@ -116,6 +129,7 @@ class SituationConsistencyStore:
                     set(resolution_excluded_ids),
                     timestamp,
                     include=False,
+                    source_name=generation.source,
                 )
             elif resolution_scope_ids:
                 resolved = self._upserter.resolve_by_source_ids(
@@ -124,6 +138,7 @@ class SituationConsistencyStore:
                     set(resolution_scope_ids),
                     timestamp,
                     include=True,
+                    source_name=generation.source,
                 )
             if error_code is None and status == "complete":
                 self._sync.record_sync_success(
@@ -151,12 +166,17 @@ class SituationConsistencyStore:
         timestamp = self._now_iso()
         with ImmediateTransaction(self._connection):
             summary = self._upserter.upsert_batch(
-                detections, timestamp, "personal_occasion"
+                detections,
+                timestamp,
+                "personal_occasion",
+                "memory",
+                None,
             )
             resolved = self._upserter.resolve(
                 "personal_occasion",
                 {item.dedupe_key for item in detections},
                 timestamp,
+                "memory",
             )
         return DetectionApplySummary(summary, resolved)
 

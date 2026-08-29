@@ -7,6 +7,8 @@ from typing import Final
 SITUATION_JSON: Final = """
             json_object(
                 'id', id, 'situation_type', situation_type,
+                'source_name', source_name,
+                'source_generation', source_generation,
                 'dedupe_key', dedupe_key, 'state', state, 'priority', priority,
                 'title', title, 'why_now', why_now, 'evidence', json(evidence),
                 'expires_at', expires_at, 'detected_at', detected_at,
@@ -20,19 +22,22 @@ SITUATION_JSON: Final = """
 INSERT_SITUATION: Final = """
             INSERT INTO situations (
                 situation_type, dedupe_key, state, priority, title, why_now,
-                evidence, expires_at, detected_at, updated_at
-            ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+                evidence, expires_at, detected_at, updated_at,
+                source_name, source_generation
+            ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 REFRESH_SITUATION: Final = """
             UPDATE situations
             SET priority = ?, title = ?, why_now = ?, evidence = ?,
-                expires_at = ?, updated_at = ?
+                expires_at = ?, source_name = ?, source_generation = ?,
+                updated_at = ?
             WHERE id = ?
             """
 REACTIVATE_SITUATION: Final = """
             UPDATE situations
             SET state = 'pending', priority = ?, title = ?, why_now = ?,
-                evidence = ?, expires_at = ?, detected_at = ?, updated_at = ?,
+                evidence = ?, expires_at = ?, source_name = ?,
+                source_generation = ?, detected_at = ?, updated_at = ?,
                 resolved_at = NULL, expired_at = NULL, snoozed_until = NULL,
                 snooze_cooldown_exempt = 0
             WHERE id = ?
@@ -123,6 +128,7 @@ SELECT_ACTIVE_BY_TYPE: Final = f"""
             FROM (
                 SELECT * FROM situations
                 WHERE situation_type = ?
+                  AND (? IS NULL OR source_name = ?)
                   AND state IN ('pending', 'delivered')
                 ORDER BY id ASC
             )

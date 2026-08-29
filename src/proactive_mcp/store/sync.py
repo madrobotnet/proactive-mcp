@@ -17,6 +17,7 @@ from ._sync_models import (
     GMAIL_READ_BYTE_BUDGET,
     InvalidSourceReadDiagnosticsError,
     SourceAuthState,
+    SourceCredentialState,
     SourceErrorCode,
     SourceHealthSnapshot,
     SourceName,
@@ -49,6 +50,7 @@ __all__ = [
     "GMAIL_READ_BYTE_BUDGET",
     "InvalidSourceReadDiagnosticsError",
     "SourceAuthState",
+    "SourceCredentialState",
     "SourceErrorCode",
     "SourceHealthSnapshot",
     "SourceName",
@@ -79,7 +81,7 @@ class SyncStore:
         self._states = SourceStateStore(connection, clock)
         self._snapshots = SourceSnapshotStore(connection)
         self._diagnostics = GmailDiagnosticsStore(connection)
-        self._generations = SourceGenerationStore(connection)
+        self._generations = SourceGenerationStore(connection, clock)
         self._lazy_sync_leases = LazySyncLeaseStore(connection, clock)
 
     def acquire_lazy_sync_lease(
@@ -164,6 +166,10 @@ class SyncStore:
         """Persist one shared Google authorization state for both sources."""
         with ImmediateTransaction(self._connection):
             self._states.write_google_auth(auth_state, None)
+
+    def record_credential_state(self, state: SourceCredentialState) -> None:
+        """Persist bounded credential availability without credential data."""
+        self._states.record_credential_state(state)
 
     def record_sync_success(
         self,

@@ -8,6 +8,7 @@ from proactive_mcp.server.situation_responses import (
     ConfirmDeliveryResponse,
     ProactiveCheckResponse,
 )
+from proactive_mcp.store import Store
 from tests.mcp_session_contract_support import (
     DAILY_TOOLS as _DAILY_TOOLS,
 )
@@ -123,6 +124,35 @@ async def test_empty_scheduled_check_is_tokenless(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_server_profiles_record_their_own_collector_observations(
+    tmp_path: Path,
+) -> None:
+    async with _session(tmp_path, _SCHEDULED) as scheduled:
+        _ = await scheduled.call_tool("proactive_check")
+
+    with Store(tmp_path / "memory.db") as store:
+        after_scheduled = (
+            store.collectors.status("full"),
+            store.collectors.status("scheduled"),
+        )
+
+    async with _session(tmp_path, _SERVE) as full:
+        _ = await full.call_tool("proactive_check")
+
+    with Store(tmp_path / "memory.db") as store:
+        after_full = (
+            store.collectors.status("full"),
+            store.collectors.status("scheduled"),
+        )
+
+    assert tuple(item.state for item in after_scheduled) == (
+        "never_seen",
+        "active",
+    )
+    assert tuple(item.state for item in after_full) == ("active", "active")
+
+
+@pytest.mark.anyio
 async def test_scheduled_profile_rejects_remember_without_mutation(
     tmp_path: Path,
 ) -> None:
@@ -163,7 +193,7 @@ async def test_missing_receipt_token_confirm_does_not_mutate(tmp_path: Path) -> 
         # When: the host calls confirm_delivery without receipt_token.
         refused = await session.call_tool("confirm_delivery", {})
 
-    # Then: the call is rejected and nothing is delivered.
+    # Then: schema validation still rejects a missing required token.
     assert refused.is_error is True
     assert _delivery_counts(tmp_path) == before
 
@@ -179,8 +209,12 @@ async def test_unknown_receipt_token_confirm_does_not_mutate(tmp_path: Path) -> 
             {"receipt_token": "unknown-receipt"},
         )
 
-    # Then: the call is rejected and nothing is delivered.
-    assert refused.is_error is True
+    # Then: a supplied but unknown token gets the stable non-oracle status.
+    response = ConfirmDeliveryResponse.model_validate_json(json_text(refused))
+    assert (response.status, response.delivered_count) == (
+        "invalid_or_expired",
+        0,
+    )
     assert _delivery_counts(tmp_path) == before
 
 

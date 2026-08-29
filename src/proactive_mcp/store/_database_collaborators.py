@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from ._database_initialize import initialize_connection
 from ._database_support import ScalarReader
 from ._evaluation_gate import EvaluationGate
+from .collectors import CollectorStore
 from .daemon_status import DaemonStatusStore
 from .fallbacks import FallbackStore
 from .memory import MemoryStore
@@ -51,6 +52,7 @@ class StoreCollaborators:
     daemon: DaemonStatusStore
     fallbacks: FallbackStore
     evaluation_gate: EvaluationGate
+    collectors: CollectorStore
     database_guard: AbstractContextManager[None]
 
 
@@ -118,6 +120,7 @@ def open_collaborators(
         daemon=DaemonStatusStore(connection, clock),
         fallbacks=FallbackStore(connection, clock, situations.reader),
         evaluation_gate=EvaluationGate(connection, clock),
+        collectors=CollectorStore(connection, clock),
         database_guard=database_guard,
     )
 

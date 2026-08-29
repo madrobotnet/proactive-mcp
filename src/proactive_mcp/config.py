@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from proactive_mcp.config_parse import (
     ConfigError,
     PriorityName,
+    parse_bool,
     parse_count,
     parse_priorities,
     parse_span,
@@ -81,6 +82,7 @@ class FallbackSettings:
 
     priorities: tuple[PriorityName, ...] = ("critical",)
     wait: timedelta = timedelta(minutes=30)
+    enabled: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +172,11 @@ def load_config(path: Path) -> ProactiveConfig:
             priorities=parse_priorities(raw.fallback.priorities),
             wait=parse_span(
                 raw.fallback.wait_minutes, "wait_minutes", timedelta(minutes=30)
+            ),
+            enabled=parse_bool(
+                raw.fallback.enabled,
+                "fallback.enabled",
+                default=True,
             ),
         ),
         sources=SourceSettings(

@@ -29,10 +29,11 @@ from proactive_mcp.server.situation_responses import (
 from proactive_mcp.server.situation_tools import (
     acknowledge_situation,
     confirm_delivery,
+    confirm_delivery_for_profile,
     get_situation,
     list_situations,
     mute_situation,
-    proactive_check,
+    proactive_check_for_profile,
     snooze_situation,
 )
 from proactive_mcp.server.status import (
@@ -163,6 +164,13 @@ async def get_status() -> str:
 
 def create_server(*, profile: ServerProfile = "full") -> MCPServer[None]:
     """Create a full interactive or restricted scheduled MCP server."""
+
+    async def profile_check() -> str:
+        return await proactive_check_for_profile(profile)
+
+    async def profile_confirm(receipt_token: str) -> str:
+        return await confirm_delivery_for_profile(receipt_token, profile)
+
     server_name = (
         "proactive-mcp-scheduled" if profile == "scheduled" else "proactive-mcp"
     )
@@ -178,14 +186,14 @@ def create_server(*, profile: ServerProfile = "full") -> MCPServer[None]:
         description=_PROACTIVE_CHECK_DESCRIPTION,
         meta={"session_contract": "one_check"},
     )
-    _ = check_tool(proactive_check)
+    _ = check_tool(profile_check)
 
     confirm_tool = server.tool(
         name="confirm_delivery",
         description=_CONFIRM_DELIVERY_DESCRIPTION,
         meta={"session_contract": "conditional_confirm"},
     )
-    _ = confirm_tool(confirm_delivery)
+    _ = confirm_tool(profile_confirm)
 
     if profile == "scheduled":
         return server
@@ -277,4 +285,4 @@ def create_server(*, profile: ServerProfile = "full") -> MCPServer[None]:
     return server
 
 
-server = create_server()
+server: MCPServer[None] = create_server()

@@ -262,6 +262,14 @@ class SituationStore:
         """Return one situation by id, or None if it does not exist."""
         return self._reader.get_situation(situation_id)
 
+    def active_lease_expires_at(
+        self,
+        situation_id: int,
+        now: datetime,
+    ) -> str | None:
+        """Return one active lease expiry without exposing receipt identity."""
+        return self._reader.active_lease_expires_at(situation_id, _utc_iso(now))
+
     def count_delivered_between(self, start: datetime, end: datetime) -> int:
         """Count non-critical deliveries inside one half-open UTC window."""
         return self._reader.count_delivered_between(
