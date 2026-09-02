@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.madrobotnet/proactive-mcp",
+  "title": "proactive-mcp",
+  "description": "Detects reply deadlines, calendar conflicts, and personal occasions for MCP agents.",
+  "repository": {
+    "url": "https://github.com/madrobotnet/proactive-mcp",
+    "source": "github"
+  },
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "proactive-mcp",
+      "version": "0.2.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "serve"
+        }
+      ]
+    }
+  ]
+}
