@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 _NOON = utc_datetime(2026, 8, 21, 12)
 _QUIET_NIGHT = utc_datetime(2026, 8, 21, 22)
-_AFTER_QUIET_HOURS = utc_datetime(2026,8,22,7)
+_AFTER_QUIET_HOURS = utc_datetime(2026, 8, 22, 7)
 
 
 def test_concurrent_daily_and_scheduled_checks_lease_once_then_recover(
