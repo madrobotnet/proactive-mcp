@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 _NOON = utc_datetime(2026, 8, 21, 12)
 _QUIET_NIGHT = utc_datetime(2026, 8, 21, 22)
+_AFTER_QUIET_HOURS = utc_datetime(2026, 8, 22, 7)
 
 
 def test_concurrent_daily_and_scheduled_checks_lease_once_then_recover(
@@ -183,3 +184,28 @@ def test_proactive_check_delivers_only_critical_inside_quiet_hours(
     # Then: only critical bypasses quiet hours; the rest is held.
     assert tuple(item.priority for item in response.situations) == ("critical",)
     assert response.held_count == 1
+
+
+def test_quiet_hours_hold_carries_over_to_next_check(tmp_path: Path) -> None:
+    # Given: a routine situation held during the default quiet-hours window.
+    write_config(tmp_path)
+    with open_harness(tmp_path, _QUIET_NIGHT) as harness:
+        _ = harness.store.situations.upsert_detections(
+            (pending_detection("overnight"),)
+        )
+        held = harness.service.proactive_check()
+
+    assert held.situations == ()
+    assert held.held_count == 1
+    assert held.receipt_token is None
+
+    # When: the host checks again at the 07:00 end boundary the next morning.
+    with open_harness(tmp_path, _AFTER_QUIET_HOURS) as harness:
+        resurfaced = harness.service.proactive_check()
+
+    # Then: the same pending situation is leased instead of being dropped overnight.
+    assert tuple(
+        item.evidence.facts["event_a_id"] for item in resurfaced.situations
+    ) == ("overnight",)
+    assert resurfaced.held_count == 0
+    assert resurfaced.receipt_token is not None
