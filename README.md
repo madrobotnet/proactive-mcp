@@ -67,6 +67,8 @@ flowchart LR
 4. The host reviews the whole lease and filters candidates for this user. Uncertain candidates may remain unconfirmed or be snoozed. Only when choosing confirmation after review does the host confirm the entire reviewed lease exactly once, including confidently dropped candidates.
 5. Acknowledgement, snooze, mute, resolution, cooldown, and daily budget rules prevent repeated or noisy delivery.
 
+By default, non-critical situations are held during local quiet hours from 21:00 through 07:00 and stay pending for a later check instead of being dropped. Nothing fires automatically at 07:00: an already-running or host-scheduled agent must call `proactive_check` after quiet hours end.
+
 ### Trust boundaries
 
 - Google access is limited to `gmail.readonly` and `calendar.readonly`.
