@@ -100,12 +100,16 @@ def test_service_notify_failure_is_redacted_and_releases_heartbeat(
 
     # Then: the failure is bounded and the aborted owner is stopped.
     with Store(database) as store:
-        liveness = store.daemon.status().liveness
+        status = store.daemon.status()
     assert result == 1
     assert captured.out == ""
     assert json.loads(captured.err) == {"phase": "service", "code": "notify_failed"}
     assert "canary" not in captured.err
-    assert liveness == "stopped"
+    assert status.liveness == "stopped"
+    assert status.mode == "continuous"
+    assert status.last_run_state == "failed"
+    assert status.last_failure_phase == "service"
+    assert status.last_failure_code == "notify_failed"
 
 
 def test_heartbeat_failure_emits_only_phase_and_code(

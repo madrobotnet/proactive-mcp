@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         SourceSyncState,
         Store,
     )
+    from proactive_mcp.store.sync import SourceCredentialState
 
 __all__ = [
     "CredentialLoader",
@@ -83,6 +84,10 @@ class SourceStateReader(Protocol):
 
     def release_lazy_sync_lease(self, lease: LazySyncLease) -> bool:
         """Release a degraded-read reservation if this lease still owns it."""
+        ...
+
+    def record_credential_state(self, state: SourceCredentialState) -> None:
+        """Persist bounded credential availability for status calls."""
         ...
 
 
@@ -226,9 +231,12 @@ def _read(access: SourceAccess) -> SourceOutcome:
     except CredentialStorageError:
         # Unreachable secure storage degrades this pass to local truth only; no
         # credential is re-derived or written to a weaker backend to recover.
+        access.sync_state.record_credential_state("unavailable")
         return SkippedSources("credential_storage_unavailable")
     if credential is None:
+        access.sync_state.record_credential_state("missing")
         return SkippedSources("missing_credentials")
+    access.sync_state.record_credential_state("available")
     return PreparedSources(access.readers.open(credential).prepare_evaluation())
 
 

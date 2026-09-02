@@ -12,6 +12,28 @@ from pydantic import TypeAdapter
 
 DaemonState = Literal["running", "stopped"]
 DaemonLiveness = Literal["never_started", "running", "stale", "stopped"]
+DaemonRunMode = Literal["once", "continuous"]
+DaemonLastRunState = Literal["never_run", "unknown", "succeeded", "degraded", "failed"]
+DaemonFailurePhase = Literal[
+    "config",
+    "database",
+    "credential",
+    "source_sync",
+    "evaluation",
+    "notification",
+    "heartbeat",
+    "runtime_ownership",
+    "service",
+]
+DaemonFailureCode = Literal[
+    "invalid",
+    "unsafe_path",
+    "open_failed",
+    "unavailable",
+    "failed",
+    "ownership_conflict",
+    "notify_failed",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +47,12 @@ class DaemonHeartbeat:
     cycle_count: int
     owner_token: str | None
     poll_interval_seconds: float | None
+    mode: DaemonRunMode | None
+    last_run_state: DaemonLastRunState
+    last_failure_phase: DaemonFailurePhase | None
+    last_failure_code: DaemonFailureCode | None
+    last_failure_at: str | None
+    last_completed_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +65,12 @@ class DaemonStatus:
     heartbeat_at: str | None
     cycle_count: int
     poll_interval: timedelta | None = None
+    mode: DaemonRunMode | None = None
+    last_run_state: DaemonLastRunState = "never_run"
+    last_failure_phase: DaemonFailurePhase | None = None
+    last_failure_code: DaemonFailureCode | None = None
+    last_failure_at: str | None = None
+    last_completed_at: str | None = None
 
 
 NEVER_STARTED: Final[DaemonStatus] = DaemonStatus(

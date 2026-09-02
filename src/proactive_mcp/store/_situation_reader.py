@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, get_args
 from ._situation_models import (
     SITUATION_ADAPTER,
     Situation,
+    SituationSource,
     SituationState,
     SituationType,
 )
@@ -59,8 +60,15 @@ class SituationReader:
             self._capture_int,
         )
 
-    def active_by_type(self, situation_type: SituationType) -> tuple[Situation, ...]:
-        return self._capture(SELECT_ACTIVE_BY_TYPE, (situation_type,))
+    def active_by_type(
+        self,
+        situation_type: SituationType,
+        source_name: SituationSource | None = None,
+    ) -> tuple[Situation, ...]:
+        return self._capture(
+            SELECT_ACTIVE_BY_TYPE,
+            (situation_type, source_name, source_name),
+        )
 
     def capture_situations(
         self,
@@ -122,6 +130,19 @@ class SituationReader:
             (receipt_digest,),
         ).fetchall()
         return tuple(self._ints)
+
+    def active_lease_expires_at(self, situation_id: int, now: str) -> str | None:
+        """Return one unexpired lease boundary without exposing its receipt."""
+        self._strings.clear()
+        _ = self._connection.execute(
+            """
+            SELECT _proactive_capture_situation_str(expires_at)
+            FROM situation_delivery_claims
+            WHERE situation_id = ? AND expires_at > ?
+            """,
+            (situation_id, now),
+        )
+        return self._strings[0] if self._strings else None
 
     def count_pending_unclaimed(self, now: str) -> int:
         """Count pending rows not hidden behind an unexpired host lease."""

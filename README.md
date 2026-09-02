@@ -8,7 +8,7 @@ A local-first MCP server that turns read-only signals and local memory into grou
 
 <strong>English</strong> · <a href="README.ko.md">한국어</a>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.1.0](https://img.shields.io/badge/PyPI-0.1.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.2.0](https://img.shields.io/badge/PyPI-0.2.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
 
 [Why](#why-proactive-mcp) · [How it works](#how-it-works) · [Get started](#get-started) · [Connect an agent](#connect-an-agent) · [Documentation](#documentation)
 
@@ -119,7 +119,7 @@ This confirmation step keeps delivery history accurate across crashes, retries, 
 
 | Area | Now |
 |:---|:---|
-| Distribution | PyPI package `proactive-mcp` 0.1.0, installed with `uvx` |
+| Distribution | PyPI package `proactive-mcp` 0.2.0, installed with `uvx` |
 | Google OAuth | Your own Desktop OAuth client (BYO) |
 | Hosts | Grok CLI and Codex CLI for everyday use |
 | Data | Local SQLite under `~/.proactive-mcp/` |
@@ -133,6 +133,7 @@ Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PR
 | [`README.ko.md`](README.ko.md) | Korean README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (the public default) |
 | [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Host recipes and command shapes for agents |
+| [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md) | Source, lease, collector, daemon, fallback, and receipt state semantics |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | Memory model and tool contracts |
 
 ## License

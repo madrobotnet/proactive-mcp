@@ -155,6 +155,25 @@ class _ClaimableHeartbeat(Protocol):
         ...
 
 
+@runtime_checkable
+class _RunOutcomeHeartbeat(Protocol):
+    """A recorder that persists bounded run mode and outcome."""
+
+    def record_run_started(self, mode: Literal["once", "continuous"]) -> None:
+        """Persist the current daemon mode."""
+        ...
+
+    def record_run_outcome(
+        self,
+        state: Literal["succeeded", "degraded", "failed"],
+        *,
+        failure_phase: DaemonFailurePhase | None = None,
+        failure_code: DaemonFailureCode | None = None,
+    ) -> None:
+        """Persist one completed or failed pass."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class _OwnerToken:
     """Proof that this watcher claimed the singleton liveness row."""
@@ -236,7 +255,14 @@ class WatcherDaemon:
         heartbeat = self._dependencies.heartbeat
         owner = self._claim(heartbeat)
         try:
-            return self._run_pass(owner)
+            self._record_run_started(heartbeat, "once")
+            completed = self._run_pass(owner)
+        except DaemonFailureError as failure:
+            self._record_run_failure(heartbeat, failure)
+            raise
+        else:
+            self._record_run_success(heartbeat, completed)
+            return completed
         finally:
             self._release(heartbeat, owner)
 
@@ -248,10 +274,16 @@ class WatcherDaemon:
         passes = 0
         notifications = 0
         try:
+            self._record_run_started(heartbeat, "continuous")
             running = True
             while running:
                 started = clock.now()
-                completed = self._run_pass(owner)
+                try:
+                    completed = self._run_pass(owner)
+                except DaemonFailureError as failure:
+                    self._record_run_failure(heartbeat, failure)
+                    raise
+                self._record_run_success(heartbeat, completed)
                 passes += 1
                 notifications += len(completed.notifications)
                 running = schedule.scheduler.wait(
@@ -260,6 +292,38 @@ class WatcherDaemon:
             return DaemonRun(pass_count=passes, notification_count=notifications)
         finally:
             self._release(heartbeat, owner)
+
+    @staticmethod
+    def _record_run_started(
+        heartbeat: HeartbeatRecorder,
+        mode: Literal["once", "continuous"],
+    ) -> None:
+        if isinstance(heartbeat, _RunOutcomeHeartbeat):
+            heartbeat.record_run_started(mode)
+
+    @staticmethod
+    def _record_run_success(
+        heartbeat: HeartbeatRecorder,
+        completed: DaemonPass,
+    ) -> None:
+        if not isinstance(heartbeat, _RunOutcomeHeartbeat):
+            return
+        state: Literal["succeeded", "degraded"] = (
+            "degraded" if completed.evaluation.warnings else "succeeded"
+        )
+        heartbeat.record_run_outcome(state)
+
+    @staticmethod
+    def _record_run_failure(
+        heartbeat: HeartbeatRecorder,
+        failure: DaemonFailureError,
+    ) -> None:
+        if isinstance(heartbeat, _RunOutcomeHeartbeat):
+            heartbeat.record_run_outcome(
+                "failed",
+                failure_phase=failure.phase,
+                failure_code=failure.code,
+            )
 
     def _claim(
         self,

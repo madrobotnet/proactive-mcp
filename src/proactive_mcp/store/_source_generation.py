@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import TypeAdapter
+
+if TYPE_CHECKING:
+    from proactive_mcp.clock import Clock
 
 SourceName = Literal["gmail", "calendar"]
 SourceGenerationStatus = Literal["complete", "degraded"]
@@ -28,6 +31,8 @@ class SourceGenerationState:
     issued: int
     applied: int
     status: SourceGenerationStatus | None
+    issued_at: str | None = None
+    applied_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,10 +70,12 @@ class SourceGenerationStore:
     """Issue and accept monotonically ordered source generations."""
 
     _connection: sqlite3.Connection
+    _clock: Clock
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
         """Bind generation ordering to one open connection."""
         self._connection = connection
+        self._clock = clock
         self._states: list[SourceGenerationState] = []
         connection.create_function(
             "_proactive_capture_source_generation_state",
@@ -82,12 +89,15 @@ class SourceGenerationStore:
         try:
             _ = self._connection.execute(
                 """
-                INSERT INTO source_detection_generations (source, issued_generation)
-                VALUES (?, 1)
+                INSERT INTO source_detection_generations (
+                    source, issued_generation, issued_at
+                )
+                VALUES (?, 1, ?)
                 ON CONFLICT(source) DO UPDATE SET
-                    issued_generation = issued_generation + 1
+                    issued_generation = issued_generation + 1,
+                    issued_at = excluded.issued_at
                 """,
-                (source,),
+                (source, self._clock.now().isoformat()),
             )
             state = self.state(source)
             _ = self._connection.execute("COMMIT")
@@ -104,7 +114,8 @@ class SourceGenerationStore:
             """
             SELECT SUM(_proactive_capture_source_generation_state(json_object(
                 'source', source, 'issued', issued_generation,
-                'applied', applied_generation, 'status', status
+                'applied', applied_generation, 'status', status,
+                'issued_at', issued_at, 'applied_at', applied_at
             )))
             FROM source_detection_generations WHERE source = ?
             """,
@@ -123,13 +134,14 @@ class SourceGenerationStore:
         cursor = self._connection.execute(
             """
             UPDATE source_detection_generations
-            SET applied_generation = ?, status = ?
+            SET applied_generation = ?, status = ?, applied_at = ?
             WHERE source = ? AND issued_generation >= ?
               AND applied_generation < ?
             """,
             (
                 generation.number,
                 status,
+                self._clock.now().isoformat(),
                 generation.source,
                 generation.number,
                 generation.number,

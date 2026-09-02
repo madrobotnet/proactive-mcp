@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Final, Literal
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, ClassVar, Final, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from proactive_mcp.server.situation_requests import (
     MuteScope,  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 )
-from proactive_mcp.store import (  # noqa: TC001 - resolved at runtime by Pydantic.
+from proactive_mcp.store import (
+    DEFAULT_STALE_AFTER,
     SituationPriority,
+    SituationSource,
     SituationState,
     SituationType,
     SourceErrorCode,
@@ -26,10 +29,45 @@ from proactive_mcp.store.sync import (
 )
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from proactive_mcp.situations import BudgetUsage
-    from proactive_mcp.store import Situation, SourceFreshness
+    from proactive_mcp.store import (
+        Situation,
+        SourceFreshness,
+        SourceGenerationState,
+        SourceSyncState,
+    )
+
+SourceAuthorizationState: TypeAlias = Literal[
+    "not_configured",
+    "configured",
+    "needs_reauth",
+    "scope_mismatch",
+    "credential_missing",
+    "credential_unavailable",
+]
+SourceDataFreshnessState: TypeAlias = Literal["never_synced", "fresh", "stale"]
+SourceReadState: TypeAlias = Literal[
+    "never_attempted",
+    "complete",
+    "partial",
+    "auth_error",
+    "transport_error",
+    "resource_error",
+    "parse_error",
+]
+SourceGenerationProjectionState: TypeAlias = Literal[
+    "current",
+    "syncing",
+    "degraded",
+    "interrupted",
+]
+SituationDeliveryState: TypeAlias = Literal[
+    "available",
+    "leased",
+    "host_confirmed",
+    "not_applicable",
+]
+_GENERATION_INTERRUPTED_AFTER = timedelta(minutes=10)
 
 UNTRUSTED_EVIDENCE_NOTICE: Final = (
     "Untrusted data quoted from an external source (email subject or sender, "
@@ -77,6 +115,46 @@ class SourceFreshnessResponse(BaseModel):
     last_attempt_at: str | None
     age_seconds: int | None
     error_code: SourceErrorCode | None
+    authorization: SourceAuthorizationResponse
+    freshness: SourceDataFreshnessResponse
+    read: SourceReadStateResponse
+    generation: SourceGenerationResponse
+
+
+class SourceAuthorizationResponse(BaseModel):
+    """Authorization state independent from read and data age."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    state: SourceAuthorizationState
+
+
+class SourceDataFreshnessResponse(BaseModel):
+    """Age verdict independent from the latest read outcome."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    state: SourceDataFreshnessState
+
+
+class SourceReadStateResponse(BaseModel):
+    """The latest bounded source-read outcome."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    state: SourceReadState
+
+
+class SourceGenerationResponse(BaseModel):
+    """Issued and accepted detector generation progress."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    state: SourceGenerationProjectionState
+    issued: int
+    applied: int
+    applied_status: Literal["complete", "degraded"] | None
+    issued_at: str | None
 
 
 class SourceReadDiagnosticsResponse(BaseModel):
@@ -154,7 +232,9 @@ class SituationResponse(BaseModel):
 
     id: int
     situation_type: SituationType
+    source: SituationSourceResponse
     state: SituationState
+    delivery: SituationDeliveryResponse
     priority: SituationPriority
     title: str
     why_now: str
@@ -163,6 +243,25 @@ class SituationResponse(BaseModel):
     snoozed_until: str | None
     expires_at: str | None
     evidence: SituationEvidenceResponse
+
+
+class SituationSourceResponse(BaseModel):
+    """Source provenance without provider record identifiers."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    name: SituationSource
+    generation: int | None
+
+
+class SituationDeliveryResponse(BaseModel):
+    """Host-receipt state independent from situation lifecycle."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    state: SituationDeliveryState
+    lease_expires_at: str | None
+    presentation: Literal["unknown"] = "unknown"
 
 
 class ConfirmationDirectiveResponse(BaseModel):
@@ -213,7 +312,7 @@ class ConfirmDeliveryResponse(BaseModel):
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
-    status: Literal["confirmed", "already_confirmed"]
+    status: Literal["confirmed", "already_confirmed", "invalid_or_expired"]
     delivered_count: int
 
 
@@ -227,7 +326,15 @@ class MuteResponse(BaseModel):
     muted_types: tuple[SituationType, ...]
 
 
-def freshness_response(freshness: SourceFreshness) -> SourceFreshnessResponse:
+def freshness_response(  # noqa: PLR0913
+    freshness: SourceFreshness,
+    *,
+    sync_state: SourceSyncState | None = None,
+    generation: SourceGenerationState | None = None,
+    now: datetime | None = None,
+    read_state: SourceReadState | None = None,
+    authorization_override: SourceAuthorizationState | None = None,
+) -> SourceFreshnessResponse:
     """Serialize one evaluated freshness state without source content."""
     return SourceFreshnessResponse(
         status=freshness.status,
@@ -235,6 +342,14 @@ def freshness_response(freshness: SourceFreshness) -> SourceFreshnessResponse:
         last_attempt_at=_timestamp(freshness.last_attempt_at),
         age_seconds=freshness.age_seconds,
         error_code=freshness.error_code,
+        authorization=SourceAuthorizationResponse(
+            state=authorization_override or _authorization_state(freshness, sync_state)
+        ),
+        freshness=SourceDataFreshnessResponse(
+            state=_data_freshness_state(freshness, now)
+        ),
+        read=SourceReadStateResponse(state=read_state or _read_state(freshness)),
+        generation=_generation_response(generation, now),
     )
 
 
@@ -289,10 +404,17 @@ def _status_diagnostics(
     )
 
 
-def google_freshness_response(
+def google_freshness_response(  # noqa: PLR0913
     gmail: SourceFreshness,
     calendar: SourceFreshness,
     gmail_diagnostics: SourceReadDiagnostics | None = None,
+    *,
+    gmail_state: SourceSyncState | None = None,
+    calendar_state: SourceSyncState | None = None,
+    gmail_generation: SourceGenerationState | None = None,
+    calendar_generation: SourceGenerationState | None = None,
+    now: datetime | None = None,
+    authorization_override: SourceAuthorizationState | None = None,
 ) -> GoogleFreshnessResponse:
     """Serialize both Google sources in their stable reporting order."""
     diagnostics = (
@@ -307,9 +429,29 @@ def google_freshness_response(
             last_attempt_at=_timestamp(gmail.last_attempt_at),
             age_seconds=gmail.age_seconds,
             error_code=gmail.error_code,
+            authorization=SourceAuthorizationResponse(
+                state=authorization_override or _authorization_state(gmail, gmail_state)
+            ),
+            freshness=SourceDataFreshnessResponse(
+                state=_data_freshness_state(gmail, now)
+            ),
+            read=SourceReadStateResponse(
+                state=(
+                    _read_state(gmail)
+                    if gmail.error_code is not None
+                    else _diagnostic_read_state(diagnostics.outcome)
+                )
+            ),
+            generation=_generation_response(gmail_generation, now),
             diagnostics=source_read_diagnostics_response(diagnostics),
         ),
-        calendar=freshness_response(calendar),
+        calendar=freshness_response(
+            calendar,
+            sync_state=calendar_state,
+            generation=calendar_generation,
+            now=now,
+            authorization_override=authorization_override,
+        ),
     )
 
 
@@ -322,12 +464,24 @@ def budget_response(usage: BudgetUsage) -> BudgetResponse:
     )
 
 
-def situation_response(situation: Situation) -> SituationResponse:
+def situation_response(
+    situation: Situation,
+    *,
+    lease_expires_at: str | None = None,
+) -> SituationResponse:
     """Serialize one situation with its evidence trust boundary intact."""
     return SituationResponse(
         id=situation.id,
         situation_type=situation.situation_type,
+        source=SituationSourceResponse(
+            name=situation.source_name,
+            generation=situation.source_generation,
+        ),
         state=situation.state,
+        delivery=SituationDeliveryResponse(
+            state=_situation_delivery_state(situation, lease_expires_at),
+            lease_expires_at=lease_expires_at,
+        ),
         priority=situation.priority,
         title=situation.title,
         why_now=situation.why_now,
@@ -351,3 +505,107 @@ def situation_response(situation: Situation) -> SituationResponse:
 def _timestamp(value: datetime | None) -> str | None:
     """Return an ISO timestamp only when one was persisted."""
     return None if value is None else value.isoformat()
+
+
+def _authorization_state(
+    freshness: SourceFreshness,
+    state: SourceSyncState | None,
+) -> SourceAuthorizationState:
+    if freshness.error_code == "scope_mismatch":
+        return "scope_mismatch"
+    if state is not None:
+        return state.auth_state
+    if freshness.status == "not_configured":
+        return "not_configured"
+    if freshness.status == "needs_reauth":
+        return "needs_reauth"
+    return "configured"
+
+
+def _data_freshness_state(
+    freshness: SourceFreshness,
+    now: datetime | None,
+) -> SourceDataFreshnessState:
+    if freshness.last_success_at is None:
+        return "never_synced"
+    if now is not None and now - freshness.last_success_at >= DEFAULT_STALE_AFTER:
+        return "stale"
+    if freshness.status == "stale":
+        return "stale"
+    return "fresh"
+
+
+def _read_state(freshness: SourceFreshness) -> SourceReadState:
+    error = freshness.error_code
+    if error is None:
+        return (
+            "complete" if freshness.last_success_at is not None else "never_attempted"
+        )
+    if error in {"invalid_grant", "scope_mismatch", "http_4xx"}:
+        return "auth_error"
+    if error == "resource_limit":
+        return "resource_error"
+    if error == "degraded":
+        return "partial"
+    return "transport_error"
+
+
+def _diagnostic_read_state(outcome: SourceReadOutcome) -> SourceReadState:
+    match outcome:
+        case "healthy":
+            return "complete"
+        case "partial":
+            return "partial"
+        case "stale":
+            return "never_attempted"
+        case "auth_error":
+            return "auth_error"
+        case "transport_error":
+            return "transport_error"
+
+
+def _generation_response(
+    generation: SourceGenerationState | None,
+    now: datetime | None,
+) -> SourceGenerationResponse:
+    if generation is None:
+        return SourceGenerationResponse(
+            state="current",
+            issued=0,
+            applied=0,
+            applied_status=None,
+            issued_at=None,
+        )
+    if generation.issued > generation.applied:
+        state: SourceGenerationProjectionState = (
+            "interrupted" if generation.issued_at is None else "syncing"
+        )
+        if generation.issued_at is not None and now is not None:
+            issued_at = datetime.fromisoformat(generation.issued_at)
+            if now - issued_at > _GENERATION_INTERRUPTED_AFTER:
+                state = "interrupted"
+    elif generation.status == "degraded":
+        state = "degraded"
+    else:
+        state = "current"
+    return SourceGenerationResponse(
+        state=state,
+        issued=generation.issued,
+        applied=generation.applied,
+        applied_status=generation.status,
+        issued_at=generation.issued_at,
+    )
+
+
+def _situation_delivery_state(
+    situation: Situation,
+    lease_expires_at: str | None,
+) -> SituationDeliveryState:
+    if situation.state == "pending":
+        return "leased" if lease_expires_at is not None else "available"
+    if (
+        situation.state in {"delivered", "acknowledged", "snoozed"}
+        and situation.delivered_at is not None
+    ):
+        return "host_confirmed"
+    return "not_applicable"

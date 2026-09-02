@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING, Annotated
 from pydantic import Field
 
 from proactive_mcp.clock import UtcClock
-from proactive_mcp.delivery import EvaluationDependencies, EvaluationService
+from proactive_mcp.delivery import (
+    EvaluationDependencies,
+    EvaluationService,
+    SkippedSources,
+)
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server.situation_requests import MuteScope, parse_snooze_until
 from proactive_mcp.server.situation_responses import (
@@ -20,6 +24,7 @@ from proactive_mcp.server.situation_responses import (
     MuteResponse,
     ProactiveCheckResponse,
     SituationResponse,
+    SourceAuthorizationState,
     budget_response,
     google_freshness_response,
     situation_response,
@@ -31,6 +36,8 @@ from proactive_mcp.sources.lazy_sync import (
     open_source_access,
 )
 from proactive_mcp.store import (
+    CollectorProfile,
+    DeliveryReceiptError,
     SituationNotFoundError,
     SituationState,
     Store,
@@ -42,7 +49,7 @@ if TYPE_CHECKING:
     from proactive_mcp.clock import Clock
     from proactive_mcp.delivery import EvaluationRunner
     from proactive_mcp.paths import ProactivePaths
-    from proactive_mcp.store import SituationStore
+    from proactive_mcp.store import Situation, SituationStore
 
 __all__ = [
     "SituationToolDependencies",
@@ -54,6 +61,7 @@ __all__ = [
     "mute_situation",
     "open_situation_service",
     "proactive_check",
+    "proactive_check_for_profile",
     "snooze_situation",
 ]
 
@@ -85,49 +93,81 @@ class SituationToolService:
         """Bind this service to one open store and its collaborators."""
         self._dependencies = dependencies
 
-    def proactive_check(self) -> ProactiveCheckResponse:
+    def proactive_check(
+        self,
+        *,
+        profile: CollectorProfile = "full",
+    ) -> ProactiveCheckResponse:
         """Evaluate, lease what attention policy allows, report what is held."""
         now = self._dependencies.clock.now()
+        evaluation_warnings: tuple[str, ...] = ()
         if self._dependencies.store.try_start_evaluation(
             minimum_interval=_MIN_EVALUATION_INTERVAL
         ):
             completed = self._dependencies.evaluation.run_once()
-            gmail_freshness = completed.result.gmail_freshness
-            calendar_freshness = completed.result.calendar_freshness
-            gmail_diagnostics = completed.result.accepted_gmail_diagnostics
-            warnings = completed.warnings
-        else:
-            sources = self._dependencies.store.source_health_snapshot()
-            gmail_freshness = evaluate_source_freshness(sources.gmail, now)
-            calendar_freshness = evaluate_source_freshness(sources.calendar, now)
-            gmail_diagnostics = sources.gmail_diagnostics
-            warnings = tuple(
-                f"{source}: source is {freshness.status}"
-                for source, freshness in (
-                    ("gmail", gmail_freshness),
-                    ("calendar", calendar_freshness),
-                )
-                if freshness.status != "ok"
+            evaluation_warnings = tuple(
+                warning
+                for warning in completed.warnings
+                if not warning.startswith(("gmail:", "calendar:"))
             )
+            if completed.sources == SkippedSources("credential_storage_unavailable"):
+                self._dependencies.store.record_credential_state("unavailable")
+            elif completed.sources == SkippedSources("missing_credentials"):
+                self._dependencies.store.record_credential_state("missing")
         attention = self._dependencies.runtime.attention
         reservation = attention.reserve_for_delivery(now)
         claimed = reservation.situations
         held_count = max(0, self._situations.count_situations("pending") - len(claimed))
         receipt_token = reservation.claim_token if claimed else None
-        return ProactiveCheckResponse(
+        source_health = self._dependencies.store.source_health_snapshot()
+        gmail_freshness = evaluate_source_freshness(source_health.gmail, now)
+        calendar_freshness = evaluate_source_freshness(source_health.calendar, now)
+        source_warnings = tuple(
+            f"{source}: source is {freshness.status}"
+            for source, freshness in (
+                ("gmail", gmail_freshness),
+                ("calendar", calendar_freshness),
+            )
+            if freshness.status != "ok"
+        )
+        warnings = tuple(dict.fromkeys((*evaluation_warnings, *source_warnings)))
+        authorization_override: SourceAuthorizationState | None = (
+            "credential_unavailable"
+            if source_health.credential.state == "unavailable"
+            else (
+                "credential_missing"
+                if source_health.credential.state == "missing"
+                else None
+            )
+        )
+        response = ProactiveCheckResponse(
             requires_confirmation=bool(claimed) and receipt_token is not None,
-            situations=tuple(situation_response(item) for item in claimed),
+            situations=tuple(
+                situation_response(
+                    item,
+                    lease_expires_at=reservation.expires_at,
+                )
+                for item in claimed
+            ),
             receipt_token=receipt_token,
             freshness=google_freshness_response(
                 gmail_freshness,
                 calendar_freshness,
-                gmail_diagnostics,
+                source_health.gmail_diagnostics,
+                gmail_state=source_health.gmail,
+                calendar_state=source_health.calendar,
+                gmail_generation=source_health.gmail_generation,
+                calendar_generation=source_health.calendar_generation,
+                now=now,
+                authorization_override=authorization_override,
             ),
             budget=budget_response(attention.budget_usage(now)),
             held_count=held_count,
             warnings=warnings,
             all_clear=not claimed and held_count == 0 and not warnings,
         )
+        self._dependencies.store.collectors.record_check(profile)
+        return response
 
     def list_situations(
         self,
@@ -143,7 +183,7 @@ class SituationToolService:
             limit=limit,
         )
         return ListSituationsResponse(
-            items=tuple(situation_response(item) for item in page),
+            items=tuple(self._situation_response(item) for item in page),
             next_after_id=page[-1].id if len(page) == limit and page else None,
         )
 
@@ -152,11 +192,23 @@ class SituationToolService:
         situation = self._situations.get_situation(situation_id)
         if situation is None:
             raise SituationNotFoundError(situation_id)
-        return situation_response(situation)
+        return self._situation_response(situation)
 
-    def confirm_delivery(self, receipt_token: str) -> ConfirmDeliveryResponse:
+    def confirm_delivery(
+        self,
+        receipt_token: str,
+        *,
+        profile: CollectorProfile = "full",
+    ) -> ConfirmDeliveryResponse:
         """Confirm that the MCP host received a proactive-check result."""
-        confirmation = self._situations.confirm_delivery(receipt_token)
+        try:
+            confirmation = self._situations.confirm_delivery(receipt_token)
+        except DeliveryReceiptError:
+            return ConfirmDeliveryResponse(
+                status="invalid_or_expired",
+                delivered_count=0,
+            )
+        self._dependencies.store.collectors.record_confirm(profile)
         return ConfirmDeliveryResponse(
             status=confirmation.status,
             delivered_count=confirmation.delivered_count,
@@ -195,6 +247,13 @@ class SituationToolService:
     @property
     def _situations(self) -> SituationStore:
         return self._dependencies.store.situations
+
+    def _situation_response(self, situation: Situation) -> SituationResponse:
+        lease_expires_at = self._situations.active_lease_expires_at(
+            situation.id,
+            self._dependencies.clock.now(),
+        )
+        return situation_response(situation, lease_expires_at=lease_expires_at)
 
 
 def open_situation_service(
@@ -256,8 +315,13 @@ class _ToolCall:
 
 async def proactive_check() -> str:
     """Return situations under a lease that requires receipt confirmation."""
+    return await proactive_check_for_profile("full")
+
+
+async def proactive_check_for_profile(profile: CollectorProfile) -> str:
+    """Return one profile's leased situations and record its observation."""
     with _ToolCall() as service:
-        return service.proactive_check().model_dump_json()
+        return service.proactive_check(profile=profile).model_dump_json()
 
 
 async def list_situations(
@@ -283,8 +347,19 @@ async def get_situation(situation_id: _SituationId) -> str:
 
 async def confirm_delivery(receipt_token: str) -> str:
     """Confirm receipt of a proactive result before it becomes delivered."""
+    return await confirm_delivery_for_profile(receipt_token, "full")
+
+
+async def confirm_delivery_for_profile(
+    receipt_token: str,
+    profile: CollectorProfile,
+) -> str:
+    """Confirm one profile's receipt and record a successful observation."""
     with _ToolCall() as service:
-        return service.confirm_delivery(receipt_token).model_dump_json()
+        return service.confirm_delivery(
+            receipt_token,
+            profile=profile,
+        ).model_dump_json()
 
 
 async def acknowledge_situation(situation_id: _SituationId) -> str:

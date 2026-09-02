@@ -133,7 +133,7 @@ def disconnect_google_sources(database_path: Path) -> None:
     paths = ProactivePaths.for_database(database_path)
     CredentialStore(paths.state_directory).delete()
     with Store(paths.database) as store:
-        store.set_google_auth_state("not_configured")
+        store.disconnect_google_auth()
 
 
 @dataclass(frozen=True, slots=True)

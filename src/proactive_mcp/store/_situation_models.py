@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 SituationType = Literal["reply_deadline", "calendar_conflict", "personal_occasion"]
+SituationSource = Literal["gmail", "calendar", "memory", "local"]
 SituationState = Literal[
     "pending",
     "delivered",
@@ -64,6 +65,8 @@ class Situation:
 
     id: int
     situation_type: SituationType
+    source_name: SituationSource
+    source_generation: int | None
     dedupe_key: str
     state: SituationState
     priority: SituationPriority

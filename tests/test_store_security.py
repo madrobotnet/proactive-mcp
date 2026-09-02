@@ -42,7 +42,7 @@ def test_macos_platform_creates_private_store(
 
     assert status.path == (tmp_path / "proactive.db").absolute()
     assert status.journal_mode.lower() == "wal"
-    assert status.migration_version == 10
+    assert status.migration_version == 11
 
 
 @pytest.mark.parametrize(

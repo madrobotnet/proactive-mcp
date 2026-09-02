@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from ._situation_models import (
         Detection,
+        SituationSource,
         SituationType,
     )
     from ._situation_reader import SituationReader
@@ -57,6 +58,8 @@ class SituationUpserter:
         detections: Sequence[Detection],
         timestamp: str,
         expected_type: SituationType | None,
+        source_name: SituationSource,
+        source_generation: int | None,
     ) -> DetectionUpsertSummary:
         created = reactivated = refreshed = skipped = capacity_skipped = 0
         for detection in detections:
@@ -64,7 +67,12 @@ class SituationUpserter:
                 raise DetectionSourceMismatchError(
                     expected_type, detection.situation_type
                 )
-            outcome = self._upsert_detection(detection, timestamp)
+            outcome = self._upsert_detection(
+                detection,
+                timestamp,
+                source_name,
+                source_generation,
+            )
             created += outcome == "created"
             reactivated += outcome == "reactivated"
             refreshed += outcome == "refreshed"
@@ -79,9 +87,10 @@ class SituationUpserter:
         situation_type: SituationType,
         present_keys: set[str],
         timestamp: str,
+        source_name: SituationSource | None = None,
     ) -> int:
         resolved = 0
-        for situation in self._reader.active_by_type(situation_type):
+        for situation in self._reader.active_by_type(situation_type, source_name):
             if situation.dedupe_key in present_keys:
                 continue
             cursor = self._connection.execute(
@@ -90,7 +99,7 @@ class SituationUpserter:
             resolved += cursor.rowcount
         return resolved
 
-    def resolve_by_source_ids(
+    def resolve_by_source_ids(  # noqa: PLR0913
         self,
         situation_type: SituationType,
         present_keys: set[str],
@@ -98,9 +107,10 @@ class SituationUpserter:
         timestamp: str,
         *,
         include: bool,
+        source_name: SituationSource | None = None,
     ) -> int:
         resolved = 0
-        for situation in self._reader.active_by_type(situation_type):
+        for situation in self._reader.active_by_type(situation_type, source_name):
             source_id = situation.evidence.facts.get("thread_id")
             if situation.dedupe_key in present_keys or source_id is None:
                 continue
@@ -117,6 +127,8 @@ class SituationUpserter:
         self,
         detection: Detection,
         timestamp: str,
+        source_name: SituationSource,
+        source_generation: int | None,
     ) -> _UpsertOutcome:
         evidence_bytes = SITUATION_EVIDENCE_ADAPTER.dump_json(detection.evidence)
         record_size = len(evidence_bytes) + sum(
@@ -152,6 +164,8 @@ class SituationUpserter:
                     expires_at,
                     timestamp,
                     timestamp,
+                    source_name,
+                    source_generation,
                 ),
             )
             return "created"
@@ -161,6 +175,8 @@ class SituationUpserter:
             detection.why_now,
             evidence,
             expires_at,
+            source_name,
+            source_generation,
         )
         if existing.state in {"resolved", "expired"}:
             if (

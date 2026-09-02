@@ -30,6 +30,7 @@ from tests.situation_test_support import FakeClock, utc_datetime
 _PID = 4242
 _POLL_INTERVAL = timedelta(minutes=5)
 _START = utc_datetime(2026, 8, 21, 12)
+_RUN_METADATA_FAILURE = "injected run metadata failure"
 
 
 def _daemon(
@@ -85,6 +86,39 @@ class _FencedHeartbeat:
         self.events.append("stop")
 
 
+@dataclass(frozen=True, slots=True)
+class _RunStartFailingHeartbeat:
+    """Fail run metadata persistence after taking daemon ownership."""
+
+    events: list[str] = field(default_factory=list)
+
+    def try_record_start(
+        self,
+        pid: int,
+        *,
+        poll_interval: timedelta | None = None,
+    ) -> bool:
+        del poll_interval
+        self.events.append(f"start:{pid}")
+        return True
+
+    def record_start(self, pid: int) -> None:
+        _ = self.try_record_start(pid)
+
+    def record_run_started(self, mode: str) -> None:
+        self.events.append(f"run-start:{mode}")
+        raise RuntimeError(_RUN_METADATA_FAILURE)
+
+    def record_run_outcome(self, *_args: object, **_kwargs: object) -> None:
+        self.events.append("run-outcome")
+
+    def record_heartbeat(self) -> None:
+        self.events.append("heartbeat")
+
+    def record_stop(self) -> None:
+        self.events.append("stop")
+
+
 def test_once_path_runs_exactly_one_pass_and_never_waits() -> None:
     # Given: a watcher whose collaborators record every call they receive.
     clock = FakeClock(_START)
@@ -105,6 +139,29 @@ def test_once_path_runs_exactly_one_pass_and_never_waits() -> None:
     assert len(completed.notifications) == 1
     assert notifier.dispatches == [_START + timedelta(minutes=2)]
     assert clock.now() == _START + timedelta(minutes=2)
+
+
+def test_once_path_releases_owner_when_run_metadata_start_fails() -> None:
+    clock = FakeClock(_START)
+    heartbeat = _RunStartFailingHeartbeat()
+    daemon = WatcherDaemon(
+        DaemonDependencies(
+            pid=_PID,
+            clock=clock,
+            heartbeat=heartbeat,
+            evaluation=FakeEvaluationRunner(
+                result=local_only_pass(),
+                clock=clock,
+                duration=timedelta(),
+            ),
+            notifier=RecordingNotifier(),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match=_RUN_METADATA_FAILURE):
+        _ = daemon.run_once()
+
+    assert heartbeat.events == [f"start:{_PID}", "run-start:once", "stop"]
 
 
 def test_once_path_stops_daemon_status_when_evaluation_raises() -> None:

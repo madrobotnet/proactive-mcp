@@ -4,7 +4,7 @@
 > **작성일:** 2026-08-20
 > **Owner:** 경우 (Kyungwoo Seo, @madrobotnet) — 범위 변경·릴리스·실계정 연동은 Owner 승인 사항
 > **개발 주체:** AI 코딩 에이전트 (별도 Linux 서버, GitHub 저장소 중심 워크플로)
-> **저장소:** https://github.com/madrobotnet/proactive-mcp (사용자 문서는 PyPI `proactive-mcp` 0.1.0 + `uvx`를 현재 경로로 적는다. 저장소 visibility와 실제 게시는 Owner가 같은 날 실행, §10)
+> **저장소:** https://github.com/madrobotnet/proactive-mcp (사용자 문서는 PyPI `proactive-mcp` 0.2.0 + `uvx`를 현재 경로로 적는다. 저장소 visibility와 실제 게시는 Owner가 같은 날 실행, §10)
 
 ---
 
@@ -43,7 +43,7 @@ Owner 인터뷰(2026-08-20)로 확정된 사항. 변경하려면 Owner 승인이
 | Google 인증 | 사용자 GCP 프로젝트의 자체 OAuth 클라이언트(BYO), read-only scope만 — **유일한** 기본 경로. Owner OAuth JSON은 공개 패키지·wheel·저장소에 넣지 않는다 (2026-08-20 확정, 2026-08-26 공개 준비에서 재확인) |
 | Gmail reply_deadline 읽기 창 | 기본 최근 7일. `[sources]`의 `gmail_lookback_days`로 조정 가능. 7일보다 오래된 미회신·날짜성 마감 백로그는 V1 범위 밖이며, 설정된 창 안의 불완전 읽기는 §9에 따라 계속 degraded (2026-08-24 Owner 결정 #25 C(7d configurable)) |
 | 폴백 알림 | 일정 시간 내 어떤 에이전트도 수령하지 않은 시간 민감 상황만 OS 알림 — 구체 기준은 §7 폴백 항목 (critical만·30분, 2026-08-21 확정 #14) |
-| 배포 | 사용자 문서의 정본 artifact는 PyPI `proactive-mcp` 0.1.0 + `uvx`. 저장소 public과 실제 `uv publish`는 Owner가 같은 날 실행한다. 에이전트는 승인 없이 visibility 변경이나 게시를 하지 않는다 (2026-08-26 #32, Owner: 문서는 PyPI 전제로 작성) |
+| 배포 | 사용자 문서의 정본 artifact는 PyPI `proactive-mcp` 0.2.0 + `uvx`. 저장소 public과 실제 Trusted Publishing release는 Owner가 승인한다. 에이전트는 승인 없이 visibility 변경이나 게시를 하지 않는다 (2026-08-29, Owner: PR #38에서 `0.2.0`과 Trusted Publishing workflow 추가 승인) |
 | 사람 온보딩 | 첫 경로는 쓰는 에이전트에 붙여 넣기 + BYO. 에이전트가 설치·등록·검증을 맡고, 사람은 Google 동의와 blocker 보고만 한다. 사람은 `setup` / `google-smoke` / `mcp add`를 몰라도 된다. 기본 경로에는 wizard, 수동 `mcp add`, JSON 편집이 없다 (2026-08-24 Owner 결정 #26, 2026-08-26 공개 준비) |
 | 개발 환경 | Owner의 별도 Linux 서버에서 AI 에이전트가 개발 |
 
@@ -105,7 +105,7 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 | 도구 | 목적 | 핵심 입출력 |
 |---|---|---|
 | `proactive_check` | **핵심 도구.** 미전달 상황 요약을 짧은 lease로 예약해 반환. 가볍고 빨라야 함(<1s, sync 필요 시 예외) | 입력 없음 → `{protocol_version: "1", requires_confirmation, confirmation: {tool: "confirm_delivery"}, situations[], receipt_token, freshness, budget, held_count, warnings, all_clear}`. `requires_confirmation`은 situations가 비어 있지 않고 token이 있을 때만 true |
-| `confirm_delivery` | 호스트가 `proactive_check` 결과를 수령한 뒤 lease를 전달 완료로 확정 | `receipt_token` → `{status: "confirmed"\|"already_confirmed", delivered_count}`. 최초 확정은 `confirmed`; replay는 `already_confirmed`와 최초 확정의 동일 count를 반환 |
+| `confirm_delivery` | 호스트가 `proactive_check` 결과를 수령한 뒤 lease를 전달 완료로 확정 | `receipt_token` → `{status: "confirmed"\|"already_confirmed"\|"invalid_or_expired", delivered_count}`. 최초 확정은 `confirmed`; replay는 `already_confirmed`; 알 수 없거나 만료된 supplied token은 존재 여부를 구분하지 않는 `invalid_or_expired`와 count 0을 반환 |
 | `list_situations` | 상황 목록 조회 (상태 필터) | `state?` → 상황 배열 |
 | `get_situation` | 상황 상세 + 근거(evidence) | `id` → 상세 |
 | `acknowledge_situation` | 사용자가 인지/처리함 | `id` |
@@ -118,6 +118,8 @@ MCP stdio 서버는 클라이언트(에이전트)마다 개별 프로세스로 s
 
 메모리 도구의 시그니처는 M2.5부터 [`MEMORY_MODEL_V2.md`](MEMORY_MODEL_V2.md)가 정본이다 — `remember`/`recall` 확장과 `update`/`list_entities` 추가 (2026-08-21 개정, §8 참조).
 
+상태 응답은 legacy `status`/`state`를 유지하면서 source 인증·신선도·읽기·generation, Situation lifecycle·lease·host confirmation, collector 관측, daemon liveness·last run, fallback capability를 독립 축으로 제공한다. 정본 필드와 migration 011 호환성은 [`STATE_MODEL.md`](STATE_MODEL.md)를 따른다.
+
 ### 4.1 전달 상태 머신
 
 ```text
@@ -129,6 +131,7 @@ pending/delivered → resolved (소스에서 자연 해소: 회신 완료, 일�
 ```
 
 - `proactive_check`가 상황을 반환한 것만으로는 `delivered`로 기록하지 않는다. 호스트는 반환된 모든 행을 검토한 뒤 확정하기로 선택할 때만 응답의 `receipt_token`을 `confirm_delivery`에 전달해 lease 전체를 확정한다. 사용자의 대화에 보여 주지 않기로 확신한 후보도 전체 lease에 포함된다. 이후 동일 상황은 기본적으로 재반환되지 않는다(에이전트가 `list_situations`로는 조회 가능).
+- `delivered`는 호스트가 전체 lease receipt를 확정했다는 legacy lifecycle 값이다. 사용자에게 실제로 보였다는 뜻이 아니며 additive `delivery.state=host_confirmed`, `delivery.presentation=unknown`으로 그 경계를 명시한다.
 - 활성 lease 동안에는 다른 에이전트와 OS 폴백이 같은 상황을 가져가지 않는다. 호스트가 결과를 확인하지 못하면 lease가 만료되어 pending으로 다시 제공되므로 전송 실패가 알림 유실로 바뀌지 않는다.
 - `proactive_check`만 호출하는 연동은 반드시 `confirm_delivery` 호출을 추가해야 한다. 이를 생략하면 안전한 실패 방식으로 lease 만료 후 상황이 재제공된다.
 - `delivered` 후 사용자 반응 없이 상황이 소스에서 해소되면 `resolved`로 자동 정리한다.
@@ -314,7 +317,7 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 
 ## 11. 배포·온보딩
 
-- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.1.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시와 저장소 public은 Owner가 같은 날 실행한다.
+- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.2.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시는 Owner 승인 후 GitHub Release와 PyPI Trusted Publishing으로 실행한다.
 - **기존 에이전트에 붙여 넣기 + BYO:** 사람은 쓰는 에이전트에 붙여 넣기 블록 하나를 넣고 Google 동의만 한다. 에이전트가 `uvx` 설치·MCP 등록·읽기 전용 Google 연결·검증을 맡는다. Google은 BYO만 — Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 토큰과 데이터는 사용자 머신에만 저장된다.
 - **권장 데몬:** 에이전트가 MCP 등록과 setup을 마친 뒤 `proactive-mcp daemon` local service를 등록한다. 데몬은 sync·평가·queue·문서화된 OS 폴백만 담당하며 agent/LLM을 호출하거나 prompt를 보내지 않는다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, periodic sync와 폴백 알림은 동작하지 않는다.
 - **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고 §5.2에 따라 전체 후보를 검토한다. 반환값에 `receipt_token`이 있고 lease를 확정하기로 했다면 사용자에게 보여 주지 않기로 확신한 후보까지 포함한 lease 전체를 `confirm_delivery(receipt_token)`로 한 번 확정한다. 불확실한 후보는 알리거나 전체 lease를 미확정 상태로 두거나 일상 대화에서 확정 후 snooze하며, 비실행 항목이라고 조용히 버리지 않는다. 토큰이 없으면 확정하지 않는다.

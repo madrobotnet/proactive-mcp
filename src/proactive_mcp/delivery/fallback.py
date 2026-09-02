@@ -69,6 +69,8 @@ class FallbackDispatcher:
 
     def dispatch(self, now: datetime) -> tuple[FallbackDispatch, ...]:
         """Notify each situation whose configured wait elapsed by ``now``."""
+        if not self._settings.enabled:
+            return ()
         dispatched: list[FallbackDispatch] = []
         while True:
             claimed = self._fallbacks.claim_next(self._claim(now))

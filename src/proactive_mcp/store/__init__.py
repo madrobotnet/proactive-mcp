@@ -1,8 +1,12 @@
 """Persistence package."""
 
 from ._daemon_models import (
+    DaemonFailureCode,
+    DaemonFailurePhase,
+    DaemonLastRunState,
     DaemonLiveness,
     DaemonNotStartedError,
+    DaemonRunMode,
     DaemonStatus,
 )
 from ._fallback_models import (
@@ -27,6 +31,7 @@ from ._situation_models import (
     SituationEvidence,
     SituationNotFoundError,
     SituationPriority,
+    SituationSource,
     SituationState,
     SituationType,
     SituationValidationError,
@@ -36,6 +41,13 @@ from ._source_generation import (
     SourceGeneration,
     SourceGenerationState,
     SourceGenerationStatus,
+)
+from .collectors import (
+    DEFAULT_COLLECTOR_STALE_AFTER,
+    CollectorProfile,
+    CollectorState,
+    CollectorStatus,
+    CollectorStore,
 )
 from .daemon_status import DaemonStatusStore, InvalidDaemonPollIntervalError
 from .database import (
@@ -72,6 +84,7 @@ from .situations import SituationStore
 from .storage_errors import ReceiptErasurePendingError
 from .sync import (
     SourceAuthState,
+    SourceCredentialState,
     SourceErrorCode,
     SourceHealthSnapshot,
     SourceName,
@@ -85,11 +98,20 @@ from .sync import (
 __all__ = [
     "ACTIVE_SITUATION_STATES",
     "DEFAULT_BUSY_TIMEOUT_MS",
+    "DEFAULT_COLLECTOR_STALE_AFTER",
     "DEFAULT_STALE_AFTER",
     "MAX_MEMORY_LEAD_DAYS",
     "MAX_MEMORY_PAGE_SIZE",
+    "CollectorProfile",
+    "CollectorState",
+    "CollectorStatus",
+    "CollectorStore",
+    "DaemonFailureCode",
+    "DaemonFailurePhase",
+    "DaemonLastRunState",
     "DaemonLiveness",
     "DaemonNotStartedError",
+    "DaemonRunMode",
     "DaemonStatus",
     "DaemonStatusStore",
     "DatabaseStatus",
@@ -128,11 +150,13 @@ __all__ = [
     "SituationEvidence",
     "SituationNotFoundError",
     "SituationPriority",
+    "SituationSource",
     "SituationState",
     "SituationStore",
     "SituationType",
     "SituationValidationError",
     "SourceAuthState",
+    "SourceCredentialState",
     "SourceErrorCode",
     "SourceFreshness",
     "SourceFreshnessStatus",

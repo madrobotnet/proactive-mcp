@@ -93,7 +93,7 @@ def _open_at_barrier(
         return store.status().migration_version, _legacy_row(store.connection())
 
 
-def test_fresh_and_v9_databases_reach_v10_without_losing_legacy_rows(
+def test_fresh_and_v9_databases_pass_v10_without_losing_legacy_rows(
     tmp_path: Path,
 ) -> None:
     fresh_path = tmp_path / "fresh.db"
@@ -108,8 +108,8 @@ def test_fresh_and_v9_databases_reach_v10_without_losing_legacy_rows(
     assert before == _PARENT_V9_SOURCE_ROW
 
     with Store(fresh_path) as fresh, Store(legacy_path) as upgraded:
-        assert fresh.status().migration_version == 10
-        assert upgraded.status().migration_version == 10
+        assert fresh.status().migration_version == 11
+        assert upgraded.status().migration_version == 11
         assert _legacy_row(upgraded.connection()) == before
         assert table_names(fresh.connection()) >= {
             "gmail_diagnostics",
@@ -136,7 +136,7 @@ def test_two_concurrent_v9_opens_apply_migration_once(tmp_path: Path) -> None:
             _ = future.cancel()
         executor.shutdown(wait=False, cancel_futures=True)
 
-    assert [version for version, _row in results] == [10, 10]
+    assert [version for version, _row in results] == [11, 11]
     assert results[0][1] == results[1][1]
     with Store(path) as store:
         assert (

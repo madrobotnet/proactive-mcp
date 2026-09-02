@@ -1,6 +1,9 @@
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
+
+import proactive_mcp.server.status as status_module
 from proactive_mcp.paths import ProactivePaths
 from proactive_mcp.server.status import status_response
 from proactive_mcp.store import FallbackClaim, Store
@@ -15,11 +18,13 @@ _PAGE_SIZE = 20
 
 def test_status_counts_fallback_outcomes_past_the_situation_page(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: more persisted fallbacks than one situation page, with the only
     # failure after situation id 20, on an otherwise healthy installation.
     paths = ProactivePaths.for_database(tmp_path / "proactive.db")
     clock = FakeClock(utc_datetime(2026, 8, 21, 12))
+    monkeypatch.setattr(status_module, "notification_available", lambda: True)
     with Store(paths.database, clock=clock) as store:
         store.set_google_auth_state("configured")
         store.record_sync_success("gmail")

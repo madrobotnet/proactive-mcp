@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
     from ._sync_models import (
         SourceAuthState,
+        SourceCredentialState,
         SourceErrorCode,
         SourceName,
         SourceSyncFailureCode,
@@ -123,3 +124,17 @@ class SourceStateStore:
                     timestamp,
                 ),
             )
+
+    def record_credential_state(self, state: SourceCredentialState) -> None:
+        """Persist bounded credential availability for status coalescing."""
+        _ = self._connection.execute(
+            """
+            INSERT INTO source_operational_state(
+                id, credential_state, observed_at
+            ) VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                credential_state = excluded.credential_state,
+                observed_at = excluded.observed_at
+            """,
+            (state, self._clock.now().isoformat()),
+        )
