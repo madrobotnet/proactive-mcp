@@ -5,6 +5,7 @@
 Give every AI agent a reason to reach out first.
 
 A local-first MCP server that turns read-only signals and local memory into grounded situations your existing agent can deliver at the right time.
+<!-- mcp-name: io.github.madrobotnet/proactive-mcp -->
 
 <strong>English</strong> · <a href="README.ko.md">한국어</a>
 
