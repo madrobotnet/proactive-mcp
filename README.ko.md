@@ -67,6 +67,8 @@ flowchart LR
 4. 호스트는 lease 전체를 검토해 이 사용자에게 필요한 후보만 고릅니다. 불확실한 후보는 미확정 상태로 두거나 snooze할 수 있습니다. 검토 뒤 확정하기로 선택할 때만, 보여 주지 않기로 확신한 후보까지 포함한 전체 lease를 정확히 한 번 확정합니다.
 5. 확인, 스누즈, 음소거, 해소, cooldown, 일일 예산 규칙은 중복되거나 시끄러운 전달을 막습니다.
 
+기본적으로 local quiet hours인 21:00~07:00에는 critical이 아닌 상황을 보류하며, 버리지 않고 pending 상태로 유지해 다음 조회로 이월합니다. 07:00에 자동으로 실행되는 동작은 없습니다. Quiet hours가 끝난 뒤 실행 중이거나 host가 예약한 agent가 `proactive_check`를 호출해야 합니다.
+
 ### 신뢰 경계
 
 - Google 접근은 `gmail.readonly`와 `calendar.readonly`로만 제한합니다.
