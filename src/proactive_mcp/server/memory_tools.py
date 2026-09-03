@@ -24,7 +24,6 @@ from proactive_mcp.server.memory_responses import (
     entity_response,
     memory_item_response,
 )
-from proactive_mcp.server.memory_validation import validate_memory_date
 from proactive_mcp.store import (
     MAX_MEMORY_LEAD_DAYS,
     MAX_MEMORY_PAGE_SIZE,
@@ -33,7 +32,6 @@ from proactive_mcp.store import (
     MemoryKind,
     MemoryRecurrence,
     Store,
-    validate_new_memory,
 )
 
 if TYPE_CHECKING:
@@ -53,9 +51,7 @@ async def remember(
 ) -> str:
     """Store a memory item from an agent conversation."""
     memory = RememberRequest(kind=kind, content=content, entity=entity, **options)
-    validate_memory_date(memory)
     candidate = new_memory(memory)
-    validate_new_memory(candidate)
     with Store(_database_path()) as store:
         item = store.remember(candidate)
     return memory_item_response(item).model_dump_json()
@@ -135,9 +131,7 @@ async def update(
 ) -> str:
     """Replace a memory item's mutable values while retaining its id."""
     memory = UpdateRequest(kind=kind, content=content, entity=entity, **options)
-    validate_memory_date(memory)
     candidate = new_memory(memory)
-    validate_new_memory(candidate)
     with Store(_database_path()) as store:
         item = store.update(memory_id, candidate)
     return memory_item_response(item).model_dump_json()
