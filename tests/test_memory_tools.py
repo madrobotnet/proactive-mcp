@@ -142,6 +142,47 @@ async def test_remember_rejects_invalid_dates_without_reflecting_input(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("tool_name", ["remember", "update"])
+@pytest.mark.parametrize(
+    ("date_anchor", "recurrence"),
+    [
+        ("2026-02-30", "none"),
+        ("--07-18", "none"),
+        (None, "yearly"),
+    ],
+)
+async def test_memory_writes_reject_invalid_date_shapes(
+    tmp_path: Path,
+    tool_name: str,
+    date_anchor: str | None,
+    recurrence: str,
+) -> None:
+    async with memory_session(tmp_path) as session:
+        arguments = {
+            "kind": "fact",
+            "content": "Invalid date",
+            "date_anchor": date_anchor,
+            "recurrence": recurrence,
+        }
+        if tool_name == "update":
+            stored = await session.call_tool(
+                "remember",
+                {"kind": "fact", "content": "Original"},
+            )
+            result = await session.call_tool(
+                "update",
+                {
+                    "id": MemoryItemResponse.model_validate_json(json_text(stored)).id,
+                    **arguments,
+                },
+            )
+        else:
+            result = await session.call_tool("remember", arguments)
+
+    assert result.is_error is True
+
+
+@pytest.mark.anyio
 async def test_memory_tools_enforce_storage_and_result_bounds(tmp_path: Path) -> None:
     exact_content = "x" * 4096
     oversized_utf8 = "한" * 1366

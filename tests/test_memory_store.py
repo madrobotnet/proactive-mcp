@@ -3,9 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
+
 from proactive_mcp.store import (
     Entity,
     MemoryItem,
+    MemoryRecurrence,
+    MemoryValidationError,
     NewMemory,
     Store,
 )
@@ -220,3 +224,62 @@ def test_update_and_list_entities_return_typed_normalized_results(
             updated_at=created_at.isoformat(),
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("date_anchor", "recurrence"),
+    [
+        ("2026-02-30", "none"),
+        ("--07-18", "none"),
+        (None, "yearly"),
+    ],
+)
+def test_remember_rejects_invalid_date_shapes(
+    tmp_path: Path,
+    date_anchor: str | None,
+    recurrence: MemoryRecurrence,
+) -> None:
+    with Store(tmp_path / "proactive.db") as store:
+        with pytest.raises(MemoryValidationError) as caught:
+            _ = store.remember(
+                NewMemory(
+                    kind="fact",
+                    content="Invalid date",
+                    date_anchor=date_anchor,
+                    recurrence=recurrence,
+                )
+            )
+
+        assert caught.value.field == "date_anchor"
+        assert store.list_dated_memories() == ()
+
+
+@pytest.mark.parametrize(
+    ("date_anchor", "recurrence"),
+    [
+        ("2026-02-30", "none"),
+        ("--07-18", "none"),
+        (None, "yearly"),
+    ],
+)
+def test_update_rejects_invalid_date_shapes(
+    tmp_path: Path,
+    date_anchor: str | None,
+    recurrence: MemoryRecurrence,
+) -> None:
+    with Store(tmp_path / "proactive.db") as store:
+        original = store.remember(NewMemory(kind="fact", content="Original"))
+
+        with pytest.raises(MemoryValidationError) as caught:
+            _ = store.update(
+                original.id,
+                NewMemory(
+                    kind="fact",
+                    content="Changed",
+                    date_anchor=date_anchor,
+                    recurrence=recurrence,
+                ),
+            )
+
+        assert caught.value.field == "date_anchor"
+        assert store.recall("Original") == (original,)

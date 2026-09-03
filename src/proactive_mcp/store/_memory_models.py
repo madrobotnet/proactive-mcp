@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Final, Literal
 
 from pydantic import TypeAdapter
@@ -89,6 +90,18 @@ INVALID_LEAD_DAYS: Final = (
     "lead_days",
     f"must be between 0 and {MAX_MEMORY_LEAD_DAYS}",
 )
+INVALID_DATE_ANCHOR: Final = (
+    "date_anchor",
+    "must be an ISO date or --MM-DD",
+)
+MISSING_YEARLY_DATE: Final = (
+    "date_anchor",
+    "yearly recurrence requires date_anchor",
+)
+YEARLESS_DATE_REQUIRES_YEARLY: Final = (
+    "date_anchor",
+    "yearless date_anchor requires yearly recurrence",
+)
 INVALID_DUPLICATE_DATE: Final = ("date_anchor", "duplicates an active dated fact")
 INVALID_ENTITY_METADATA: Final = ("entity", "is required for entity metadata")
 INVALID_ENTITY_KIND: Final = ("entity_kind", "is required when entity is set")
@@ -126,6 +139,22 @@ class MemoryValidationError(Exception):
 
 def validate_new_memory(memory: NewMemory) -> None:
     """Enforce caller-independent storage bounds before persistence."""
+    value = memory.date_anchor
+    if value is None:
+        if memory.recurrence == "yearly":
+            raise MemoryValidationError(*MISSING_YEARLY_DATE)
+    else:
+        normalized = (
+            f"2000-{value.removeprefix('--')}" if value.startswith("--") else value
+        )
+        try:
+            parsed = date.fromisoformat(normalized)
+            _ = parsed + timedelta(days=1)
+        except (OverflowError, ValueError):
+            raise MemoryValidationError(*INVALID_DATE_ANCHOR) from None
+        if value.startswith("--") and memory.recurrence != "yearly":
+            raise MemoryValidationError(*YEARLESS_DATE_REQUIRES_YEARLY)
+
     bounded = (
         ("content", memory.content, MAX_MEMORY_CONTENT_BYTES),
         ("entity", memory.entity, MAX_MEMORY_ENTITY_BYTES),
