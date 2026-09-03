@@ -172,9 +172,7 @@ async def test_memory_writes_reject_invalid_date_shapes(
             result = await session.call_tool(
                 "update",
                 {
-                    "id": MemoryItemResponse.model_validate_json(
-                        json_text(stored)
-                    ).id,
+                    "id": MemoryItemResponse.model_validate_json(json_text(stored)).id,
                     **arguments,
                 },
             )
