@@ -37,6 +37,7 @@ def test_headless_setup_emits_single_url_and_success_when_authorization_complete
     result = cli.main(
         [
             "setup",
+            "--non-interactive",
             "--headless",
             "--client-secrets",
             str(FIXTURES / "installed-client.json"),
@@ -92,6 +93,7 @@ def test_setup_entrypoint_redacts_post_authorization_storage_failures(
         [
             "proactive-mcp",
             "setup",
+            "--non-interactive",
             "--client-secrets",
             str(FIXTURES / "installed-client.json"),
         ],
@@ -159,6 +161,7 @@ def test_setup_state_write_failure_rolls_back_both_auth_states(
     result = cli.main(
         [
             "setup",
+            "--non-interactive",
             "--headless",
             "--client-secrets",
             str(FIXTURES / "installed-client.json"),
