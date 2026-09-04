@@ -169,6 +169,78 @@ def test_memory_row_quota_rejects_growth_atomically(
         assert store.recall("")[0].content == "first"
 
 
+def test_memory_quota_counts_only_active_rows_after_forget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(memory_module, "_MAX_MEMORY_ROWS", 2)
+    with Store(tmp_path / "proactive.db") as store:
+        first = store.remember(NewMemory(kind="note", content="first"))
+        _ = store.remember(NewMemory(kind="note", content="second"))
+
+        with pytest.raises(MemoryValidationError):
+            _ = store.remember(NewMemory(kind="note", content="over limit"))
+
+        forgotten = store.forget(first.id)
+        replacement = store.remember(NewMemory(kind="note", content="replacement"))
+        connection = store.connection()
+
+        assert forgotten.archived is True
+        assert replacement.content == "replacement"
+        assert (
+            _scalar_count(
+                connection,
+                "SELECT COUNT(*) FROM memory_items WHERE archived = 0",
+            )
+            == 2
+        )
+        assert (
+            _scalar_count(
+                connection,
+                "SELECT COUNT(*) FROM memory_items WHERE archived = 1",
+            )
+            == 1
+        )
+        assert _scalar_count(connection, "SELECT COUNT(*) FROM memory_items") == 3
+
+        with pytest.raises(MemoryValidationError):
+            _ = store.remember(NewMemory(kind="note", content="over limit again"))
+
+
+def test_migration_archived_rows_do_not_consume_quota(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(memory_module, "_MAX_MEMORY_ROWS", 1)
+    with Store(tmp_path / "proactive.db") as store:
+        loser = store.remember(NewMemory(kind="note", content="migration loser"))
+        connection = store.connection()
+        _ = connection.execute(
+            "UPDATE memory_items SET archived = 1 WHERE id = ?",
+            (loser.id,),
+        )
+        connection.commit()
+
+        replacement = store.remember(NewMemory(kind="note", content="replacement"))
+
+        assert replacement.archived is False
+        assert (
+            _scalar_count(
+                connection,
+                "SELECT COUNT(*) FROM memory_items WHERE archived = 0",
+            )
+            == 1
+        )
+        assert (
+            _scalar_count(
+                connection,
+                "SELECT COUNT(*) FROM memory_items WHERE archived = 1",
+            )
+            == 1
+        )
+        assert _scalar_count(connection, "SELECT COUNT(*) FROM memory_items") == 2
+
+
 def test_update_rolls_back_new_entity_when_memory_update_fails(
     tmp_path: Path,
 ) -> None:

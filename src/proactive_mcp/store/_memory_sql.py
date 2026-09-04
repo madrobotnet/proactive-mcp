@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Final
 
 LAST_INSERT_ROWID: Final = "SELECT last_insert_rowid()"
-SELECT_MEMORY_ITEM_COUNT: Final = "SELECT COUNT(*) FROM memory_items"
+# Archived rows stay retained; pruning is outside this active-quota policy.
+SELECT_MEMORY_ITEM_COUNT: Final = "SELECT COUNT(*) FROM memory_items WHERE archived = 0"
 SELECT_ENTITY_COUNT: Final = "SELECT COUNT(*) FROM entities"
 SELECT_ENTITY_ALIAS_COUNT: Final = "SELECT COUNT(*) FROM entity_aliases"
 SELECT_ENTITY_ID_BY_ALIAS: Final = (
