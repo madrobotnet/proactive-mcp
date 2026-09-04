@@ -26,8 +26,8 @@ class TaskSchedulerManager(Protocol):
         """Return whether the task is currently running."""
         ...
 
-    def main_pid(self) -> int | None:
-        """Return the unique matching daemon descendant PID."""
+    def main_pid(self, expected_pid: int | None = None) -> int | None:
+        """Verify and return the expected daemon descendant PID."""
         ...
 
     def register(self, definition: str) -> bool:

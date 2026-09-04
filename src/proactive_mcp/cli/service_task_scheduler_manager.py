@@ -160,9 +160,9 @@ class WindowsTaskSchedulerManager:
         """Return whether the registered task is running."""
         return self._run(_ACTIVE_SCRIPT).output.strip() == "1"
 
-    def main_pid(self) -> int | None:
-        """Resolve the unique matching executable below the scheduler engine."""
-        result = self._run(_MAIN_PID_SCRIPT)
+    def main_pid(self, expected_pid: int | None = None) -> int | None:
+        """Verify the heartbeat owner belongs to the scheduler process tree."""
+        result = self._run(_main_pid_script(expected_pid))
         value = result.output.strip()
         return int(value) if result.succeeded and value.isdecimal() else None
 
@@ -223,3 +223,26 @@ def _sanitized_environment() -> Mapping[str, str]:
     powershell = PureWindowsPath(trusted_notifier_path("win32"))
     environment["PATH"] = str(powershell.parents[2])
     return environment
+
+
+def _main_pid_script(expected_pid: int | None) -> str:
+    if expected_pid is None:
+        return _MAIN_PID_SCRIPT
+    return (
+        _PREFIX
+        + _GET_TASK
+        + "$roots=@($task.GetInstances(0)|ForEach-Object {[int]$_.EnginePID})\n"
+        + "if($roots.Count -eq 0){exit 0}\n"
+        + "$processes=@(Get-CimInstance Win32_Process)\n"
+        + "$parents=@{}\n"
+        + "foreach($process in $processes){$parents[[int]$process.ProcessId]="
+        + "[int]$process.ParentProcessId}\n"
+        + f"$candidate={expected_pid}\n"
+        + "$cursor=$candidate\n"
+        + "while($parents.ContainsKey($cursor)){\n"
+        + "  if($roots -contains $cursor){[Console]::Out.Write($candidate);exit 0}\n"
+        + "  $next=[int]$parents[$cursor]\n"
+        + "  if($next -eq $cursor){break}\n"
+        + "  $cursor=$next\n"
+        + "}\n"
+    )

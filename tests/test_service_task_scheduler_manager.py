@@ -62,6 +62,19 @@ def test_start_subscribes_before_run_and_waits_for_ready_file() -> None:
     assert script.index("EnableRaisingEvents") < script.index("$task.Run")
 
 
+def test_main_pid_verifies_requested_heartbeat_pid_is_task_descendant() -> None:
+    backend = load_backend()
+    runner = RecordingTaskSchedulerRunner()
+    manager = backend.WindowsTaskSchedulerManager(runner=runner)
+
+    assert manager.main_pid(8700) is None
+
+    script = b64decode(runner.calls[0][-1], validate=True).decode("utf-16-le")
+    assert "$candidate=8700" in script
+    assert "$task.GetInstances(0)" in script
+    assert "$roots -contains $cursor" in script
+
+
 def test_install_passes_profile_ready_file_to_manager(tmp_path: Path) -> None:
     backend = load_backend()
     harness = make_harness(tmp_path)

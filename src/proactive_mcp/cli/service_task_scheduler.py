@@ -69,6 +69,7 @@ def render_task_definition(
         f"[Convert]::FromBase64String('{ready_token}'))\n"
         "$env:PROACTIVE_DATABASE = $database\n"
         f"$env:{READY_FILE_ENV} = $readyFile\n"
+        "[IO.File]::Delete($readyFile)\n"
         "& $executable 'daemon'\n"
         "exit $LASTEXITCODE\n"
     )

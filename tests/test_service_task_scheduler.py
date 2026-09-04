@@ -167,6 +167,7 @@ def test_health_status_reports_enabled_active_running_heartbeat_with_matching_pi
     assert result.response.enabled is True
     assert result.response.active is True
     assert result.response.main_pid == PID
+    assert harness.manager.main_pid_requests == [PID]
     assert result.response.heartbeat == "running"
     assert result.response.linger == "not_applicable"
     assert result.response.guidance == "none"

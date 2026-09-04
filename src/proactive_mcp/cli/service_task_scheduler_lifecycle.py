@@ -155,7 +155,7 @@ def _snapshot(manager: TaskSchedulerManager, definition: str) -> _Snapshot:
     managed = _is_managed_task_definition(definition)
     enabled = managed and manager.is_enabled()
     active = managed and manager.is_active()
-    main_pid = manager.main_pid() if active else None
+    main_pid: int | None = None
     heartbeat: HeartbeatState | None = None
     heartbeat_pid: int | None = None
     if active:
@@ -163,6 +163,8 @@ def _snapshot(manager: TaskSchedulerManager, definition: str) -> _Snapshot:
             daemon = build_status().daemon
             heartbeat = daemon.liveness
             heartbeat_pid = daemon.pid
+            if heartbeat_pid is not None:
+                main_pid = manager.main_pid(heartbeat_pid)
         except (ConfigError, UnsafeDatabasePathError, OSError, sqlite3.Error):
             heartbeat = None
     return _Snapshot(managed, enabled, active, main_pid, heartbeat, heartbeat_pid)

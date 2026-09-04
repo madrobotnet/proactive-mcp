@@ -37,7 +37,7 @@ class TaskSchedulerManager(Protocol):
 
     def is_active(self) -> bool: ...
 
-    def main_pid(self) -> int | None: ...
+    def main_pid(self, expected_pid: int | None = None) -> int | None: ...
 
     def register(self, definition: str) -> bool: ...
 
@@ -109,6 +109,7 @@ class FakeTaskSchedulerManager:
         "enabled",
         "fail_register_once",
         "fail_start_once",
+        "main_pid_requests",
         "main_pid_value",
         "operations",
         "ready_files",
@@ -120,6 +121,7 @@ class FakeTaskSchedulerManager:
         self.enabled: bool = False
         self.active: bool = False
         self.main_pid_value: int | None = PID
+        self.main_pid_requests: list[int | None] = []
         self.fail_register_once: bool = False
         self.fail_start_once: bool = False
         self.operations: list[str] = []
@@ -134,8 +136,13 @@ class FakeTaskSchedulerManager:
     def is_active(self) -> bool:
         return self.active
 
-    def main_pid(self) -> int | None:
-        return self.main_pid_value if self.active else None
+    def main_pid(self, expected_pid: int | None = None) -> int | None:
+        self.main_pid_requests.append(expected_pid)
+        if not self.active or (
+            expected_pid is not None and expected_pid != self.main_pid_value
+        ):
+            return None
+        return self.main_pid_value
 
     def register(self, definition: str) -> bool:
         self.operations.append("register")
@@ -265,6 +272,9 @@ def assert_encoded_launcher(backend: TaskSchedulerBackend) -> None:
     assert f"FromBase64String('{ready_token}')" in launcher
     assert "$env:PROACTIVE_DATABASE = $database" in launcher
     assert "$env:PROACTIVE_SERVICE_READY_FILE = $readyFile" in launcher
+    assert launcher.index("[IO.File]::Delete($readyFile)") < launcher.index(
+        "& $executable 'daemon'"
+    )
     invocations = [
         line.strip() for line in launcher.splitlines() if line.lstrip().startswith("&")
     ]
