@@ -13,10 +13,13 @@ from ._memory_models import (
     MemoryValidationError,
     NewMemory,
 )
+from ._memory_normalize import free_dated_memory_key
 from ._memory_sql import (
     SELECT_DATED_DUPLICATE,
     SELECT_DATED_DUPLICATE_EXCLUDING,
     SELECT_ENTITY_BY_ID,
+    SELECT_FREE_DATED_DUPLICATE,
+    SELECT_FREE_DATED_DUPLICATE_EXCLUDING,
     SELECT_MEMORY_BY_ID,
 )
 
@@ -118,12 +121,21 @@ class MemoryQueries:
         *,
         excluding_id: int | None = None,
     ) -> int | None:
-        """Return the id of an active identical dated fact, if one exists."""
-        if (
-            entity_id is None
-            or memory.attribute == "free"
-            or memory.date_anchor is None
-        ):
+        """Return the id of an active identical dated memory, if one exists."""
+        if memory.date_anchor is None:
+            return None
+        if memory.attribute == "free":
+            identity = free_dated_memory_key(memory, entity_id)
+            if excluding_id is None:
+                return self.query_optional_int(
+                    SELECT_FREE_DATED_DUPLICATE,
+                    identity,
+                )
+            return self.query_optional_int(
+                SELECT_FREE_DATED_DUPLICATE_EXCLUDING,
+                (*identity, excluding_id),
+            )
+        if entity_id is None:
             return None
         if excluding_id is None:
             return self.query_optional_int(

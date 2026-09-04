@@ -641,6 +641,6 @@ def test_database_health_and_receipt_failure_are_machine_readable(
 
     assert database.status == "healthy"
     assert database.health == "ready"
-    assert database.migration_version == 11
+    assert database.migration_version == 12
     assert receipt.status == "invalid_or_expired"
     assert receipt.delivered_count == 0

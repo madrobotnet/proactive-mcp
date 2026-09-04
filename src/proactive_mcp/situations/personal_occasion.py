@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING, Final
 
-from proactive_mcp.store import Detection, SituationEvidence
+from proactive_mcp.store import (
+    Detection,
+    SituationEvidence,
+    free_dated_memory_key,
+)
 
 from ._dates import local_day_end, parse_anchor, yearly_occurrence_on_or_after
 
@@ -15,7 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime, tzinfo
 
-    from proactive_mcp.store import MemoryItem
+    from proactive_mcp.store import FreeDatedMemoryKey, MemoryItem
 
 __all__ = ["DEFAULT_LEAD_DAYS", "detect_personal_occasions"]
 
@@ -49,7 +53,10 @@ def detect_personal_occasions(
     the earliest eligible occurrence supplies the single group detection.
     """
     today = now.astimezone(tz).date()
-    groups: dict[tuple[str, int, str], list[_Occurrence]] = {}
+    groups: dict[
+        tuple[str, int, str] | FreeDatedMemoryKey,
+        list[_Occurrence],
+    ] = {}
     for item in items:
         try:
             occurrence = _next_occurrence(item, today)
@@ -78,8 +85,12 @@ def detect_personal_occasions(
     return tuple(detections)
 
 
-def _group_key(item: MemoryItem) -> tuple[str, int, str]:
-    if item.entity_id is not None and item.attribute != "free":
+def _group_key(
+    item: MemoryItem,
+) -> tuple[str, int, str] | FreeDatedMemoryKey:
+    if item.attribute == "free":
+        return free_dated_memory_key(item, item.entity_id)
+    if item.entity_id is not None:
         return ("entity", item.entity_id, item.attribute)
     return ("item", item.id, "")
 

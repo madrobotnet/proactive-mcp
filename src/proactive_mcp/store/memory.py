@@ -32,7 +32,13 @@ from ._memory_models import (
     NewMemory,
     validate_new_memory,
 )
-from ._memory_normalize import escape_like, prefix_filter
+from ._memory_normalize import (
+    FreeDatedMemoryKey,
+    escape_like,
+    free_dated_memory_key,
+    normalize_memory_content,
+    prefix_filter,
+)
 from ._memory_queries import MemoryQueries
 from ._memory_sql import (
     ARCHIVE_MEMORY_ITEM,
@@ -60,6 +66,7 @@ __all__ = [
     "EntityAliasConflictError",
     "EntityKind",
     "EntityStatus",
+    "FreeDatedMemoryKey",
     "MemoryAttribute",
     "MemoryItem",
     "MemoryKind",
@@ -69,6 +76,8 @@ __all__ = [
     "MemoryStore",
     "MemoryValidationError",
     "NewMemory",
+    "free_dated_memory_key",
+    "normalize_memory_content",
     "validate_new_memory",
 ]
 
@@ -127,6 +136,7 @@ class MemoryStore:
                     entity.id if entity is not None else None,
                     memory.attribute,
                     memory.content,
+                    normalize_memory_content(memory.content),
                     memory.date_anchor,
                     memory.recurrence,
                     memory.lead_days,
@@ -197,6 +207,7 @@ class MemoryStore:
                     entity.id if entity is not None else None,
                     memory.attribute,
                     memory.content,
+                    normalize_memory_content(memory.content),
                     memory.date_anchor,
                     memory.recurrence,
                     memory.lead_days,

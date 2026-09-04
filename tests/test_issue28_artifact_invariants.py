@@ -44,6 +44,7 @@ _MIGRATION_FILES: Final = (
     "009_security_hardening.sql",
     "010_gmail_diagnostics_and_receipt_replay.sql",
     "011_state_model_hardening.sql",
+    "012_free_dated_dedupe.sql",
 )
 _UNAVAILABLE: Final = "synthetic-keyring-unavailable"
 _DAILY_TOOL_COUNT: Final = 13
@@ -133,9 +134,9 @@ def test_python_floor_scopes_and_latest_migration_remain_exact(tmp_path: Path) -
             if resource.name.endswith(".sql")
         )
     )
-    assert tuple(number for number, _sql in migrations) == tuple(range(1, 12))
+    assert tuple(number for number, _sql in migrations) == tuple(range(1, 13))
     assert migration_files == _MIGRATION_FILES
-    assert applied == 11
+    assert applied == 12
 
 
 def test_posix_store_and_oauth_fallback_remain_private(tmp_path: Path) -> None:

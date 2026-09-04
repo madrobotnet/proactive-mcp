@@ -15,14 +15,15 @@ SELECT_ENTITY_ID_BY_ALIAS: Final = (
 UPDATE_MEMORY_TIMESTAMP: Final = "UPDATE memory_items SET updated_at = ? WHERE id = ?"
 INSERT_MEMORY_ITEM: Final = """
             INSERT INTO memory_items (
-                kind, entity_id, attribute, content, date_anchor, recurrence, lead_days,
-                source, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                kind, entity_id, attribute, content, content_norm, date_anchor,
+                recurrence, lead_days, source, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 UPDATE_MEMORY_ITEM: Final = """
             UPDATE memory_items
-            SET kind = ?, entity_id = ?, attribute = ?, content = ?, date_anchor = ?,
-                recurrence = ?, lead_days = ?, source = ?, updated_at = ?
+            SET kind = ?, entity_id = ?, attribute = ?, content = ?, content_norm = ?,
+                date_anchor = ?, recurrence = ?, lead_days = ?, source = ?,
+                updated_at = ?
             WHERE id = ?
             """
 ARCHIVE_MEMORY_ITEM: Final = """
@@ -48,6 +49,18 @@ SELECT_DATED_DUPLICATE_EXCLUDING: Final = """
             SELECT id FROM memory_items
             WHERE entity_id = ? AND attribute = ? AND date_anchor = ? AND archived = 0
               AND id != ?
+            """
+SELECT_FREE_DATED_DUPLICATE: Final = """
+            SELECT id FROM memory_items
+            WHERE kind = ? AND COALESCE(entity_id, 0) = COALESCE(?, 0)
+              AND date_anchor = ? AND recurrence = ? AND content_norm = ?
+              AND archived = 0 AND attribute = 'free'
+            """
+SELECT_FREE_DATED_DUPLICATE_EXCLUDING: Final = """
+            SELECT id FROM memory_items
+            WHERE kind = ? AND COALESCE(entity_id, 0) = COALESCE(?, 0)
+              AND date_anchor = ? AND recurrence = ? AND content_norm = ?
+              AND archived = 0 AND attribute = 'free' AND id != ?
             """
 SELECT_MEMORY_BY_ID: Final = """
             SELECT SUM(_proactive_capture_memory_item(

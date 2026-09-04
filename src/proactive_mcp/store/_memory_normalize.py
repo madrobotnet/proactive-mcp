@@ -2,14 +2,49 @@
 
 from __future__ import annotations
 
+from typing import Protocol, TypeAlias
 from unicodedata import normalize
 
 from ._memory_models import (
     INVALID_EMPTY_ENTITY,
     INVALID_EMPTY_PATH,
     INVALID_PATH_DEPTH,
+    MemoryKind,
+    MemoryRecurrence,
     MemoryValidationError,
 )
+
+FreeDatedMemoryKey: TypeAlias = tuple[
+    MemoryKind,
+    int | None,
+    str | None,
+    MemoryRecurrence,
+    str,
+]
+
+
+class FreeDatedMemory(Protocol):
+    """Values that define a free dated memory's canonical identity."""
+
+    @property
+    def kind(self) -> MemoryKind:
+        """Return the memory kind."""
+        ...
+
+    @property
+    def content(self) -> str:
+        """Return the original memory content."""
+        ...
+
+    @property
+    def date_anchor(self) -> str | None:
+        """Return the dated memory anchor."""
+        ...
+
+    @property
+    def recurrence(self) -> MemoryRecurrence:
+        """Return the recurrence policy."""
+        ...
 
 
 def normalize_label(label: str) -> str:
@@ -23,6 +58,25 @@ def normalize_label(label: str) -> str:
 def normalize_alias(alias: str) -> str:
     """Return a casefolded, whitespace-stripped alias key."""
     return "".join(normalize("NFC", alias).casefold().split())
+
+
+def normalize_memory_content(content: str) -> str:
+    """Return the canonical content component of a dated memory identity."""
+    return " ".join(normalize("NFC", content).casefold().split())
+
+
+def free_dated_memory_key(
+    memory: FreeDatedMemory,
+    entity_id: int | None,
+) -> FreeDatedMemoryKey:
+    """Return the canonical identity of one free dated memory."""
+    return (
+        memory.kind,
+        entity_id,
+        memory.date_anchor,
+        memory.recurrence,
+        normalize_memory_content(memory.content),
+    )
 
 
 def entity_aliases(label: str, path: str | None) -> tuple[str, ...]:
