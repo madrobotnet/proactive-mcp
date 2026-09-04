@@ -142,6 +142,28 @@ def test_heartbeat_failure_emits_only_phase_and_code(
     assert "canary" not in captured.err
 
 
+def test_notify_service_ready_signals_scheduler_after_heartbeat_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "proactive.db"
+    signaled: list[Path] = []
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+
+    def signal_ready(path: Path) -> None:
+        signaled.append(path)
+
+    monkeypatch.setattr(
+        daemon_cli,
+        "signal_task_scheduler_ready",
+        signal_ready,
+    )
+
+    daemon_cli.notify_service_ready()
+    assert signaled == [database]
+
+
 def test_runtime_ownership_conflict_emits_only_phase_and_code(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -212,3 +234,36 @@ def test_continuous_daemon_reclaims_dead_owner_after_systemd_restart(
     assert status.pid == os.getpid()
     assert status.liveness == "stopped"
     assert status.cycle_count == 1
+
+
+def test_windows_daemon_ownership_uses_nonterminating_process_checker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "proactive.db"
+    clock = FakeClock(_START)
+    with Store(database, clock=clock) as crashed:
+        assert crashed.daemon.try_record_start(
+            pid=4242,
+            poll_interval=timedelta(minutes=_CONFIG_MINUTES),
+        )
+    scheduler = RecordingScheduler(stop_after=1)
+    calls: list[int] = []
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
+    monkeypatch.setattr(daemon_cli, "daemon_clock", lambda: clock)
+    monkeypatch.setattr(daemon_cli, "stopping_scheduler", lambda: scheduler)
+
+    def process_is_dead(pid: int) -> bool:
+        calls.append(pid)
+        return False
+
+    def forbidden_kill(_pid: int, _signal: int) -> NoReturn:
+        raise AssertionError
+
+    monkeypatch.setattr(daemon_cli, "process_is_alive", process_is_dead, raising=False)
+    monkeypatch.setattr(os, "kill", forbidden_kill)
+
+    result = cli.main(["daemon"])
+
+    assert result == 0
+    assert calls == [4242]

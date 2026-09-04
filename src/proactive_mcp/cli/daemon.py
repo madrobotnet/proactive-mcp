@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, ClassVar, Final
 
 from pydantic import BaseModel, ConfigDict
 
+from proactive_mcp.cli.process_liveness import process_is_alive
+from proactive_mcp.cli.service_task_scheduler_ready import signal_task_scheduler_ready
 from proactive_mcp.clock import UtcClock
 from proactive_mcp.config import ConfigError, load_config
 from proactive_mcp.delivery.daemon import (
@@ -110,6 +112,7 @@ def stopping_scheduler() -> Scheduler:
 
 def notify_service_ready() -> None:
     """Notify systemd after startup ownership is durably recorded."""
+    signal_task_scheduler_ready(resolve_paths(os.environ).database)
     configured = os.environ.get("NOTIFY_SOCKET")
     if configured is None:
         return
@@ -120,13 +123,7 @@ def notify_service_ready() -> None:
 
 
 def _process_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return process_is_alive(pid)
 
 
 @dataclass(frozen=True, slots=True)
