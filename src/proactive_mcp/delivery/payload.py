@@ -28,7 +28,7 @@ class NotificationSource(Protocol):
 class NotificationPayload:
     """Minimum toast context allowed across the OS-notification boundary."""
 
-    situation_type: SituationType
+    situation_type: str
     title: str
 
 
