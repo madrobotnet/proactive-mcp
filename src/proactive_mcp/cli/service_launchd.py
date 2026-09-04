@@ -38,7 +38,7 @@ _DISABLED_SERVICES_DICT_RE: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 _DISABLED_SERVICE_RE: Final[re.Pattern[str]] = re.compile(
-    r'"(?P<label>[^"]+)"\s*=>\s*(?P<disabled>true|false)',
+    r'"(?P<label>[^"]+)"\s*=>\s*(?P<disabled>true|false|enabled|disabled)',
     re.IGNORECASE,
 )
 _STATE_RE: Final[re.Pattern[str]] = re.compile(
@@ -193,7 +193,7 @@ class LaunchdUserManager:
         matches = tuple(_DISABLED_SERVICE_RE.finditer(body))
         for match in matches:
             if match.group("label") == self.label:
-                return match.group("disabled").lower() != "true"
+                return match.group("disabled").lower() not in {"true", "disabled"}
         if f'"{self.label}"' in body:
             raise LaunchdInspectionError(_PRINT_DISABLED, _MALFORMED)
 

@@ -56,6 +56,29 @@ def test_manager_is_enabled_parses_explicit_and_default_states() -> None:
     assert default_enabled.is_enabled() is True
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("disabled", False),
+        ("enabled", True),
+    ],
+)
+def test_manager_is_enabled_parses_native_launchctl_states(
+    value: str,
+    *,
+    expected: bool,
+) -> None:
+    manager = _manager(
+        disabled=LaunchctlResult(
+            succeeded=True,
+            output=(f'disabled services = {{\n"com.proactive.mcp" => {value}\n}}'),
+            exit_code=0,
+        )
+    )
+
+    assert manager.is_enabled() is expected
+
+
 def test_manager_is_enabled_fails_closed_on_error_or_malformed_output() -> None:
     failed = _manager(disabled=LaunchctlResult(succeeded=False, output="", exit_code=1))
     malformed = _manager(
