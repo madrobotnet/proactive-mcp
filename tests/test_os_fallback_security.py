@@ -280,6 +280,28 @@ def test_nonzero_exit_is_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured.value.__cause__ is None
 
 
+def test_permission_error_is_failed_without_leaking_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sensitive_path = f"/sensitive/system/path/{CANARY_SUBJECT}"
+
+    def permission_denied(
+        _argv: Sequence[str],
+        **_kwargs: bool | float,
+    ) -> subprocess.CompletedProcess[str]:
+        raise PermissionError(13, "Permission denied", sensitive_path)
+
+    monkeypatch.setattr(subprocess, "run", permission_denied)
+    with pytest.raises(NotificationError) as captured:
+        SubprocessNotificationRunner().run(_NOTIFY, DEFAULT_NOTIFICATION_TIMEOUT)
+
+    assert captured.value.error_code == "failed"
+    assert str(captured.value) == "failed"
+    assert captured.value.__cause__ is None
+    _assert_no_canaries(str(captured.value))
+    _assert_no_canaries(repr(captured.value))
+
+
 def test_unknown_platform_is_unsupported() -> None:
     with pytest.raises(NotificationError) as captured:
         _ = parse_notification_platform("freebsd")
