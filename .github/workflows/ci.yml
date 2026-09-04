@@ -40,3 +40,9 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+      - name: Run real LaunchAgent smoke
+        if: runner.os == 'macOS'
+        env:
+          PROACTIVE_REAL_LAUNCHD_SMOKE: "1"
+        run: uv run pytest tests/test_service_macos_smoke.py -q
