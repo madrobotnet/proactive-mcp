@@ -137,6 +137,15 @@ def test_windows_manager_registers_reads_and_starts_real_task(tmp_path: Path) ->
         assert observed is not None
         assert is_managed_task(observed) is True
         assert manager.start() is True
+        assert manager.is_enabled() is True
+        assert manager.is_active() is True
+        main_pid = manager.main_pid()
+        assert main_pid is not None
+        environment = os.environ | {"PROACTIVE_DATABASE": str(database)}
+        with patch.dict(os.environ, environment, clear=True):
+            heartbeat = build_status().daemon
+        assert heartbeat.liveness == "running"
+        assert heartbeat.pid == main_pid
     finally:
         if created:
             _ = manager.stop()
