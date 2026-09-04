@@ -38,8 +38,12 @@ if TYPE_CHECKING:
 
 
 def test_situation_one_second_before_the_wait_is_not_toasted(tmp_path: Path) -> None:
-    # Given: a critical situation detected one second inside the wait window.
-    with aged(tmp_path, detection("too-recent"), age=WAIT - SECOND) as store:
+    # Given: a routine bootstrap candidate detected inside the wait window.
+    with aged(
+        tmp_path,
+        detection("too-recent", priority="routine"),
+        age=WAIT - SECOND,
+    ) as store:
         runner = RecordingRunner()
 
         # When: the dispatcher runs at T+29:59.
@@ -86,8 +90,12 @@ def test_wait_boundary_is_evaluated_in_utc_for_a_non_utc_now(tmp_path: Path) -> 
 
 
 def test_configured_wait_overrides_the_default_thirty_minutes(tmp_path: Path) -> None:
-    # Given: a critical situation detected six minutes ago.
-    with aged(tmp_path, detection("short-wait"), age=timedelta(minutes=6)) as store:
+    # Given: a routine bootstrap candidate detected six minutes ago.
+    with aged(
+        tmp_path,
+        detection("short-wait", priority="routine"),
+        age=timedelta(minutes=6),
+    ) as store:
         runner = RecordingRunner()
 
         # When: config shortens the wait to five minutes.

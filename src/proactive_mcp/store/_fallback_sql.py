@@ -8,9 +8,8 @@ from ._situation_sql import SITUATION_JSON
 
 # Every eligibility rule the fallback policy owns, evaluated against committed
 # rows so the claim can re-check it inside its own immediate transaction.
-_ELIGIBLE: Final = """
+_BASE_ELIGIBLE: Final = """
                 state = 'pending'
-                AND priority IN (SELECT value FROM json_each(?))
                 AND detected_at <= ?
                 AND (expires_at IS NULL OR expires_at > ?)
                 AND NOT EXISTS (
@@ -31,6 +30,15 @@ _ELIGIBLE: Final = """
                     WHERE situation_id = situations.id
                 )
             """
+_CONFIGURED_ELIGIBLE: Final = f"""
+                priority IN (SELECT value FROM json_each(?))
+                AND {_BASE_ELIGIBLE}
+            """  # noqa: S608
+_BOOTSTRAP_ELIGIBLE: Final = f"""
+                {_BASE_ELIGIBLE}
+                AND NOT EXISTS (SELECT 1 FROM situation_deliveries)
+                AND NOT EXISTS (SELECT 1 FROM situation_fallbacks)
+            """  # noqa: S608
 _FALLBACK_ORDER: Final = """
                 CASE priority
                     WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2
@@ -43,7 +51,7 @@ SELECT_FALLBACK_CANDIDATES: Final = f"""
             SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))
             FROM (
                 SELECT * FROM situations
-                WHERE {_ELIGIBLE}
+                WHERE {_CONFIGURED_ELIGIBLE}
                 ORDER BY {_FALLBACK_ORDER}
             )
             """  # noqa: S608
@@ -53,7 +61,23 @@ INSERT_FALLBACK_CLAIM: Final = f"""
             )
             SELECT id, priority, 'claimed', ?
             FROM situations
-            WHERE id = ? AND {_ELIGIBLE}
+            WHERE id = ? AND {_CONFIGURED_ELIGIBLE}
+            """  # noqa: S608
+SELECT_BOOTSTRAP_FALLBACK_CANDIDATES: Final = f"""
+            SELECT SUM(_proactive_capture_situation({SITUATION_JSON}))
+            FROM (
+                SELECT * FROM situations
+                WHERE {_BOOTSTRAP_ELIGIBLE}
+                ORDER BY detected_at ASC, id ASC
+            )
+            """  # noqa: S608
+INSERT_BOOTSTRAP_FALLBACK_CLAIM: Final = f"""
+            INSERT INTO situation_fallbacks (
+                situation_id, priority, outcome, claimed_at
+            )
+            SELECT id, priority, 'claimed', ?
+            FROM situations
+            WHERE id = ? AND {_BOOTSTRAP_ELIGIBLE}
             """  # noqa: S608
 RECORD_FALLBACK_OUTCOME: Final = """
             UPDATE situation_fallbacks

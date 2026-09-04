@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias, assert_never
 
 from proactive_mcp.config import FallbackSettings
 from proactive_mcp.delivery.notify import NotificationError, send_os_notification
@@ -69,14 +69,26 @@ class FallbackDispatcher:
 
     def dispatch(self, now: datetime) -> tuple[FallbackDispatch, ...]:
         """Notify each situation whose configured wait elapsed by ``now``."""
-        if not self._settings.enabled:
+        if not self._settings.enabled or not self._settings.priorities:
             return ()
+        claim = self._claim(now)
         dispatched: list[FallbackDispatch] = []
+        bootstrap = self._fallbacks.claim_next(self._bootstrap_claim(now))
+        if bootstrap is not None:
+            dispatched.append(self._notify(bootstrap))
         while True:
-            claimed = self._fallbacks.claim_next(self._claim(now))
+            claimed = self._fallbacks.claim_next(claim)
             if claimed is None:
                 return tuple(dispatched)
             dispatched.append(self._notify(claimed))
+
+    def _bootstrap_claim(self, now: datetime) -> FallbackClaim:
+        return FallbackClaim(
+            claimed_at=_utc_iso(now),
+            detected_before=_utc_iso(now - self._settings.wait),
+            priorities=self._settings.priorities,
+            mode="bootstrap",
+        )
 
     def _claim(self, now: datetime) -> FallbackClaim:
         return FallbackClaim(
@@ -109,6 +121,8 @@ def _failure_code(error_code: NotificationErrorCode) -> FallbackFailureCode:
             return "nonzero_exit"
         case "unsupported_platform":
             return "unsupported_platform"
+        case _:
+            assert_never(error_code)
 
 
 def _utc_iso(value: datetime) -> str:

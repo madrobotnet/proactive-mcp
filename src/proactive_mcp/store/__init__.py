@@ -11,6 +11,7 @@ from ._daemon_models import (
 )
 from ._fallback_models import (
     FallbackClaim,
+    FallbackClaimMode,
     FallbackFailureCode,
     FallbackNotClaimedError,
     FallbackOutcome,
@@ -131,6 +132,7 @@ __all__ = [
     "EntityKind",
     "EntityStatus",
     "FallbackClaim",
+    "FallbackClaimMode",
     "FallbackFailureCode",
     "FallbackNotClaimedError",
     "FallbackOutcome",

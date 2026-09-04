@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 from uuid import uuid4
 
 import pytest
@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from proactive_mcp.store import FallbackOutcome
+
 _NOW = utc_datetime(2026, 8, 21, 16)
 _WAIT = timedelta(minutes=30)
 
@@ -47,7 +49,11 @@ def _conflict(
     )
 
 
-def _reply(key: str) -> Detection:
+def _reply(
+    key: str,
+    *,
+    expires_at: datetime | None = None,
+) -> Detection:
     return Detection(
         situation_type="reply_deadline",
         dedupe_key=key,
@@ -55,6 +61,7 @@ def _reply(key: str) -> Detection:
         title="Fixture reply deadline",
         why_now="Fixture threshold elapsed",
         evidence=SituationEvidence(facts={"source_id": key}),
+        expires_at=expires_at,
     )
 
 
@@ -67,6 +74,15 @@ def _claim(
         claimed_at=now.isoformat(),
         detected_before=(now - _WAIT).isoformat(),
         priorities=priorities,
+    )
+
+
+def _bootstrap_claim(now: datetime) -> FallbackClaim:
+    return FallbackClaim(
+        claimed_at=now.isoformat(),
+        detected_before=(now - _WAIT).isoformat(),
+        priorities=("critical",),
+        mode="bootstrap",
     )
 
 
@@ -104,6 +120,13 @@ def _claim_in_worker(path: Path, barrier: Barrier) -> int | None:
         return None if claimed is None else claimed.id
 
 
+def _bootstrap_in_worker(path: Path, barrier: Barrier) -> int | None:
+    with Store(path, clock=FakeClock(_NOW)) as store:
+        assert barrier.wait(timeout=10) >= 0
+        claimed = store.fallbacks.claim_next(_bootstrap_claim(_NOW))
+        return None if claimed is None else claimed.id
+
+
 def test_candidates_require_configured_priority_and_elapsed_wait(
     tmp_path: Path,
 ) -> None:
@@ -138,6 +161,166 @@ def test_empty_configured_priorities_disable_the_fallback(tmp_path: Path) -> Non
     # Then: the fallback stays silent instead of defaulting to every row.
     assert candidates == ()
     assert claimed is None
+
+
+def test_bootstrap_ignores_priority_but_keeps_wait_and_oldest_order(
+    tmp_path: Path,
+) -> None:
+    # Given: two eligible noncritical rows and a critical row inside the wait.
+    clock = FakeClock(_NOW - _WAIT - timedelta(minutes=1))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            (_conflict("oldest", priority="routine"),)
+        )
+        clock.set(_NOW - _WAIT)
+        _ = store.situations.upsert_detections(
+            (_conflict("newer-eligible", priority="high"),)
+        )
+        clock.set(_NOW - timedelta(minutes=10))
+        _ = store.situations.upsert_detections((_conflict("too-recent"),))
+        clock.set(_NOW)
+
+        # When: claim_next routes an explicit bootstrap claim.
+        claimed = store.fallbacks.claim_next(_bootstrap_claim(_NOW))
+
+    # Then: priority alone is ignored; wait and oldest-first ordering remain.
+    assert claimed is not None
+    assert claimed.dedupe_key == "oldest"
+
+
+def test_bootstrap_breaks_detected_at_ties_by_id(tmp_path: Path) -> None:
+    # Given: same-time routine and critical rows on an empty host.
+    clock = FakeClock(_NOW - timedelta(hours=1))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            (
+                _conflict("first-id", priority="routine"),
+                _conflict("second-id"),
+            )
+        )
+        clock.set(_NOW)
+
+        # When: claim_next routes the priority-free bootstrap claim.
+        claimed = store.fallbacks.claim_next(_bootstrap_claim(_NOW))
+
+    # Then: id is the stable final ordering key.
+    assert claimed is not None
+    assert claimed.dedupe_key == "first-id"
+
+
+def test_bootstrap_excludes_muted_expired_and_actively_leased_rows(
+    tmp_path: Path,
+) -> None:
+    # Given: an empty-history host with suppressed rows and one eligible row.
+    clock = FakeClock(_NOW - timedelta(hours=1))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections((_reply("leased"),))
+        clock.set(_NOW)
+        _ = store.situations.reserve_for_delivery(
+            _delivery(_NOW),
+            claim_token=uuid4().hex,
+            expires_at=_NOW + timedelta(minutes=2),
+        )
+        clock.set(_NOW - timedelta(hours=1))
+        _ = store.situations.upsert_detections(
+            (
+                _conflict("muted"),
+                _reply("lapsed", expires_at=_NOW - timedelta(seconds=1)),
+                _reply("eligible"),
+            )
+        )
+        _ = store.connection().execute(
+            """INSERT INTO situation_type_mutes (situation_type, created_at)
+            VALUES ('calendar_conflict', ?)
+            """,
+            (clock.now().isoformat(),),
+        )
+        clock.set(_NOW)
+
+        # When: bootstrap claims the first eligible row.
+        claimed = store.fallbacks.claim_next(_bootstrap_claim(_NOW))
+
+    # Then: mute, expiry, and a valid lease retain their normal force.
+    assert claimed is not None
+    assert claimed.dedupe_key == "eligible"
+
+
+def test_bootstrap_delivery_history_disables_exception_globally(
+    tmp_path: Path,
+) -> None:
+    # Given: one delivered row and another eligible pending routine row.
+    clock = FakeClock(_NOW - timedelta(hours=1))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            (_conflict("history"), _conflict("still-pending", priority="routine"))
+        )
+        _ = store.situations.mark_delivered((_by_key(store, "history").id,))
+        clock.set(_NOW)
+
+        # When: claim_next evaluates bootstrap against global history.
+        claimed = store.fallbacks.claim_next(_bootstrap_claim(_NOW))
+
+    # Then: any delivery history consumes host bootstrap eligibility.
+    assert claimed is None
+
+
+@pytest.mark.parametrize("outcome", ["claimed", "sent", "failed"])
+def test_every_fallback_outcome_disables_bootstrap_globally(
+    tmp_path: Path,
+    outcome: FallbackOutcome,
+) -> None:
+    # Given: fallback history in any outcome beside another pending row.
+    clock = FakeClock(_NOW - timedelta(hours=1))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            (_conflict("history"), _conflict("still-pending", priority="routine"))
+        )
+        clock.set(_NOW)
+        history = store.fallbacks.claim_next(_claim(_NOW))
+        assert history is not None
+        match outcome:
+            case "claimed":
+                pass
+            case "sent":
+                store.fallbacks.record_sent(history.id)
+            case "failed":
+                store.fallbacks.record_failed(history.id, code="timeout")
+            case _:
+                assert_never(outcome)
+
+        # When: claim_next evaluates bootstrap for the pending row.
+        claimed = store.fallbacks.claim_next(_bootstrap_claim(_NOW))
+
+    # Then: claimed, sent, and failed records all consume bootstrap.
+    assert claimed is None
+
+
+def test_normal_claim_keeps_urgency_order_after_host_history(tmp_path: Path) -> None:
+    # Given: delivery history and eligible pending rows of every priority.
+    clock = FakeClock(_NOW - timedelta(hours=1))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            (
+                _conflict("history"),
+                _conflict("routine", priority="routine"),
+                _conflict("high", priority="high"),
+                _conflict("critical"),
+            )
+        )
+        _ = store.situations.mark_delivered((_by_key(store, "history").id,))
+        clock.set(_NOW)
+
+        # When: default-configured candidates are listed.
+        candidates = store.fallbacks.candidates(
+            _claim(_NOW, priorities=("routine", "high", "critical"))
+        )
+
+    # Then: ordinary fallback remains urgency-first.
+    assert tuple(item.dedupe_key for item in candidates) == (
+        "critical",
+        "high",
+        "routine",
+    )
 
 
 def test_candidates_exclude_muted_expired_and_delivered_rows(tmp_path: Path) -> None:
@@ -289,6 +472,61 @@ def test_two_daemon_instances_claim_one_fallback_once(tmp_path: Path) -> None:
         )
     assert sorted(item is None for item in outcomes) == [False, True]
     assert rows == 1
+
+
+def test_two_connections_claim_exactly_one_bootstrap(tmp_path: Path) -> None:
+    # Given: two eligible noncritical rows and two Store connections at a barrier.
+    path = tmp_path / "db"
+    clock = FakeClock(_NOW - timedelta(hours=1))
+    with Store(path, clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            (
+                _conflict("contested-routine", priority="routine"),
+                _conflict("contested-high", priority="high"),
+            )
+        )
+    barrier = Barrier(2)
+
+    # When: both connections atomically run the bootstrap claim mode.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(
+            executor.submit(_bootstrap_in_worker, path, barrier) for _ in range(2)
+        )
+    outcomes = tuple(future.result(timeout=20) for future in futures)
+
+    # Then: exactly one history row and one claimed result exist.
+    with Store(path, clock=FakeClock(_NOW)) as store:
+        rows = scalar_int(
+            store.connection(),
+            "SELECT COUNT(*) FROM situation_fallbacks",
+        )
+    assert sorted(item is None for item in outcomes) == [False, True]
+    assert rows == 1
+
+
+def test_bootstrap_lease_defers_claim_until_expiry(tmp_path: Path) -> None:
+    # Given: an aged routine row carrying an unconfirmed active lease.
+    clock = FakeClock(_NOW - timedelta(hours=1))
+    with Store(tmp_path / "db", clock=clock) as store:
+        _ = store.situations.upsert_detections(
+            (_conflict("leased-bootstrap", priority="routine"),)
+        )
+        clock.set(_NOW)
+        _ = store.situations.reserve_for_delivery(
+            _delivery(_NOW),
+            claim_token=uuid4().hex,
+            expires_at=_NOW + timedelta(minutes=2),
+        )
+
+        # When: bootstrap runs on each side of the lease boundary.
+        active = store.fallbacks.claim_next(_bootstrap_claim(_NOW))
+        clock.advance(timedelta(minutes=3))
+        expired = store.fallbacks.claim_next(_bootstrap_claim(clock.now()))
+
+    # Then: the active lease defers, but the expired lease does not suppress.
+    assert active is None
+    assert expired is not None
+    assert expired.dedupe_key == "leased-bootstrap"
 
 
 def test_agent_delivery_before_the_boundary_suppresses_the_fallback(
