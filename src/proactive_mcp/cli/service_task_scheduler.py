@@ -94,7 +94,7 @@ def render_task_definition(
     ET.SubElement(action, _tag("Arguments")).text = (
         "-NoLogo -NoProfile -NonInteractive -EncodedCommand " + encoded_launcher
     )
-    return ET.tostring(task, encoding="unicode", xml_declaration=True)
+    return ET.tostring(task, encoding="unicode")
 
 
 def is_managed_task(definition: str) -> bool:
