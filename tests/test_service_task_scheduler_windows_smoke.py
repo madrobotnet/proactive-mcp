@@ -15,6 +15,7 @@ from proactive_mcp.cli.service_task_scheduler import (
     is_managed_task,
     render_task_definition,
 )
+from proactive_mcp.cli.service_task_scheduler_ready import task_scheduler_ready_file
 from proactive_mcp.delivery.notify import trusted_notifier_path
 from proactive_mcp.server import build_status
 from tests.windows_service_support import TaskSchedulerRunResult
@@ -136,7 +137,8 @@ def test_windows_manager_registers_reads_and_starts_real_task(tmp_path: Path) ->
         observed = manager.definition()
         assert observed is not None
         assert is_managed_task(observed) is True
-        assert manager.start() is True
+        database.parent.mkdir(parents=True)
+        assert manager.start(task_scheduler_ready_file(database)) is True
         assert manager.is_enabled() is True
         assert manager.is_active() is True
         main_pid = manager.main_pid()

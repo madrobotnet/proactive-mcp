@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, Final, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from pathlib import PurePath
 
 from proactive_mcp.cli.service_task_scheduler_contract import TASK_NAME
 from proactive_mcp.delivery.notify import trusted_notifier_path
 
-_TIMEOUT_SECONDS: Final = 30
+_TIMEOUT_SECONDS: Final = 35
 _PREFIX: Final = (
     "$ErrorActionPreference='Stop'\n"
     "$service=New-Object -ComObject 'Schedule.Service'\n"
@@ -54,6 +55,18 @@ _REGISTER_SCRIPT_SUFFIX: Final = (
     f"$null=$folder.RegisterTask('{TASK_NAME}',$xml,6,$user,$null,3,$null)\n"
 )
 _START_SCRIPT: Final = _PREFIX + _GET_TASK + "$null=$task.Run($null)\n"
+_READY_START_SCRIPT_SUFFIX: Final = f"""'))
+$directory=[IO.Path]::GetDirectoryName($ready)
+$filename=[IO.Path]::GetFileName($ready)
+$watcher=[IO.FileSystemWatcher]::new($directory,$filename)
+$watcher.EnableRaisingEvents=$true
+try{{
+{_GET_TASK}  $null=$task.Run($null)
+  if([IO.File]::Exists($ready)){{exit 0}}
+  $change=$watcher.WaitForChanged([IO.WatcherChangeTypes]::Created,30000)
+  if($change.TimedOut){{exit 1}}
+}}finally{{$watcher.Dispose()}}
+"""
 _STOP_SCRIPT: Final = _PREFIX + _GET_TASK + "$task.Stop(0)\n"
 _DELETE_SCRIPT: Final = _PREFIX + f"$folder.DeleteTask('{TASK_NAME}',0)\n"
 _MAIN_PID_SCRIPT: Final = (
@@ -159,9 +172,19 @@ class WindowsTaskSchedulerManager:
         script = _REGISTER_SCRIPT_PREFIX + definition_token + _REGISTER_SCRIPT_SUFFIX
         return self._run(script).succeeded
 
-    def start(self) -> bool:
-        """Demand-start the registered task."""
-        return self._run(_START_SCRIPT).succeeded
+    def start(self, ready_file: PurePath | None = None) -> bool:
+        """Demand-start the task, optionally awaiting its exact ready event."""
+        if ready_file is None:
+            return self._run(_START_SCRIPT).succeeded
+        ready_token = b64encode(str(ready_file).encode()).decode("ascii")
+        script = (
+            _PREFIX
+            + "$ready=[Text.Encoding]::UTF8.GetString("
+            + "[Convert]::FromBase64String('"
+            + ready_token
+            + _READY_START_SCRIPT_SUFFIX
+        )
+        return self._run(script).succeeded
 
     def stop(self) -> bool:
         """Stop running instances of the task."""

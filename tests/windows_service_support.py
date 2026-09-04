@@ -41,7 +41,7 @@ class TaskSchedulerManager(Protocol):
 
     def register(self, definition: str) -> bool: ...
 
-    def start(self) -> bool: ...
+    def start(self, ready_file: PurePath | None = None) -> bool: ...
 
     def stop(self) -> bool: ...
 
@@ -111,6 +111,7 @@ class FakeTaskSchedulerManager:
         "fail_start_once",
         "main_pid_value",
         "operations",
+        "ready_files",
         "stored_definition",
     )
 
@@ -122,6 +123,7 @@ class FakeTaskSchedulerManager:
         self.fail_register_once: bool = False
         self.fail_start_once: bool = False
         self.operations: list[str] = []
+        self.ready_files: list[PurePath | None] = []
 
     def definition(self) -> str | None:
         return self.stored_definition
@@ -144,8 +146,9 @@ class FakeTaskSchedulerManager:
         self.enabled = True
         return True
 
-    def start(self) -> bool:
+    def start(self, ready_file: PurePath | None = None) -> bool:
         self.operations.append("start")
+        self.ready_files.append(ready_file)
         if self.fail_start_once:
             self.fail_start_once = False
             return False
@@ -255,9 +258,13 @@ def assert_encoded_launcher(backend: TaskSchedulerBackend) -> None:
     assert str(database) not in launcher
     executable_token = b64encode(str(executable).encode()).decode()
     database_token = b64encode(str(database).encode()).decode()
+    ready_file = database.with_name(f"{database.name}.service-ready")
+    ready_token = b64encode(str(ready_file).encode()).decode()
     assert f"FromBase64String('{executable_token}')" in launcher
     assert f"FromBase64String('{database_token}')" in launcher
+    assert f"FromBase64String('{ready_token}')" in launcher
     assert "$env:PROACTIVE_DATABASE = $database" in launcher
+    assert "$env:PROACTIVE_SERVICE_READY_FILE = $readyFile" in launcher
     invocations = [
         line.strip() for line in launcher.splitlines() if line.lstrip().startswith("&")
     ]

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Final, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
+
+if TYPE_CHECKING:
+    from pathlib import PurePath
 
 TASK_NAME: Final = "Proactive MCP Watcher"
 MANAGED_TASK_MARKER: Final = "X-Proactive-MCP-Managed=true"
@@ -31,7 +34,7 @@ class TaskSchedulerManager(Protocol):
         """Create or replace the current-user task from XML."""
         ...
 
-    def start(self) -> bool:
+    def start(self, ready_file: PurePath | None = None) -> bool:
         """Demand-start the registered task."""
         ...
 

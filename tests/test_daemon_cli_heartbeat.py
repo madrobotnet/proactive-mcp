@@ -142,6 +142,28 @@ def test_heartbeat_failure_emits_only_phase_and_code(
     assert "canary" not in captured.err
 
 
+def test_notify_service_ready_signals_scheduler_after_heartbeat_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "proactive.db"
+    signaled: list[Path] = []
+    monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+
+    def signal_ready(path: Path) -> None:
+        signaled.append(path)
+
+    monkeypatch.setattr(
+        daemon_cli,
+        "signal_task_scheduler_ready",
+        signal_ready,
+    )
+
+    daemon_cli.notify_service_ready()
+    assert signaled == [database]
+
+
 def test_runtime_ownership_conflict_emits_only_phase_and_code(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

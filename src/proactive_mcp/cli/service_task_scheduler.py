@@ -19,6 +19,10 @@ from proactive_mcp.cli.service_task_scheduler_lifecycle import (
 from proactive_mcp.cli.service_task_scheduler_manager import (
     WindowsTaskSchedulerManager,
 )
+from proactive_mcp.cli.service_task_scheduler_ready import (
+    READY_FILE_ENV,
+    task_scheduler_ready_file,
+)
 from proactive_mcp.delivery.notify import trusted_notifier_path
 
 if TYPE_CHECKING:
@@ -54,12 +58,17 @@ def render_task_definition(
 
     executable_token = b64encode(str(executable).encode()).decode("ascii")
     database_token = b64encode(str(database).encode()).decode("ascii")
+    ready_file = task_scheduler_ready_file(database)
+    ready_token = b64encode(str(ready_file).encode()).decode("ascii")
     launcher = (
         "$executable = [Text.Encoding]::UTF8.GetString("
         f"[Convert]::FromBase64String('{executable_token}'))\n"
         "$database = [Text.Encoding]::UTF8.GetString("
         f"[Convert]::FromBase64String('{database_token}'))\n"
+        "$readyFile = [Text.Encoding]::UTF8.GetString("
+        f"[Convert]::FromBase64String('{ready_token}'))\n"
         "$env:PROACTIVE_DATABASE = $database\n"
+        f"$env:{READY_FILE_ENV} = $readyFile\n"
         "& $executable 'daemon'\n"
         "exit $LASTEXITCODE\n"
     )

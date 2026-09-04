@@ -85,6 +85,7 @@ def _install(
     if executable is None:
         return _result("install", "failed", "binary_not_found"), False
     database = resolve_paths(os.environ).database.absolute()
+    ready_file = database.with_name(f"{database.name}.service-ready")
     rendered = render_definition(executable, database)
     previous_definition = manager.definition()
     if previous_definition is not None and not _is_managed_task_definition(
@@ -101,9 +102,14 @@ def _install(
         if _ready(snapshot):
             return _response(_Outcome("install", "installed"), snapshot), True
     changed = previous_definition != rendered or not previous.enabled
-    command_succeeded = (not changed or manager.register(rendered)) and (
-        not (changed or not previous.active) or manager.start()
-    )
+    ready_file.parent.mkdir(parents=True, exist_ok=True)
+    ready_file.unlink(missing_ok=True)
+    try:
+        command_succeeded = (not changed or manager.register(rendered)) and (
+            not (changed or not previous.active) or manager.start(ready_file)
+        )
+    finally:
+        ready_file.unlink(missing_ok=True)
     if not command_succeeded:
         _rollback(manager, previous)
         return _result("install", "failed", "command_failed"), False
