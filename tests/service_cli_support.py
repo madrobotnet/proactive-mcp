@@ -68,6 +68,10 @@ class FakeSystemdManager:
     fail_enable: bool = False
     enabled: bool = False
     active: bool = False
+    main_pid_value: int = PID
+    linger_state: Literal["enabled", "disabled", "unknown", "not_applicable"] = (
+        "enabled"
+    )
 
     def reload(self) -> bool:
         return True
@@ -101,10 +105,10 @@ class FakeSystemdManager:
         return self.active
 
     def main_pid(self) -> int:
-        return PID
+        return self.main_pid_value
 
-    def linger(self) -> Literal["enabled"]:
-        return "enabled"
+    def linger(self) -> Literal["enabled", "disabled", "unknown", "not_applicable"]:
+        return self.linger_state
 
     def _sync(self) -> None:
         values = [
@@ -123,8 +127,8 @@ class FakeSystemdManager:
 
 @dataclass(frozen=True, slots=True)
 class FakeDaemonStatus:
-    liveness: Literal["running"] = "running"
-    pid: int = PID
+    liveness: Literal["running", "stopped", "stale", "never_started"] = "running"
+    pid: int | None = PID
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,34 +144,29 @@ class Harness:
     state: Path
     env: dict[str, str]
     manager: FakeSystemdManager
+    heartbeat: FakeDaemonStatus
+    loginctl_log: Path
 
 
 def run_cli_in_process(
-    harness: Harness,
-    action: str,
+    harness: Harness, action: str
 ) -> subprocess.CompletedProcess[str]:
-    stdout = StringIO()
-    stderr = StringIO()
+    stdout, stderr = StringIO(), StringIO()
     arguments = ["proactive-mcp", "service", action]
-
-    def build_running_status() -> FakeStatus:
-        return FakeStatus()
-
     with (
         patch.dict(os.environ, harness.env, clear=True),
         patch.object(sys, "platform", "linux"),
         patch.object(service_cli, "_MANAGER", harness.manager),
-        patch.object(service_cli, "build_status", build_running_status),
+        patch.object(
+            service_cli, "build_status", lambda: FakeStatus(daemon=harness.heartbeat)
+        ),
         patch.object(sys, "argv", [str(ENTRYPOINT), "service", action]),
         redirect_stdout(stdout),
         redirect_stderr(stderr),
     ):
         returncode = cli.main(["service", action])
     return subprocess.CompletedProcess(
-        arguments,
-        returncode,
-        stdout.getvalue(),
-        stderr.getvalue(),
+        arguments, returncode, stdout.getvalue(), stderr.getvalue()
     )
 
 
@@ -184,7 +183,14 @@ def run_cli(harness: Harness, action: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def make_harness(tmp_path: Path, *, fail_enable: bool = False) -> Harness:
+def make_harness(
+    tmp_path: Path,
+    *,
+    fail_enable: bool = False,
+    linger: Literal["enabled", "disabled"] = "enabled",
+    main_pid: int = PID,
+    heartbeat: FakeDaemonStatus | None = None,
+) -> Harness:
     binary_dir = tmp_path / "bin"
     binary_dir.mkdir()
     state = tmp_path / "systemctl.state"
@@ -234,22 +240,35 @@ esac
         encoding="utf-8",
     )
     systemctl.chmod(0o755)
+    loginctl_log = tmp_path / "loginctl.log"
+    loginctl_log.touch()
     loginctl = binary_dir / "loginctl"
-    _ = loginctl.write_text("#!/bin/sh\nprintf 'yes\\n'\n", encoding="utf-8")
+    reply = "no" if linger == "disabled" else "yes"
+    _ = loginctl.write_text(
+        f"""#!/bin/sh
+printf '%s\\n' "$*" >> "$SERVICE_FAKE_LOGINCTL_LOG"
+printf '{reply}\\n'
+""",
+        encoding="utf-8",
+    )
     loginctl.chmod(0o755)
     database = tmp_path / "state" / "proactive.db"
     unit = tmp_path / "xdg" / "systemd" / "user" / UNIT_NAME
     env = os.environ | {
         "PATH": f"{binary_dir}{os.pathsep}/usr/bin:/bin",
         "PROACTIVE_DATABASE": str(database),
-        "SERVICE_FAKEPID": str(PID),
+        "SERVICE_FAKEPID": str(main_pid),
         "SERVICE_FAKE_STATE": str(state),
+        "SERVICE_FAKE_LOGINCTL_LOG": str(loginctl_log),
         "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
     }
     if fail_enable:
         env["SERVICE_FAKE_FAIL_ENABLE"] = "1"
-    manager = FakeSystemdManager(state, fail_enable=fail_enable)
-    return Harness(tmp_path, database, unit, state, env, manager)
+    manager = FakeSystemdManager(
+        state, fail_enable=fail_enable, main_pid_value=main_pid, linger_state=linger
+    )
+    status = FakeDaemonStatus() if heartbeat is None else heartbeat
+    return Harness(tmp_path, database, unit, state, env, manager, status, loginctl_log)
 
 
 def record_running(database: Path) -> None:

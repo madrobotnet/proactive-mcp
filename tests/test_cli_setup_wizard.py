@@ -74,10 +74,10 @@ def test_interactive_setup_prompts_oauth_path_then_browser_and_wires_browser_yes
 
     monkeypatch.setenv("PROACTIVE_DATABASE", str(database_path))
 
-    # User enters custom path, then answers 'y' (open browser -> headless=False)
+    # User enters custom path, answers 'y' (open browser), then declines service.
     stdout_stream = io.StringIO()
     stdin_stream = _PromptOrderTTYStringIO(
-        f"{entered_client_path}\ny\n",
+        f"{entered_client_path}\ny\nn\n",
         stdout_stream,
     )
 
@@ -87,8 +87,8 @@ def test_interactive_setup_prompts_oauth_path_then_browser_and_wires_browser_yes
     exit_code = cli.main(["setup"])
 
     assert exit_code == 0
-    assert len(stdin_stream.prompt_lengths) == 2
-    first_prompt_length, second_prompt_length = stdin_stream.prompt_lengths
+    assert len(stdin_stream.prompt_lengths) == 3
+    first_prompt_length, second_prompt_length = stdin_stream.prompt_lengths[:2]
     assert first_prompt_length > 0
     assert second_prompt_length > first_prompt_length
 
@@ -112,10 +112,10 @@ def test_interactive_setup_prompts_oauth_path_then_browser_and_wires_browser_no(
 
     monkeypatch.setenv("PROACTIVE_DATABASE", str(database_path))
 
-    # User enters custom path, then answers 'n' (do not open browser -> headless=True)
+    # User enters custom path, answers 'n' (headless), then declines service.
     stdout_stream = io.StringIO()
     stdin_stream = _PromptOrderTTYStringIO(
-        f"{entered_client_path}\nn\n",
+        f"{entered_client_path}\nn\nn\n",
         stdout_stream,
     )
 
@@ -125,8 +125,8 @@ def test_interactive_setup_prompts_oauth_path_then_browser_and_wires_browser_no(
     exit_code = cli.main(["setup"])
 
     assert exit_code == 0
-    assert len(stdin_stream.prompt_lengths) == 2
-    first_prompt_length, second_prompt_length = stdin_stream.prompt_lengths
+    assert len(stdin_stream.prompt_lengths) == 3
+    first_prompt_length, second_prompt_length = stdin_stream.prompt_lengths[:2]
     assert first_prompt_length > 0
     assert second_prompt_length > first_prompt_length
 
