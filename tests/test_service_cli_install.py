@@ -158,6 +158,9 @@ def test_install_emits_english_linger_guidance_without_running_loginctl_enable(
     assert result.returncode == 0
     assert response.linger == "disabled"
     assert response.guidance == "enable_linger"
-    assert "show-user" in logged
+    if sys.platform.startswith("linux"):
+        assert "show-user" in logged
+    else:
+        assert logged == ""
     assert "enable-linger" not in logged.split()
     assert f"loginctl enable-linger {user}" in result.stderr

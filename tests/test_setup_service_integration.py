@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import io
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal
 
@@ -126,6 +127,7 @@ def _begin_session(
     oauth_canary = tmp_path / "state" / "oauth-canary"
     xdg_home = tmp_path / "xdg"
     _ = client_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "state" / "proactive.db"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
     monkeypatch.setattr("sys.stdout", io.StringIO())
