@@ -17,7 +17,11 @@ def current_executable() -> Path | None:
     candidate = Path(sys.argv[0])
     if not candidate.is_absolute():
         return None
-    if os.name == "nt" and candidate.suffix.casefold() != ".exe":
+    if (
+        os.name == "nt"
+        and candidate.suffix.casefold() != ".exe"
+        and not candidate.exists()
+    ):
         candidate = candidate.with_name(f"{candidate.name}.exe")
     flags = getattr(os, "O_PATH", os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
     try:

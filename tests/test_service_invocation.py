@@ -92,6 +92,17 @@ def test_windows_distlib_launcher_suffix_is_restored(
     assert current_executable() == executable
 
 
+def test_windows_existing_extensionless_invocation_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = _executable(tmp_path / "proactive-mcp")
+    monkeypatch.setattr(sys, "argv", [str(executable), "service", "install"])
+    monkeypatch.setattr(service_invocation, "os", _WindowsLauncherOs())
+
+    assert current_executable() == executable
+
+
 @pytest.mark.parametrize("kind", _UNTRUSTED_KINDS)
 def test_ambiguous_or_untrusted_invocation_is_rejected(
     tmp_path: Path,

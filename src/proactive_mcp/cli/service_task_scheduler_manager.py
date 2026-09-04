@@ -25,12 +25,11 @@ _PREFIX: Final = (
 _GET_TASK: Final = f"$task=$folder.GetTask('{TASK_NAME}')\n"
 _DEFINITION_SCRIPT: Final = (
     _PREFIX
-    + "try{"
-    + _GET_TASK.strip()
-    + "}catch [Runtime.InteropServices.COMException]{\n"
-    + "  if($_.Exception.HResult -in @(-2147024894,-2147216625)){exit 0}\n"
-    + "  throw\n"
+    + "$task=$null\n"
+    + "foreach($candidate in $folder.GetTasks(0)){\n"
+    + f"  if($candidate.Name -ceq '{TASK_NAME}'){{$task=$candidate;break}}\n"
     + "}\n"
+    + "if($null -eq $task){exit 0}\n"
     + "[Console]::Out.Write($task.Xml)\n"
 )
 _ENABLED_SCRIPT: Final = (
