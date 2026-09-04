@@ -20,7 +20,12 @@ from pydantic import BaseModel, ConfigDict
 
 from proactive_mcp.cli import setup_wizard
 from proactive_mcp.cli.daemon import run_daemon
-from proactive_mcp.cli.service import ServiceAction, run_service
+from proactive_mcp.cli.service import (
+    ServiceAction,
+    execute_service,
+    human_linger_guidance,
+    run_service,
+)
 from proactive_mcp.config import ConfigError
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server import build_status, create_server, server
@@ -144,7 +149,7 @@ def _status() -> None:
     _ = sys.stdout.write(f"{build_status().model_dump_json()}\n")
 
 
-def run_setup(arguments: _CliArguments) -> None:
+def run_setup(arguments: _CliArguments) -> int:
     """Authorize and configure the Gmail and Calendar read-only sources."""
     defaults = setup_wizard.SetupWizardDefaults(
         client_secrets_path=setup_wizard.resolve_setup_client_secrets_path(
@@ -155,9 +160,10 @@ def run_setup(arguments: _CliArguments) -> None:
         headless=arguments.headless,
     )
     legacy_flags = (arguments.client_secrets, arguments.headless, arguments.reauth)
+    interactive = not (arguments.non_interactive or any(legacy_flags))
     answers = (
         defaults
-        if arguments.non_interactive or any(legacy_flags)
+        if not interactive
         else setup_wizard.collect_setup_wizard_answers(defaults, sys.stdin, sys.stdout)
     )
     configure_google_sources(
@@ -168,6 +174,17 @@ def run_setup(arguments: _CliArguments) -> None:
             headless=answers.headless,
         ),
     )
+    if not interactive or not sys.platform.startswith("linux"):
+        return 0
+    if not setup_wizard.collect_service_install_consent(sys.stdin, sys.stdout):
+        return 0
+    result = execute_service("install")
+    if not result.success:
+        _ = sys.stderr.write("error: watcher service install failed\n")
+        return 2
+    if (guidance := human_linger_guidance(result.response.linger)) is not None:
+        _ = sys.stdout.write(f"{guidance}\n")
+    return 0
 
 
 def run_disconnect() -> None:
@@ -281,7 +298,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             case "status":
                 _status()
             case "setup":
-                run_setup(arguments)
+                return run_setup(arguments)
             case "google-smoke":
                 run_google_smoke(arguments)
             case _:

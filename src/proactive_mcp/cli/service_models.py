@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import ClassVar, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict
@@ -11,6 +12,7 @@ __all__ = [
     "LingerState",
     "ServiceAction",
     "ServiceCode",
+    "ServiceCommandResult",
     "ServiceResponse",
     "ServiceState",
 ]
@@ -55,3 +57,11 @@ class ServiceResponse(BaseModel):
     linger: LingerState
     guidance: Literal["none", "enable_linger"]
     code: ServiceCode | None
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceCommandResult:
+    """Presentation-independent result of one service lifecycle command."""
+
+    response: ServiceResponse
+    success: bool

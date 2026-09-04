@@ -15,6 +15,7 @@ __all__ = [
     "SetupWizardDefaults",
     "SetupWizardInputError",
     "add_setup_arguments",
+    "collect_service_install_consent",
     "collect_setup_wizard_answers",
     "resolve_setup_client_secrets_path",
 ]
@@ -24,6 +25,9 @@ _INPUT_ERROR_MESSAGE: Final = (
 )
 _OAUTH_CLIENT_PATH_PROMPT: Final = "OAuth client JSON path: "
 _OPEN_BROWSER_PROMPT: Final = "Open a browser on this device for authorization? [y/n]: "
+_SERVICE_INSTALL_PROMPT: Final = (
+    "Register and install the background watcher service now? [Y/n]: "
+)
 _BROWSER_ANSWER_RETRY: Final = "Please answer yes or no.\n"
 
 
@@ -125,5 +129,28 @@ def collect_setup_wizard_answers(
                 client_secrets_path=client_secrets_path,
                 headless=headless,
             )
+    except OSError:
+        raise SetupWizardInputError from None
+
+
+def collect_service_install_consent(stdin: TextIO, stdout: TextIO) -> bool:
+    """Collect English default-yes consent to install the watcher service."""
+    try:
+        if not stdin.isatty():
+            raise SetupWizardInputError
+
+        while True:
+            _ = stdout.write(_SERVICE_INSTALL_PROMPT)
+            stdout.flush()
+            answer = stdin.readline()
+            if answer == "":
+                raise SetupWizardInputError
+            normalized = answer.strip().lower()
+            if normalized in {"", "y", "yes"}:
+                return True
+            if normalized in {"n", "no"}:
+                return False
+            _ = stdout.write(_BROWSER_ANSWER_RETRY)
+            stdout.flush()
     except OSError:
         raise SetupWizardInputError from None

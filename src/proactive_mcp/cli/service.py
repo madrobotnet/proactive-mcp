@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 import sqlite3
 import sys
@@ -15,6 +16,7 @@ from proactive_mcp.cli.service_models import (
     LingerState,
     ServiceAction,
     ServiceCode,
+    ServiceCommandResult,
     ServiceResponse,
     ServiceState,
 )
@@ -25,7 +27,14 @@ from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server import build_status
 from proactive_mcp.store import UnsafeDatabasePathError
 
-__all__ = ["ServiceAction", "ServiceResponse", "run_service"]
+__all__ = [
+    "ServiceAction",
+    "ServiceCommandResult",
+    "ServiceResponse",
+    "execute_service",
+    "human_linger_guidance",
+    "run_service",
+]
 
 _UNIT_NAME: Final = "proactive-mcp.service"
 _MANAGER: Final = SystemdUserManager(_UNIT_NAME)
@@ -61,11 +70,11 @@ class _ManagerState:
     active: bool
 
 
-def run_service(action: ServiceAction) -> int:
-    """Run one Linux systemd user-service lifecycle operation."""
+def execute_service(action: ServiceAction) -> ServiceCommandResult:
+    """Run one Linux systemd user-service lifecycle operation without I/O."""
     if not sys.platform.startswith("linux"):
-        return _emit(
-            _response(
+        return ServiceCommandResult(
+            response=_response(
                 _Outcome(action, "unsupported", "unsupported_platform"),
                 _empty_snapshot(linger="not_applicable"),
             ),
@@ -86,7 +95,26 @@ def run_service(action: ServiceAction) -> int:
     except ValueError:
         response = _result(action, "failed", code="invalid_value")
         success = False
-    return _emit(response, success=success)
+    return ServiceCommandResult(response=response, success=success)
+
+
+def run_service(action: ServiceAction) -> int:
+    """Emit one service lifecycle result as JSON on stdout."""
+    result = execute_service(action)
+    return _emit(result.response, success=result.success)
+
+
+def human_linger_guidance(linger: LingerState) -> str | None:
+    """Return English linger advice only when user linger is disabled."""
+    match linger:
+        case "disabled":
+            user = getpass.getuser()
+            return (
+                f"loginctl enable-linger {user} keeps the watcher running after "
+                "logout and should only be used if that behavior is wanted."
+            )
+        case "enabled" | "unknown" | "not_applicable":
+            return None
 
 
 def _layout() -> _Layout:
@@ -253,4 +281,7 @@ def _response(outcome: _Outcome, snapshot: _Snapshot) -> ServiceResponse:
 
 def _emit(response: ServiceResponse, *, success: bool) -> int:
     _ = sys.stdout.write(f"{response.model_dump_json()}\n")
+    text = human_linger_guidance(response.linger)
+    if text is not None:
+        _ = sys.stderr.write(f"{text}\n")
     return 0 if success else 2
