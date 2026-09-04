@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import sys
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -73,6 +74,7 @@ def test_interactive_setup_prompts_oauth_path_then_browser_and_wires_browser_yes
     _ = entered_client_path.write_text("{}", encoding="utf-8")
 
     monkeypatch.setenv("PROACTIVE_DATABASE", str(database_path))
+    monkeypatch.setattr(sys, "platform", "linux")
 
     # User enters custom path, answers 'y' (open browser), then declines service.
     stdout_stream = io.StringIO()
@@ -111,6 +113,7 @@ def test_interactive_setup_prompts_oauth_path_then_browser_and_wires_browser_no(
     _ = entered_client_path.write_text("{}", encoding="utf-8")
 
     monkeypatch.setenv("PROACTIVE_DATABASE", str(database_path))
+    monkeypatch.setattr(sys, "platform", "linux")
 
     # User enters custom path, answers 'n' (headless), then declines service.
     stdout_stream = io.StringIO()
