@@ -3,11 +3,13 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
+
+import pytest
 
 from proactive_mcp.config import FallbackSettings
 from proactive_mcp.delivery.fallback import FallbackSent
-from proactive_mcp.store import Store
+from proactive_mcp.store import FallbackClaim, Store
 from tests.fallback_test_support import (
     CANARY_SENDER,
     CANARY_SUBJECT,
@@ -28,19 +30,24 @@ from tests.fallback_test_support import (
     poisoned,
 )
 from tests.situation_test_support import FakeClock
+from tests.situation_tool_support import open_harness, pending_detection
 from tests.store_migration_support import scalar_int
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from proactive_mcp.store import FallbackOutcome, SituationPriority
+
 
 def test_configured_priorities_override_the_critical_default(tmp_path: Path) -> None:
-    # Given: one high and one critical situation past the wait.
+    # Given: established delivery history and high and critical pending rows.
     with aged(
         tmp_path,
+        detection("history"),
         detection("high-row", priority="high"),
         detection("critical-row"),
     ) as store:
+        _ = store.situations.mark_delivered((by_key(store, "history").id,))
         runner = RecordingRunner()
         high = by_key(store, "high-row")
 
@@ -53,12 +60,14 @@ def test_configured_priorities_override_the_critical_default(tmp_path: Path) -> 
 
 
 def test_high_and_routine_are_never_toasted_by_default(tmp_path: Path) -> None:
-    # Given: aged high and routine situations and no critical one.
+    # Given: host delivery history plus aged high and routine situations.
     with aged(
         tmp_path,
+        detection("history"),
         detection("high-row", priority="high"),
         detection("routine-row", priority="routine"),
     ) as store:
+        _ = store.situations.mark_delivered((by_key(store, "history").id,))
         runner = RecordingRunner()
 
         # When: the dispatcher runs with default settings.
@@ -68,6 +77,104 @@ def test_high_and_routine_are_never_toasted_by_default(tmp_path: Path) -> None:
         assert dispatched == ()
         assert runner.calls == []
         assert claimed(store) == ()
+
+
+@pytest.mark.parametrize("priority", ["critical", "high", "routine"])
+def test_first_notification_ignores_only_configured_priority(
+    tmp_path: Path,
+    priority: SituationPriority,
+) -> None:
+    # Given: an empty host history and one aged pending situation.
+    with aged(tmp_path, detection("first", priority=priority)) as store:
+        runner = RecordingRunner()
+
+        # When: default critical-only fallback runs for the first time.
+        dispatched = dispatch(store, runner)
+
+        # Then: every priority can bootstrap the host's first notification.
+        assert dispatched == (FallbackSent(by_key(store, "first").id),)
+        assert len(runner.calls) == 1
+
+
+def test_bootstrap_then_resumes_configured_priority_in_the_same_dispatch(
+    tmp_path: Path,
+) -> None:
+    # Given: an older routine row and urgent rows on an empty host.
+    with aged(
+        tmp_path,
+        detection("oldest", priority="routine"),
+        detection("high", priority="high"),
+        detection("critical"),
+    ) as store:
+        runner = RecordingRunner()
+        settings = FallbackSettings(priorities=("routine", "high", "critical"))
+
+        # When: the dispatcher drains every configured priority.
+        dispatched = dispatch(store, runner, settings)
+
+        # Then: bootstrap chooses age first, then normal urgency ordering resumes.
+        assert dispatched == (
+            FallbackSent(by_key(store, "oldest").id),
+            FallbackSent(by_key(store, "critical").id),
+            FallbackSent(by_key(store, "high").id),
+        )
+        assert len(runner.calls) == 3
+
+
+def test_disabled_fallback_does_not_bootstrap(tmp_path: Path) -> None:
+    # Given: an empty host history and an aged routine situation.
+    with aged(tmp_path, detection("disabled", priority="routine")) as store:
+        runner = RecordingRunner()
+
+        # When: fallback delivery is explicitly disabled.
+        dispatched = dispatch(store, runner, FallbackSettings(enabled=False))
+
+        # Then: the bootstrap exception does not bypass the disable switch.
+        assert dispatched == ()
+        assert runner.calls == []
+        assert claimed(store) == ()
+
+
+@pytest.mark.parametrize("outcome", ["claimed", "sent", "failed"])
+def test_any_fallback_outcome_disables_bootstrap_globally(
+    tmp_path: Path,
+    outcome: FallbackOutcome,
+) -> None:
+    # Given: fallback history in any outcome beside an eligible routine row.
+    with aged(
+        tmp_path,
+        detection("history"),
+        detection("still-pending", priority="routine"),
+    ) as store:
+        claim = FallbackClaim(
+            claimed_at=NOW.isoformat(),
+            detected_before=(NOW - WAIT).isoformat(),
+            priorities=("critical",),
+        )
+        history = store.fallbacks.claim_next(claim)
+        assert history is not None
+        match outcome:
+            case "claimed":
+                pass
+            case "sent":
+                store.fallbacks.record_sent(history.id)
+            case "failed":
+                store.fallbacks.record_failed(history.id, code="timeout")
+            case _:
+                assert_never(outcome)
+
+        # When: priority-free bootstrap considers the other pending row.
+        bootstrap = store.fallbacks.claim_next(
+            FallbackClaim(
+                claimed_at=claim.claimed_at,
+                detected_before=claim.detected_before,
+                priorities=claim.priorities,
+                mode="bootstrap",
+            )
+        )
+
+    # Then: even a crashed or failed fallback consumes host eligibility.
+    assert bootstrap is None
 
 
 def test_muted_situation_type_is_never_toasted(tmp_path: Path) -> None:
@@ -199,6 +306,26 @@ def test_agent_may_deliver_a_toasted_situation(tmp_path: Path) -> None:
         assert dispatched == (FallbackSent(delivered[0].id),)
         assert history is not None
         assert history.outcome == "sent"
+
+
+def test_real_proactive_check_can_deliver_the_bootstrap_row(tmp_path: Path) -> None:
+    # Given: an aged high row on a host with no delivery or fallback history.
+    with open_harness(tmp_path, NOW - WAIT) as harness:
+        _ = harness.store.situations.upsert_detections(
+            (pending_detection("bootstrap-agent", priority="high"),)
+        )
+        harness.clock.set(NOW)
+        runner = RecordingRunner()
+
+        # When: OS bootstrap runs before the real proactive_check service.
+        dispatched = dispatch(harness.store, runner)
+        situation = by_key(harness.store, "bootstrap-agent")
+        checked = harness.service.proactive_check()
+
+        # Then: notification history does not consume agent delivery eligibility.
+        assert dispatched == (FallbackSent(situation.id),)
+        assert (situation.state, situation.delivered_at) == ("pending", None)
+        assert tuple(item.id for item in checked.situations) == (situation.id,)
 
 
 def test_quoted_external_poison_never_reaches_the_notifier(tmp_path: Path) -> None:
