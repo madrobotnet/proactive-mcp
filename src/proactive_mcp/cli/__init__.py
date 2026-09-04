@@ -154,9 +154,10 @@ def run_setup(arguments: _CliArguments) -> None:
         ),
         headless=arguments.headless,
     )
+    legacy_flags = (arguments.client_secrets, arguments.headless, arguments.reauth)
     answers = (
         defaults
-        if arguments.non_interactive
+        if arguments.non_interactive or any(legacy_flags)
         else setup_wizard.collect_setup_wizard_answers(defaults, sys.stdin, sys.stdout)
     )
     configure_google_sources(
