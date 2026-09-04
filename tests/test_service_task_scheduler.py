@@ -7,6 +7,8 @@ from typing import Literal
 import pytest
 
 from proactive_mcp.cli import service as service_module
+from proactive_mcp.cli import service_win32
+from proactive_mcp.cli.service_backend import platform_executor
 from proactive_mcp.cli.service_models import (
     ServiceAction,
     ServiceCommandResult,
@@ -28,6 +30,10 @@ from tests.windows_service_support import (
     xml_count,
     xml_text,
 )
+
+
+def test_platform_executor_discovers_win32_backend() -> None:
+    assert platform_executor("win32") is service_win32
 
 
 @pytest.mark.parametrize("action", ["install", "status", "remove"])
@@ -53,17 +59,12 @@ def test_execute_service_dispatches_win32_with_typed_response(
     )
     dispatched: list[ServiceAction] = []
 
-    def execute_task_scheduler(action: ServiceAction) -> ServiceCommandResult:
-        dispatched.append(action)
+    def execute(selected: ServiceAction) -> ServiceCommandResult:
+        dispatched.append(selected)
         return expected
 
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(
-        service_module,
-        "execute_task_scheduler",
-        execute_task_scheduler,
-        raising=False,
-    )
+    monkeypatch.setattr(service_win32, "execute_service", execute)
 
     result = service_module.execute_service(action)
 
