@@ -34,13 +34,15 @@ def current_executable() -> Path | None:
     trusted_permissions = (
         True if os.name == "nt" else not observed.st_mode & _UNTRUSTED_WRITE_BITS
     )
+    trusted_links = (
+        True if os.name == "nt" else observed.st_nlink == current.st_nlink == 1
+    )
     trusted = (
         stat.S_ISREG(observed.st_mode)
         and trusted_owner
-        and observed.st_nlink == 1
+        and trusted_links
         and trusted_permissions
         and executable
         and (current.st_dev, current.st_ino) == (observed.st_dev, observed.st_ino)
-        and current.st_nlink == 1
     )
     return candidate if trusted else None
