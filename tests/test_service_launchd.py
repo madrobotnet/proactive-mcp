@@ -53,6 +53,22 @@ def test_install_reports_strict_ready_state(
     _assert_mode(harness.plist, 0o600)
 
 
+def test_harness_layout_is_isolated_from_process_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = make_harness(tmp_path, monkeypatch)
+    platform_home = tmp_path / "platform-home"
+    monkeypatch.setenv("HOME", str(platform_home))
+
+    result = service_darwin.execute_service("install")
+
+    assert result.success is True
+    assert harness.plist.exists()
+    unexpected = platform_home / "Library" / "LaunchAgents" / harness.plist.name
+    assert not unexpected.exists()
+
+
 def test_install_status_and_remove_are_idempotent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

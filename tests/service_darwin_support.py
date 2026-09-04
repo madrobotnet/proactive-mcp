@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from proactive_mcp.cli import service_darwin
+from proactive_mcp.cli.service_darwin_models import DarwinLayout
 from proactive_mcp.cli.service_launchagent import LAUNCHAGENT_FILENAME
 from proactive_mcp.cli.service_launchd import LaunchdState
 
@@ -130,6 +131,11 @@ def make_harness(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PROACTIVE_DATABASE", str(database))
     monkeypatch.setattr(service_darwin, "_MANAGER", launchd)
+    monkeypatch.setattr(
+        service_darwin,
+        "_layout",
+        lambda: DarwinLayout(plist, database),
+    )
     monkeypatch.setattr(service_darwin, "_READINESS_TIMEOUT_SECONDS", 0.0)
     monkeypatch.setattr(service_darwin, "current_executable", lambda: ENTRYPOINT)
     monkeypatch.setattr(

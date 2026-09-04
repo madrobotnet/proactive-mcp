@@ -59,6 +59,47 @@ class _SmokeHarness:
             timeout=30,
         )
 
+    def inspect_disabled(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [_LAUNCHCTL, "print-disabled", f"gui/{os.getuid()}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+
+
+def _cleanup_smoke(harness: _SmokeHarness) -> list[str]:
+    failures: list[str] = []
+    content = read_launch_agent_artifact(harness.plist)
+    if content is not None:
+        if not is_managed_launch_agent(content):
+            failures.append("refused to delete unmanaged smoke plist")
+        else:
+            removed = harness.service("remove")
+            if removed.returncode != 0:
+                bootout = subprocess.run(
+                    [_LAUNCHCTL, "bootout", harness.target],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+                if bootout.returncode != 0 and harness.inspect().returncode == 0:
+                    failures.append("fallback bootout failed")
+                delete_launch_agent_artifact(harness.plist)
+                failures.append("public service remove failed")
+    if harness.inspect().returncode == 0:
+        failures.append("launchd label remained loaded")
+    if harness.plist.exists():
+        failures.append("managed smoke plist remained")
+    if not failures:
+        if harness.home.exists():
+            shutil.rmtree(harness.home, ignore_errors=False)
+        if harness.database.parent.exists():
+            shutil.rmtree(harness.database.parent, ignore_errors=False)
+    return failures
+
 
 @pytest.fixture
 def launchd_smoke(tmp_path: Path) -> Iterator[_SmokeHarness]:
@@ -85,34 +126,7 @@ def launchd_smoke(tmp_path: Path) -> Iterator[_SmokeHarness]:
 
     yield harness
 
-    cleanup_failures: list[str] = []
-    content = read_launch_agent_artifact(plist)
-    if content is not None:
-        if not is_managed_launch_agent(content):
-            cleanup_failures.append("refused to delete unmanaged smoke plist")
-        else:
-            removed = harness.service("remove")
-            if removed.returncode != 0:
-                bootout = subprocess.run(
-                    [_LAUNCHCTL, "bootout", harness.target],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=30,
-                )
-                if bootout.returncode != 0 and harness.inspect().returncode == 0:
-                    cleanup_failures.append("fallback bootout failed")
-                delete_launch_agent_artifact(plist)
-                cleanup_failures.append("public service remove failed")
-    if harness.inspect().returncode == 0:
-        cleanup_failures.append("launchd label remained loaded")
-    if plist.exists():
-        cleanup_failures.append("managed smoke plist remained")
-    if not database.exists():
-        cleanup_failures.append("service remove deleted the profile database")
-    if not cleanup_failures:
-        shutil.rmtree(home, ignore_errors=False)
-        shutil.rmtree(database.parent, ignore_errors=False)
+    cleanup_failures = _cleanup_smoke(harness)
     if cleanup_failures:
         pytest.fail("; ".join(cleanup_failures))
 
@@ -120,8 +134,14 @@ def launchd_smoke(tmp_path: Path) -> Iterator[_SmokeHarness]:
 def test_real_launchagent_install_status_remove(
     launchd_smoke: _SmokeHarness,
 ) -> None:
+    disabled = launchd_smoke.inspect_disabled()
     installed = launchd_smoke.service("install")
-    assert installed.returncode == 0, installed.stderr
+    assert installed.returncode == 0, (
+        f"install stdout:\n{installed.stdout}\ninstall stderr:\n{installed.stderr}\n"
+        f"print-disabled rc={disabled.returncode}\n"
+        f"print-disabled stdout:\n{disabled.stdout}\n"
+        f"print-disabled stderr:\n{disabled.stderr}"
+    )
     install_response = ServiceResponse.model_validate_json(installed.stdout)
 
     status = launchd_smoke.service("status")

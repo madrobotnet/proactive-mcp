@@ -84,6 +84,18 @@ def test_manager_rejects_partially_malformed_disabled_output() -> None:
         _ = manager.is_enabled()
 
 
+def test_manager_ignores_unrelated_disabled_service_variants() -> None:
+    manager = _manager(
+        disabled=LaunchctlResult(
+            succeeded=True,
+            output=('disabled services = {\n"other.service" => custom-state\n}'),
+            exit_code=0,
+        )
+    )
+
+    assert manager.is_enabled() is True
+
+
 @pytest.mark.parametrize(
     "service",
     [
@@ -199,6 +211,7 @@ def test_manager_state_malformed_pid_fails_closed() -> None:
     )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="getuid is a POSIX API")
 def test_manager_default_uid_uses_getuid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os, "getuid", lambda: 502)
     manager = LaunchdUserManager("com.proactive.mcp", runner=FakeLaunchctlRunner())

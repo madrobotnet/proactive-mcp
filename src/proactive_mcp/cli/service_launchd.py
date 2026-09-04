@@ -191,12 +191,11 @@ class LaunchdUserManager:
 
         body = dict_match.group("body")
         matches = tuple(_DISABLED_SERVICE_RE.finditer(body))
-        residual = _DISABLED_SERVICE_RE.sub("", body)
-        if re.sub(r"[\s;]+", "", residual):
-            raise LaunchdInspectionError(_PRINT_DISABLED, _MALFORMED)
         for match in matches:
             if match.group("label") == self.label:
                 return match.group("disabled").lower() != "true"
+        if f'"{self.label}"' in body:
+            raise LaunchdInspectionError(_PRINT_DISABLED, _MALFORMED)
 
         return True
 
