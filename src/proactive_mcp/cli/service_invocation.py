@@ -17,6 +17,8 @@ def current_executable() -> Path | None:
     candidate = Path(sys.argv[0])
     if not candidate.is_absolute():
         return None
+    if os.name == "nt" and candidate.suffix.casefold() != ".exe":
+        candidate = candidate.with_name(f"{candidate.name}.exe")
     flags = getattr(os, "O_PATH", os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(candidate, flags)
@@ -34,9 +36,7 @@ def current_executable() -> Path | None:
     trusted_permissions = (
         True if os.name == "nt" else not observed.st_mode & _UNTRUSTED_WRITE_BITS
     )
-    trusted_links = (
-        True if os.name == "nt" else observed.st_nlink == current.st_nlink == 1
-    )
+    trusted_links = observed.st_nlink == current.st_nlink == 1
     trusted = (
         stat.S_ISREG(observed.st_mode)
         and trusted_owner

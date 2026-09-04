@@ -11,9 +11,9 @@ import pytest
 from proactive_mcp.cli import service_invocation
 from proactive_mcp.cli.service_invocation import current_executable
 
-_UNTRUSTED_KINDS = ["relative", "symlink"]
+_UNTRUSTED_KINDS = ["relative", "symlink", "hardlink"]
 if os.name != "nt":
-    _UNTRUSTED_KINDS.extend(("hardlink", "writable"))
+    _UNTRUSTED_KINDS.append("writable")
 
 
 def _executable(path: Path) -> Path:
@@ -32,7 +32,7 @@ class _WindowsStat:
 
 
 @final
-class _WindowsHardlinkOs:
+class _WindowsLauncherOs:
     name = "nt"
     O_RDONLY = os.O_RDONLY
     O_PATH = getattr(os, "O_PATH", os.O_RDONLY)
@@ -48,7 +48,7 @@ class _WindowsHardlinkOs:
         return _WindowsStat(
             observed.st_mode,
             observed.st_uid,
-            2,
+            1,
             observed.st_dev,
             observed.st_ino,
         )
@@ -59,7 +59,7 @@ class _WindowsHardlinkOs:
         return _WindowsStat(
             observed.st_mode,
             observed.st_uid,
-            2,
+            1,
             observed.st_dev,
             observed.st_ino,
         )
@@ -80,13 +80,14 @@ def test_current_absolute_invocation_is_used_without_path(
     assert current_executable() == executable
 
 
-def test_windows_absolute_hardlinked_launcher_is_trusted(
+def test_windows_distlib_launcher_suffix_is_restored(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executable = _executable(tmp_path / "proactive-mcp.exe")
-    monkeypatch.setattr(sys, "argv", [str(executable), "service", "install"])
-    monkeypatch.setattr(service_invocation, "os", _WindowsHardlinkOs())
+    normalized_argv0 = executable.with_suffix("")
+    monkeypatch.setattr(sys, "argv", [str(normalized_argv0), "service", "install"])
+    monkeypatch.setattr(service_invocation, "os", _WindowsLauncherOs())
 
     assert current_executable() == executable
 
