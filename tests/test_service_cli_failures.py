@@ -92,7 +92,7 @@ def test_non_linux_returns_typed_unsupported_output(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Given: the CLI boundary is running on a non-Linux platform.
-    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(sys, "platform", "aix")
 
     # When: service installation is requested.
     result = cli.main(["service", "install"])

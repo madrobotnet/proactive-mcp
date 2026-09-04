@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from proactive_mcp.cli.service_backend import platform_executor
 from proactive_mcp.cli.service_invocation import current_executable
 from proactive_mcp.cli.service_models import (
     HeartbeatState,
@@ -71,7 +72,10 @@ class _ManagerState:
 
 
 def execute_service(action: ServiceAction) -> ServiceCommandResult:
-    """Run one Linux systemd user-service lifecycle operation without I/O."""
+    """Run one platform service lifecycle operation without presentation I/O."""
+    backend = platform_executor(sys.platform)
+    if backend is not None:
+        return backend.execute_service(action)
     if not sys.platform.startswith("linux"):
         return ServiceCommandResult(
             response=_response(
