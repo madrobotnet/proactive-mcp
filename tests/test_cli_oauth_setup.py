@@ -45,6 +45,7 @@ def test_setup_prefers_explicit_client_secrets_over_environment_and_state_file(
     result = cli.main(
         [
             "setup",
+            "--non-interactive",
             "--client-secrets",
             str(explicit_path),
             "--reauth",
@@ -63,7 +64,9 @@ def test_setup_reports_a_safe_error_for_invalid_client_secrets(tmp_path: Path) -
     env = os.environ | {"PROACTIVE_DATABASE": str(tmp_path / "state.db")}
 
     # When: setup attempts to parse the path.
-    result = run_cli("setup", "--client-secrets", str(missing_path), env=env)
+    result = run_cli(
+        "setup", "--non-interactive", "--client-secrets", str(missing_path), env=env
+    )
 
     # Then: the error is actionable but does not disclose the input path.
     assert result.returncode != 0
@@ -85,7 +88,14 @@ def test_setup_reports_authorization_timeout_without_a_traceback(
     monkeypatch.setattr(cli, "configure_google_sources", timeout)
 
     # When: setup reaches the CLI error boundary.
-    result = cli.main(["setup", "--client-secrets", str(tmp_path / "client.json")])
+    result = cli.main(
+        [
+            "setup",
+            "--non-interactive",
+            "--client-secrets",
+            str(tmp_path / "client.json"),
+        ]
+    )
     captured = capsys.readouterr()
 
     # Then: the command fails safely without exposing an exception traceback.
@@ -113,7 +123,9 @@ def test_setup_reports_bootstrap_failure_as_one_closed_safe_error(
     monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "state.db"))
     _install_fake_authorizer(monkeypatch, ErrorInstalledAppFlow(bootstrap_error))
 
-    result = cli.main(["setup", "--client-secrets", str(private_path)])
+    result = cli.main(
+        ["setup", "--non-interactive", "--client-secrets", str(private_path)]
+    )
     captured = capsys.readouterr()
 
     assert result == 2
@@ -148,7 +160,9 @@ def test_setup_reports_provider_failure_as_one_closed_safe_error(
     monkeypatch.setenv("PROACTIVE_DATABASE", str(tmp_path / "state.db"))
     _install_fake_authorizer(monkeypatch, ErrorInstalledAppFlow(provider_error))
 
-    result = cli.main(["setup", "--client-secrets", str(private_path)])
+    result = cli.main(
+        ["setup", "--non-interactive", "--client-secrets", str(private_path)]
+    )
     captured = capsys.readouterr()
 
     assert result == 2
@@ -170,4 +184,4 @@ def test_cli_does_not_swallow_process_control_exceptions(
     monkeypatch.setattr(cli, "configure_google_sources", interrupted)
 
     with pytest.raises(KeyboardInterrupt):
-        _ = cli.main(["setup", "--client-secrets", "client.json"])
+        _ = cli.main(["setup", "--non-interactive", "--client-secrets", "client.json"])

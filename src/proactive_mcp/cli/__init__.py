@@ -18,6 +18,7 @@ from typing import (
 
 from pydantic import BaseModel, ConfigDict
 
+from proactive_mcp.cli import setup_wizard
 from proactive_mcp.cli.daemon import run_daemon
 from proactive_mcp.cli.service import ServiceAction, run_service
 from proactive_mcp.config import ConfigError
@@ -59,7 +60,7 @@ Command: TypeAlias = Literal[
     "daemon",
     "service",
 ]
-_CLIENT_SECRETS_ENV: Final = "PROACTIVE_GOOGLE_CLIENT_SECRETS"
+_ClientSecretsPath: TypeAlias = Path
 _GOOGLE_ERRORS: Final = (
     ConfigError,
     CredentialScopeError,
@@ -72,7 +73,12 @@ _GOOGLE_ERRORS: Final = (
     OAuthClientConfigError,
     GoogleSourceConfigurationError,
 )
-_EXPECTED_ERRORS: Final = (*_GOOGLE_ERRORS, ReceiptErasurePendingError, UnsafePathError)
+_EXPECTED_ERRORS: Final = (
+    *_GOOGLE_ERRORS,
+    ReceiptErasurePendingError,
+    setup_wizard.SetupWizardInputError,
+    UnsafePathError,
+)
 
 
 class _CliArguments(BaseModel):
@@ -81,8 +87,9 @@ class _CliArguments(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
 
     command: Command
-    client_secrets: Path | None = None
+    client_secrets: _ClientSecretsPath | None = None
     headless: bool = False
+    non_interactive: bool = False
     reauth: bool = False
     confirm_real_account_read: bool = False
     once: bool = False
@@ -139,20 +146,26 @@ def _status() -> None:
 
 def run_setup(arguments: _CliArguments) -> None:
     """Authorize and configure the Gmail and Calendar read-only sources."""
-    client_secrets_path = arguments.client_secrets
-    if client_secrets_path is None:
-        configured_path = os.environ.get(_CLIENT_SECRETS_ENV)
-        client_secrets_path = (
-            Path(configured_path)
-            if configured_path is not None
-            else _database_path().parent / "client_secret.json"
-        )
+    defaults = setup_wizard.SetupWizardDefaults(
+        client_secrets_path=setup_wizard.resolve_setup_client_secrets_path(
+            arguments.client_secrets,
+            os.environ.get("PROACTIVE_GOOGLE_CLIENT_SECRETS"),
+            _database_path().parent,
+        ),
+        headless=arguments.headless,
+    )
+    legacy_flags = (arguments.client_secrets, arguments.headless, arguments.reauth)
+    answers = (
+        defaults
+        if arguments.non_interactive or any(legacy_flags)
+        else setup_wizard.collect_setup_wizard_answers(defaults, sys.stdin, sys.stdout)
+    )
     configure_google_sources(
         _database_path(),
         GoogleSetupOptions(
-            client_secrets_path=client_secrets_path,
+            client_secrets_path=answers.client_secrets_path,
             reauth=arguments.reauth,
-            headless=arguments.headless,
+            headless=answers.headless,
         ),
     )
 
@@ -207,21 +220,7 @@ def _parser() -> argparse.ArgumentParser:
         "status", help="print connection and database status as JSON"
     )
     setup = subparsers.add_parser("setup", help="connect read-only Google sources")
-    _ = setup.add_argument(
-        "--reauth",
-        action="store_true",
-        help="replace the current Google authorization",
-    )
-    _ = setup.add_argument(
-        "--headless",
-        action="store_true",
-        help="do not launch a browser for loopback authorization",
-    )
-    _ = setup.add_argument(
-        "--client-secrets",
-        metavar="PATH",
-        help="path to an installed-app OAuth client secret file",
-    )
+    setup_wizard.add_setup_arguments(setup)
     _ = subparsers.add_parser(
         "disconnect",
         help="delete stored Google authorization before local state cleanup",
