@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from ._memory_normalize import normalize_alias, normalize_label
+from ._memory_normalize import (
+    normalize_alias,
+    normalize_label,
+    normalize_memory_content,
+)
 from .migrate import apply_migrations
 from .storage_errors import ReceiptErasurePendingError
 
@@ -32,6 +36,12 @@ def initialize_connection(
         "_proactive_normalize_label",
         1,
         normalize_label,
+        deterministic=True,
+    )
+    connection.create_function(
+        "_proactive_memory_content_norm",
+        1,
+        normalize_memory_content,
         deterministic=True,
     )
     apply_migrations(connection, reader)

@@ -139,7 +139,7 @@ def test_pinned_v9_reader_fails_closed_then_retry_erases_and_clears_marker(
             current_reader.execute("BEGIN").close()
             assert current_reader.execute(
                 "SELECT MAX(version) FROM schema_migrations"
-            ).fetchone() == (11,)
+            ).fetchone() == (12,)
             barrier = Barrier(3)
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = [
@@ -147,7 +147,7 @@ def test_pinned_v9_reader_fails_closed_then_retry_erases_and_clears_marker(
                     for _ in range(2)
                 ]
                 assert barrier.wait(timeout=10) >= 0
-            assert [future.result(timeout=10) for future in futures] == [11, 11]
+            assert [future.result(timeout=10) for future in futures] == [12, 12]
         finally:
             current_reader.rollback()
             current_reader.close()

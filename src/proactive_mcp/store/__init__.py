@@ -69,6 +69,7 @@ from .memory import (
     EntityAliasConflictError,
     EntityKind,
     EntityStatus,
+    FreeDatedMemoryKey,
     MemoryAttribute,
     MemoryItem,
     MemoryKind,
@@ -77,6 +78,8 @@ from .memory import (
     MemorySource,
     MemoryValidationError,
     NewMemory,
+    free_dated_memory_key,
+    normalize_memory_content,
     validate_new_memory,
 )
 from .private_path import UnsafeDatabasePathError
@@ -133,6 +136,7 @@ __all__ = [
     "FallbackOutcome",
     "FallbackRecord",
     "FallbackStore",
+    "FreeDatedMemoryKey",
     "InvalidDaemonPollIntervalError",
     "InvalidLazySyncLeaseDurationError",
     "InvalidSituationTransitionError",
@@ -173,5 +177,7 @@ __all__ = [
     "SyncStore",
     "UnsafeDatabasePathError",
     "evaluate_source_freshness",
+    "free_dated_memory_key",
+    "normalize_memory_content",
     "validate_new_memory",
 ]

@@ -31,9 +31,9 @@ def test_migration_005_is_packaged_applied_and_idempotent(tmp_path: Path) -> Non
 
     # Then: migration 005 remains packaged and is applied exactly once.
     assert 5 in tuple(number for number, _sql in load_migrations())
-    assert first == second == 11
+    assert first == second == 12
     with closing(sqlite3.connect(db_path)) as connection:
-        assert applied_versions(connection) == set(range(1, 12))
+        assert applied_versions(connection) == set(range(1, 13))
 
 
 def test_migration_005_creates_situation_state_contract(tmp_path: Path) -> None:
