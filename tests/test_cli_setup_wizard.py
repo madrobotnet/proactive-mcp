@@ -60,6 +60,7 @@ def fake_configure(
         captured.append((path, options))
 
     monkeypatch.setattr(cli, "configure_google_sources", configure)
+    monkeypatch.setattr(cli, "emit_interactive_setup_notification", lambda: None)
     return captured
 
 

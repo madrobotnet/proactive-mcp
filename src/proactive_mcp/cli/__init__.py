@@ -26,6 +26,7 @@ from proactive_mcp.cli.service import (
     human_linger_guidance,
     run_service,
 )
+from proactive_mcp.cli.setup_notification import emit_interactive_setup_notification
 from proactive_mcp.config import ConfigError
 from proactive_mcp.paths import resolve_paths
 from proactive_mcp.server import build_status, create_server, server
@@ -174,16 +175,16 @@ def run_setup(arguments: _CliArguments) -> int:
             headless=answers.headless,
         ),
     )
-    if not interactive or not sys.platform.startswith("linux"):
-        return 0
-    if not setup_wizard.collect_service_install_consent(sys.stdin, sys.stdout):
-        return 0
-    result = execute_service("install")
-    if not result.success:
-        _ = sys.stderr.write("error: watcher service install failed\n")
-        return 2
-    if (guidance := human_linger_guidance(result.response.linger)) is not None:
-        _ = sys.stdout.write(f"{guidance}\n")
+    if interactive and sys.platform.startswith("linux"):
+        if setup_wizard.collect_service_install_consent(sys.stdin, sys.stdout):
+            result = execute_service("install")
+            if not result.success:
+                _ = sys.stderr.write("error: watcher service install failed\n")
+                return 2
+            if (guidance := human_linger_guidance(result.response.linger)) is not None:
+                _ = sys.stdout.write(f"{guidance}\n")
+    if interactive:
+        emit_interactive_setup_notification()
     return 0
 
 

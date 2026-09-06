@@ -149,6 +149,7 @@ def _begin_session(
         return original_run_service(action)
 
     monkeypatch.setattr(cli, "configure_google_sources", configure)
+    monkeypatch.setattr(cli, "emit_interactive_setup_notification", lambda: None)
     monkeypatch.setattr(cli, "execute_service", execute_service, raising=False)
     monkeypatch.setattr(service_cli, "execute_service", execute_service, raising=False)
     monkeypatch.setattr(cli, "run_service", run_service)

@@ -117,6 +117,8 @@ class SubprocessNotificationRunner:
             raise NotificationError(_UNAVAILABLE) from None
         except subprocess.TimeoutExpired:
             raise NotificationError(_TIMEOUT) from None
+        except OSError:
+            raise NotificationError(_FAILED) from None
         if completed.returncode != 0:
             raise NotificationError(_FAILED)
 

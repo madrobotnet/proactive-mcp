@@ -11,6 +11,7 @@ from ._situation_models import (
     SituationPriority,  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 )
 
+FallbackClaimMode = Literal["configured", "bootstrap"]
 FallbackOutcome = Literal["claimed", "sent", "failed"]
 FallbackTerminalOutcome = Literal["sent", "failed"]
 FallbackFailureCode = Literal[
@@ -33,6 +34,7 @@ class FallbackClaim:
     claimed_at: str
     detected_before: str
     priorities: tuple[SituationPriority, ...]
+    mode: FallbackClaimMode = "configured"
 
 
 @dataclass(frozen=True, slots=True)

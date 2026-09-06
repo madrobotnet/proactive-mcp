@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, assert_never
 
 from ._fallback_models import (
     FALLBACK_RECORD_ADAPTER,
@@ -14,8 +14,10 @@ from ._fallback_models import (
     FallbackSummary,
 )
 from ._fallback_sql import (
+    INSERT_BOOTSTRAP_FALLBACK_CLAIM,
     INSERT_FALLBACK_CLAIM,
     RECORD_FALLBACK_OUTCOME,
+    SELECT_BOOTSTRAP_FALLBACK_CANDIDATES,
     SELECT_FALLBACK_CANDIDATES,
     SELECT_FALLBACK_RECORD,
     SELECT_FALLBACK_SUMMARY,
@@ -29,6 +31,7 @@ if TYPE_CHECKING:
 
     from ._fallback_models import (
         FallbackClaim,
+        FallbackClaimMode,
         FallbackFailureCode,
         FallbackTerminalOutcome,
     )
@@ -75,23 +78,31 @@ class FallbackStore:
         )
 
     def candidates(self, claim: FallbackClaim) -> tuple[Situation, ...]:
-        """Return eligible unclaimed rows, most urgent first."""
+        """Return rows eligible for the claim mode in its policy order."""
+        candidate_sql, _ = _claim_sql(claim.mode)
         return self._situations.capture_situations(
-            SELECT_FALLBACK_CANDIDATES,
+            candidate_sql,
             _eligibility(claim),
         )
 
     def claim_next(self, claim: FallbackClaim) -> Situation | None:
-        """Atomically claim the most urgent eligible row before sending it.
+        """Atomically claim the first row eligible for the selected mode.
 
-        The claim is written before the notification subprocess runs, so a
-        crashed send is never retried and a lost claim is never re-offered.
+        Configured mode keeps urgency and configured-priority ordering. Bootstrap
+        mode ignores priority only when global delivery and fallback history are
+        empty. Both select and insertion execute in one immediate transaction.
         """
+        candidate_sql, insert_sql = _claim_sql(claim.mode)
+        eligibility = _eligibility(claim)
         with ImmediateTransaction(self._connection):
-            for candidate in self.candidates(claim):
+            candidates = self._situations.capture_situations(
+                candidate_sql,
+                eligibility,
+            )
+            for candidate in candidates:
                 cursor = self._connection.execute(
-                    INSERT_FALLBACK_CLAIM,
-                    (claim.claimed_at, candidate.id, *_eligibility(claim)),
+                    insert_sql,
+                    (claim.claimed_at, candidate.id, *eligibility),
                 )
                 if cursor.rowcount != 0:
                     return candidate
@@ -150,11 +161,27 @@ class FallbackStore:
         return self._clock.now().astimezone(UTC).isoformat()
 
 
-def _eligibility(claim: FallbackClaim) -> tuple[str, str, str, str]:
-    """Bind the fallback eligibility parameters in their SQL order."""
-    return (
-        json.dumps(list(claim.priorities)),
-        claim.detected_before,
-        claim.claimed_at,
-        claim.claimed_at,
-    )
+def _claim_sql(mode: FallbackClaimMode) -> tuple[str, str]:
+    """Select the candidate and insertion statements for one claim mode."""
+    match mode:
+        case "configured":
+            return (SELECT_FALLBACK_CANDIDATES, INSERT_FALLBACK_CLAIM)
+        case "bootstrap":
+            return (
+                SELECT_BOOTSTRAP_FALLBACK_CANDIDATES,
+                INSERT_BOOTSTRAP_FALLBACK_CLAIM,
+            )
+        case _:
+            assert_never(mode)
+
+
+def _eligibility(claim: FallbackClaim) -> tuple[str, ...]:
+    """Bind fallback eligibility parameters for the selected claim mode."""
+    common = (claim.detected_before, claim.claimed_at, claim.claimed_at)
+    match claim.mode:
+        case "configured":
+            return (json.dumps(list(claim.priorities)), *common)
+        case "bootstrap":
+            return common
+        case _:
+            assert_never(claim.mode)
