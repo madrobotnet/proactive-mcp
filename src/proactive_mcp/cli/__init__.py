@@ -25,6 +25,7 @@ from proactive_mcp.cli.service import (
     execute_service,
     human_linger_guidance,
     run_service,
+    service_prompt_supported,
 )
 from proactive_mcp.cli.setup_notification import emit_interactive_setup_notification
 from proactive_mcp.config import ConfigError
@@ -175,7 +176,7 @@ def run_setup(arguments: _CliArguments) -> int:
             headless=answers.headless,
         ),
     )
-    if interactive and sys.platform.startswith("linux"):
+    if interactive and service_prompt_supported(sys.platform):
         if setup_wizard.collect_service_install_consent(sys.stdin, sys.stdout):
             result = execute_service("install")
             if not result.success:

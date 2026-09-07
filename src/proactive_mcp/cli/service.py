@@ -35,6 +35,7 @@ __all__ = [
     "execute_service",
     "human_linger_guidance",
     "run_service",
+    "service_prompt_supported",
 ]
 
 _UNIT_NAME: Final = "proactive-mcp.service"
@@ -69,6 +70,11 @@ class _Outcome:
 class _ManagerState:
     enabled: bool
     active: bool
+
+
+def service_prompt_supported(platform: str) -> bool:
+    """Offer setup consent for Linux or an available convention backend."""
+    return platform.startswith("linux") or platform_executor(platform) is not None
 
 
 def execute_service(action: ServiceAction) -> ServiceCommandResult:

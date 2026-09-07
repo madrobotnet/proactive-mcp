@@ -14,6 +14,7 @@ from typing_extensions import override
 
 from proactive_mcp import cli
 from proactive_mcp.cli import service as service_cli
+from proactive_mcp.cli.service_backend import platform_executor
 from proactive_mcp.cli.service_models import ServiceAction, ServiceResponse
 from proactive_mcp.sources import GoogleOAuthAuthorizationError
 
@@ -354,4 +355,151 @@ def test_setup_service_consent_keyboard_interrupt_propagates(
 
     # Then: OAuth already succeeded, no install ran, and the interrupt escaped.
     assert session.events == [PROMPT, PROMPT, OAUTH_SUCCESS, PROMPT]
+    assert session.oauth_canary.read_text(encoding="utf-8") == _OAUTH_CANARY
+
+
+@pytest.fixture
+def cross_platform_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, platform: str
+) -> _SetupSession:
+    """Keep shared dispatch/discovery real; replace only native execution."""
+    real_execute = service_cli.execute_service
+    session = _begin_session(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "execute_service", real_execute)
+    monkeypatch.setattr(service_cli, "execute_service", real_execute)
+    monkeypatch.setattr(sys, "platform", platform)
+
+    def install(action: ServiceAction) -> service_cli.ServiceCommandResult:
+        session.events.append(f"service:{action}")
+        result = (
+            _failed_result()
+            if "fail_install" in session.events
+            else _installed_result()
+        )
+        return service_cli.ServiceCommandResult(
+            response=result.response, success=result.success
+        )
+
+    backend = platform_executor(platform)
+    if backend is not None:
+        monkeypatch.setattr(backend, "execute_service", install)
+    else:
+
+        def install_linux(_layout: object) -> tuple[ServiceResponse, bool]:
+            result = install("install")
+            return result.response, result.success
+
+        monkeypatch.setattr(service_cli, "_install", install_linux)
+    monkeypatch.setattr(
+        cli,
+        "emit_interactive_setup_notification",
+        lambda: session.events.append("notify"),
+    )
+    return session
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+@pytest.mark.parametrize("answer", ["y", ""])
+def test_cross_platform_consent_dispatches_before_notification(
+    monkeypatch: pytest.MonkeyPatch, cross_platform_session: _SetupSession, answer: str
+) -> None:
+    # Given: supported platform and real yes/default consent parsing.
+    session = cross_platform_session
+    _bind_tty(monkeypatch, session.events, _answers(session, "y", answer))
+    # When: setup completes through the real shared dispatcher.
+    exit_code = cli.main(["setup"])
+    # Then: one install follows OAuth and precedes one notification.
+    assert exit_code == 0
+    assert session.events == [
+        PROMPT,
+        PROMPT,
+        OAUTH_SUCCESS,
+        PROMPT,
+        SERVICE_INSTALL,
+        "notify",
+    ]
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32", "freebsd"])
+def test_cross_platform_decline_or_unsupported_skips_install(
+    monkeypatch: pytest.MonkeyPatch,
+    cross_platform_session: _SetupSession,
+    platform: str,
+) -> None:
+    # Given: consent is declined, or no platform backend exists.
+    session = cross_platform_session
+    _bind_tty(monkeypatch, session.events, _answers(session, "y", "n"))
+    # When: setup completes.
+    exit_code = cli.main(["setup"])
+    # Then: unsupported platforms never ask, and no installation runs.
+    assert exit_code == 0
+    consent = [] if platform == "freebsd" else [PROMPT]
+    assert session.events == [PROMPT, PROMPT, OAUTH_SUCCESS, *consent, "notify"]
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32", "freebsd"])
+@pytest.mark.parametrize(
+    "flag", ["--non-interactive", "--headless", "--client-secrets", "--reauth"]
+)
+def test_cross_platform_legacy_flags_skip_service(
+    monkeypatch: pytest.MonkeyPatch, cross_platform_session: _SetupSession, flag: str
+) -> None:
+    # Given: each legacy flag independently disables the wizard.
+    session = cross_platform_session
+    monkeypatch.setattr("sys.stdin", _NoPromptTTYStringIO())
+    argv = ["setup", flag]
+    if flag == "--client-secrets":
+        argv.append(str(session.client_path))
+    # When: setup is invoked without interactive input.
+    exit_code = cli.main(argv)
+    # Then: OAuth alone runs, without service or notification.
+    assert exit_code == 0
+    assert session.events == [OAUTH_SUCCESS]
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32", "freebsd"])
+def test_cross_platform_oauth_failure_skips_service(
+    monkeypatch: pytest.MonkeyPatch, cross_platform_session: _SetupSession
+) -> None:
+    # Given: authorization fails before consent.
+    session = cross_platform_session
+
+    def configure(_path: Path, _options: GoogleSetupOptions) -> None:
+        session.events.append(OAUTH_FAILURE)
+        raise GoogleOAuthAuthorizationError
+
+    monkeypatch.setattr(cli, "configure_google_sources", configure)
+    _bind_tty(monkeypatch, session.events, _answers(session, "y", "y"))
+    # When: setup attempts OAuth.
+    exit_code = cli.main(["setup"])
+    # Then: neither consent nor install nor notification follows failure.
+    assert exit_code == 2
+    assert session.events == [PROMPT, PROMPT, OAUTH_FAILURE]
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_cross_platform_install_failure_is_redacted(
+    monkeypatch: pytest.MonkeyPatch, cross_platform_session: _SetupSession
+) -> None:
+    # Given: the native boundary returns failure after successful OAuth.
+    session = cross_platform_session
+    session.events.append("fail_install")
+    stderr = io.StringIO()
+    monkeypatch.setattr("sys.stderr", stderr)
+    _bind_tty(monkeypatch, session.events, _answers(session, "y", "y"))
+    # When: setup attempts installation.
+    exit_code = cli.main(["setup"])
+    # Then: failure preserves OAuth and skips notification without leaking paths.
+    assert exit_code == 2
+    assert session.events == [
+        "fail_install",
+        PROMPT,
+        PROMPT,
+        OAUTH_SUCCESS,
+        PROMPT,
+        SERVICE_INSTALL,
+    ]
+    assert str(session.client_path) not in stderr.getvalue()
+    assert _OAUTH_CANARY not in stderr.getvalue()
+    assert stderr.getvalue()
     assert session.oauth_canary.read_text(encoding="utf-8") == _OAUTH_CANARY
