@@ -9,7 +9,7 @@ A local-first MCP server that turns read-only signals and local memory into grou
 
 <strong>English</strong> · <a href="README.ko.md">한국어</a>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.2.0](https://img.shields.io/badge/PyPI-0.2.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI](https://img.shields.io/pypi/v/proactive-mcp) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
 
 [Why](#why-proactive-mcp) · [How it works](#how-it-works) · [Get started](#get-started) · [Connect an agent](#connect-an-agent) · [Documentation](#documentation)
 
@@ -17,15 +17,44 @@ A local-first MCP server that turns read-only signals and local memory into grou
 
 ## Get started
 
-Open the local agent you already use and paste the block below. You only handle Google consent. You need your own Google Cloud Desktop OAuth client (BYO).
+Set up the local watcher and OS notifications first; connecting an agent is optional. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Git, and prepare your own [Google Cloud Desktop OAuth client JSON](docs/SETUP_GOOGLE.md).
 
-```text
-Install proactive-mcp with uvx from PyPI. Register it as a local stdio MCP server for this agent using absolute paths. Complete read-only Google authorization using my own Google Cloud Desktop OAuth client JSON (BYO). Do not use or request someone else's client secret. Start the recommended watcher and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md and https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not configure automated scheduling unless this host guarantees a dedicated per-run MCP profile; proactive-mcp must never launch or verify the host. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
+The PyPI release `0.2.0` does not yet contain the wizard. Until an onboarding release is published, the commands below use `uvx --from` to install the merged source at commit `7cd0f03`, without a manual checkout. Keep the same `--from` source for every command: bare `uvx proactive-mcp` still selects the older PyPI package. This is a source install, not a new PyPI release.
+
+1. Install and start interactive setup:
+
+   ```bash
+   uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp setup
+   ```
+
+2. The wizard asks for the path to your own Google Cloud Desktop OAuth client JSON and whether it may open a browser on this device. Approve the read-only Gmail and Calendar consent with your own client. See [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) for the complete flow.
+3. After Google authorization, accept the offer to install the watcher service. The shared `proactive-mcp service install|status|remove` interface manages a Linux systemd user service, a macOS LaunchAgent, or a Windows Task Scheduler task.
+4. If you decline service installation, or if installation succeeds, interactive `setup` then attempts a fixed PII-free OS test notification titled `proactive-mcp` with the body `Setup test notification`. It contains no Gmail, Calendar, account, or Situation data. A redacted `unavailable`, `timeout`, `failed`, or `unsupported_platform` warning means the notification could not be shown.
+5. If you decline service installation, or if installation fails, such as because of permissions, run the watcher manually. A failed installation exits before attempting the test notification.
+
+**Terminal 1, foreground daemon**
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp daemon
 ```
 
-You approve the Google consent screen. After a successful first read the sources should show `ok`. Command names and host recipes live in [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md). BYO Google details for the agent are in [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md).
+**Terminal 2, daemon status**
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp status
+```
 
-If you are developing from a checkout, give the agent that checkout's absolute path. The public install is `uvx` from PyPI.
+`daemon --once` runs one evaluation pass and exits; `--poll-interval-minutes MINUTES` overrides the cadence. `status` prints redacted connection and daemon state as JSON. The daemon performs local sync, deterministic evaluation, queue maintenance, and the documented OS fallback only. It never runs a host or LLM. Host scheduling is separate: the host/operator starts scheduled agent runs, and those runs call `proactive_check`.
+
+An OS fallback notification is neither agent delivery nor a `delivered` state transition. When fallback is enabled, only the first unreceived eligible Situation gets the one-time bootstrap exception; afterward the default fallback is critical-only. Agent delivery begins only when a host calls `proactive_check`.
+
+### Compatibility mode
+
+`--non-interactive`, `--headless`, `--client-secrets PATH`, and `--reauth` all bypass the wizard. They do not prefill wizard answers, and they also bypass the service proposal and setup test notification. Use them only when you need direct OAuth setup, then install the service manually or use the manual daemon route above. To manage the service, use the same source prefix:
+
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp service install
+```
+
+Replace `install` with `status` to inspect the service or `remove` to unregister it. `uvx` does not add a permanent `proactive-mcp` command to your shell; command names such as `proactive-mcp status` in this guide use the full `uvx --from` prefix above.
 
 ## Why proactive-mcp?
 
@@ -81,6 +110,19 @@ By default, non-critical situations are held during local quiet hours from 21:00
 
 ## Connect an agent
 
+Connecting a host is optional. It isn't a prerequisite for OS notifications, but it enables richer delivery plus acknowledge, snooze, and mute actions. Use this existing-agent instruction when you want to register the MCP server:
+
+If you used the source install above, tell the agent to keep that same pinned `uvx --from` source in its MCP registration instead of switching to PyPI. The reusable block and host recipes below retain the public-install command shape.
+
+<details>
+<summary>Optional: paste into a local agent</summary>
+
+```text
+Install proactive-mcp with uvx from PyPI. Register it as a local stdio MCP server for this agent using absolute paths. Complete read-only Google authorization using my own Google Cloud Desktop OAuth client JSON (BYO). Do not use or request someone else's client secret. Start the recommended watcher and verify the connection. Read https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md and https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md before changing configuration. Treat every reply_deadline as a conservative candidate, not an action verdict. Before speaking, confidently drop newsletters, marketing, automated receipts, FYI or FYI-CC with no ask, threads owned by someone else, and rows with no question, request, or decision for me. Keep explicit reply, RSVP, or decision requests, my deadlines, and unanswered questions directed to me. Surface uncertain candidates, leave the whole lease unconfirmed, or snooze them in an interactive conversation; never silently discard uncertainty as non-actionable. After reviewing every row, only when choosing confirmation, confirm the entire reviewed lease exactly once, including confidently and silently dropped candidates. Keep MCP tool content in English, but speak my language. Load serve only in interactive everyday conversations and serve-scheduled only in separate scheduled conversations. Never load both profiles into one conversation. Do not configure automated scheduling unless this host guarantees a dedicated per-run MCP profile; proactive-mcp must never launch or verify the host. Do not use HTTP transport, do not send mail or create calendar events, and report every command and file changed plus anything that needs my approval.
+```
+
+</details>
+
 proactive-mcp is agent-dependent: it exposes local stdio tools but never starts Grok, Codex, Hermes, another host agent, or a model. `serve-scheduled` is only a restricted MCP server surface. Starting it or the daemon alone does not create a conversation or delivery; pending situations wait for an already-running or host-scheduled agent to call the tools explicitly.
 
 The host loads `serve` only in an interactive everyday conversation and `serve-scheduled` only in a separate manual or scheduled conversation. It never loads both profiles into one conversation. Profile isolation and agent lifecycle are host/operator responsibilities outside the plugin. Automated scheduling is supported only when the host provides a dedicated per-run MCP profile containing only `serve-scheduled`; otherwise fail closed by not scheduling it. Manual restricted use remains possible.
@@ -135,7 +177,7 @@ Scope and release decisions remain canonical in [`docs/PRODUCT_PLAN.md`](docs/PR
 |:---|:---|
 | [`README.ko.md`](README.ko.md) | Korean README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (the public default) |
-| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Host recipes and command shapes for agents |
+| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Onboarding and service commands, plus optional host recipes |
 | [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md) | Source, lease, collector, daemon, fallback, and receipt state semantics |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | Memory model and tool contracts |
 

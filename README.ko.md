@@ -8,7 +8,7 @@
 
 <a href="README.md">English</a> · <strong>한국어</strong>
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI 0.2.0](https://img.shields.io/badge/PyPI-0.2.0-3776AB?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white) ![MCP 2.x](https://img.shields.io/badge/MCP-2.x-111827?style=flat-square) ![Local-first](https://img.shields.io/badge/data-local--first-0F766E?style=flat-square) ![PyPI](https://img.shields.io/pypi/v/proactive-mcp) ![MIT License](https://img.shields.io/badge/license-MIT-2563EB?style=flat-square) [![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/madrobot)
 
 [왜](#왜-proactive-mcp인가) · [작동 방식](#작동-방식) · [시작하기](#시작하기) · [에이전트 연결](#에이전트-연결) · [문서](#문서)
 
@@ -16,15 +16,45 @@
 
 ## 시작하기
 
-이미 쓰고 있는 로컬 에이전트를 열고 아래 블록을 붙여 넣어 주세요. 직접 하실 일은 Google 동의뿐입니다. Google Cloud Desktop OAuth 클라이언트는 본인 것(BYO)을 쓰세요.
+로컬 watcher와 OS 알림부터 설정합니다. 에이전트 연결은 선택 사항입니다. [uv](https://docs.astral.sh/uv/getting-started/installation/)와 Git을 설치하고, 본인의 [Google Cloud Desktop OAuth 클라이언트 JSON](docs/SETUP_GOOGLE.md)을 준비하세요.
 
-```text
-PyPI에서 uvx로 proactive-mcp를 설치하세요. 절대 경로를 사용해 이 에이전트의 로컬 stdio MCP 서버로 등록하세요. 읽기 전용 Google 연결은 제 Google Cloud Desktop OAuth 클라이언트 JSON(BYO)으로 하세요. 다른 사람 클라이언트 secret을 쓰거나 요청하지 마세요. 권장 watcher를 시작하고 연결을 확인하세요. 설정을 바꾸기 전에 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md와 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md를 읽어 주세요. reply_deadline은 행동 필요 판정이 아니라 보수적으로 뽑은 후보로 취급하세요. 사용자에게 말하기 전에 뉴스레터, 마케팅, 자동 영수증, 요청이 없는 FYI 또는 FYI-CC, 다른 사람이 맡은 스레드, 저에게 답해야 할 질문·요청·결정이 없는 행은 확신할 수 있을 때 제외하세요. 명시적인 회신·RSVP·결정 요청, 제가 책임진 마감, 저에게 직접 묻고 아직 답하지 않은 질문은 유지하세요. 불확실한 후보는 저에게 알리거나 lease 전체를 미확정 상태로 두거나 일상 대화에서 snooze하세요. 비실행 항목이라고 조용히 버리지 마세요. 모든 행을 검토한 뒤 확정하기로 선택할 때만, 보여 주지 않기로 확신한 후보까지 포함해 검토한 lease 전체를 정확히 한 번 confirm_delivery 하세요. MCP 도구명·설명·필드·값은 영어로 유지하되 저에게는 제 언어로 말하세요. 일상 대화에는 serve만 로드하고 별도 예약 대화에는 serve-scheduled만 로드하세요. 한 대화에 두 프로필을 함께 로드하지 마세요. 이 host가 dedicated per-run MCP profile을 보장하지 못하면 자동 예약을 구성하지 말고, proactive-mcp가 host를 시작하거나 검증하게 만들지 마세요. HTTP transport는 사용하지 말고, 메일을 보내거나 일정을 만들지 마세요. 실행한 모든 명령과 변경한 파일, 제 승인이 필요한 항목을 보고해 주세요.
+PyPI에 배포된 `0.2.0`에는 아직 마법사가 없습니다. 온보딩 기능이 배포되기 전까지 아래 명령은 `uvx --from`으로 main에 병합된 `7cd0f03` 커밋의 소스를 설치합니다. 직접 체크아웃할 필요는 없습니다. 모든 명령에서 같은 `--from` 경로를 사용하세요. `uvx proactive-mcp`만 실행하면 이전 PyPI 패키지를 선택합니다. 아래 경로는 소스 설치이며 새 PyPI 릴리스가 아닙니다.
+
+1. 설치와 대화형 설정을 시작합니다.
+
+   ```bash
+   uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp setup
+   ```
+
+2. 마법사가 본인의 Google Cloud Desktop OAuth 클라이언트 JSON 경로와 이 장치에서 브라우저를 열지 묻습니다. 본인 클라이언트로만 Gmail과 Calendar의 읽기 전용 동의를 승인하세요. 전체 흐름은 [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md)에 있습니다.
+3. Google 인증 뒤 watcher service를 등록하겠다는 제안을 수락하세요. `proactive-mcp service install|status|remove`라는 공통 인터페이스가 Linux의 systemd user service, macOS의 LaunchAgent, Windows의 Task Scheduler를 관리합니다.
+4. service 등록을 거절했거나 등록에 성공하면, 대화형 `setup`은 제목이 `proactive-mcp`이고 본문이 `Setup test notification`인 PII 없는 고정 OS test notification을 시도합니다. 이 알림에는 Gmail, Calendar, 계정, Situation 데이터가 없습니다. redacted `unavailable`, `timeout`, `failed`, `unsupported_platform` 경고가 나오면 알림을 표시할 수 없었다는 뜻입니다.
+5. service 등록을 거절했거나 권한 문제 등으로 등록에 실패하면 watcher를 직접 실행하세요. 등록 실패 시 `setup`은 test notification을 시도하기 전에 종료됩니다.
+
+**터미널 1, 포그라운드 daemon**
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp daemon
 ```
 
-Google 동의 화면은 직접 승인해 주세요. 첫 읽기에 성공하면 소스가 `ok`여야 합니다. 명령 이름과 호스트 레시피는 [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)에 있습니다. 에이전트가 볼 BYO 안내는 [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md)에 있습니다.
+**터미널 2, daemon 상태**
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp status
+```
 
-체크아웃으로 개발하시면 에이전트에게 그 절대 경로를 알려 주세요. 공개 설치는 PyPI의 `uvx`입니다.
+`daemon --once`는 한 번만 평가하고 종료하며 `--poll-interval-minutes MINUTES`로 주기를 덮어쓸 수 있습니다. `status`는 연결과 daemon 상태를 redacted JSON으로 보여 줍니다. daemon은 로컬 동기화, 결정론적 평가, 큐 관리, 문서화된 OS fallback만 수행합니다. 호스트나 LLM을 실행하지 않습니다. 호스트 예약은 별개입니다. host/operator가 예약된 에이전트 실행을 시작하고, 그 실행이 `proactive_check`를 호출합니다.
+
+OS fallback은 에이전트 전달을 대신하지 않으며 Situation을 `delivered`로 표시하지도 않습니다. fallback이 활성화된 경우, 수신 이력이 없고 알림 조건을 충족하는 첫 Situation 한 건에만 일회성 bootstrap 예외가 적용됩니다. 그 뒤 기본 fallback은 critical-only입니다. 에이전트가 실제 전달을 시작하려면 `proactive_check`를 호출해야 합니다.
+
+### 호환 모드
+
+`--non-interactive`, `--headless`, `--client-secrets PATH`, `--reauth`는 모두 마법사를 건너뜁니다. 마법사 답변을 미리 채우는 옵션이 아니며 service 제안과 setup test notification도 건너뜁니다. OAuth를 직접 설정해야 할 때만 사용한 뒤 service를 직접 설치하거나 위의 수동 daemon 경로를 사용하세요. service를 관리할 때도 같은 소스 경로를 붙입니다.
+
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp service install
+```
+
+service 상태를 보려면 `install`을 `status`로, 등록을 해제하려면 `remove`로 바꾸세요. `uvx`는 셸에 영구적인 `proactive-mcp` 명령을 추가하지 않습니다. 이 문서의 `proactive-mcp status` 같은 명령 이름에는 위의 `uvx --from` 경로를 붙여 실행하세요.
+
 
 ## 왜 proactive-mcp인가
 
@@ -80,6 +110,19 @@ flowchart LR
 
 ## 에이전트 연결
 
+호스트 연결은 선택 사항입니다. OS 알림의 선행 조건은 아니지만, 에이전트를 연결하면 더 풍부한 전달과 acknowledge, snooze, mute를 사용할 수 있습니다. 아래 지시문은 기존 로컬 에이전트에 MCP를 등록할 때 쓸 수 있습니다.
+
+위의 소스 설치 경로를 사용했다면, 에이전트에게 PyPI로 바꾸지 말고 MCP 등록에도 같은 `uvx --from` 소스와 커밋을 유지하도록 요청하세요. 아래 재사용 지시문과 호스트 레시피는 공개 설치 명령 형태를 그대로 담고 있습니다.
+
+<details>
+<summary>선택 사항: 에이전트에 붙여 넣을 지시문</summary>
+
+```text
+PyPI에서 uvx로 proactive-mcp를 설치하세요. 절대 경로를 사용해 이 에이전트의 로컬 stdio MCP 서버로 등록하세요. 읽기 전용 Google 연결은 제 Google Cloud Desktop OAuth 클라이언트 JSON(BYO)으로 하세요. 다른 사람 클라이언트 secret을 쓰거나 요청하지 마세요. 권장 watcher를 시작하고 연결을 확인하세요. 설정을 바꾸기 전에 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/INTEGRATIONS.md와 https://github.com/madrobotnet/proactive-mcp/blob/main/docs/SETUP_GOOGLE.md를 읽어 주세요. reply_deadline은 행동 필요 판정이 아니라 보수적으로 뽑은 후보로 취급하세요. 사용자에게 말하기 전에 뉴스레터, 마케팅, 자동 영수증, 요청이 없는 FYI 또는 FYI-CC, 다른 사람이 맡은 스레드, 저에게 답해야 할 질문·요청·결정이 없는 행은 확신할 수 있을 때 제외하세요. 명시적인 회신·RSVP·결정 요청, 제가 책임진 마감, 저에게 직접 묻고 아직 답하지 않은 질문은 유지하세요. 불확실한 후보는 저에게 알리거나 lease 전체를 미확정 상태로 두거나 일상 대화에서 snooze하세요. 비실행 항목이라고 조용히 버리지 마세요. 모든 행을 검토한 뒤 확정하기로 선택할 때만, 보여 주지 않기로 확신한 후보까지 포함해 검토한 lease 전체를 정확히 한 번 confirm_delivery 하세요. MCP 도구명·설명·필드·값은 영어로 유지하되 저에게는 제 언어로 말하세요. 일상 대화에는 serve만 로드하고 별도 예약 대화에는 serve-scheduled만 로드하세요. 한 대화에 두 프로필을 함께 로드하지 마세요. 이 host가 dedicated per-run MCP profile을 보장하지 못하면 자동 예약을 구성하지 말고, proactive-mcp가 host를 시작하거나 검증하게 만들지 마세요. HTTP transport는 사용하지 말고, 메일을 보내거나 일정을 만들지 마세요. 실행한 모든 명령과 변경한 파일, 제 승인이 필요한 항목을 보고해 주세요.
+```
+
+</details>
+
 proactive-mcp는 에이전트 의존 MCP입니다. 로컬 stdio 도구를 제공하지만 Grok, Codex, Hermes, 다른 호스트 에이전트나 모델을 시작하지 않습니다. `serve-scheduled`는 제한된 MCP surface일 뿐 scheduler가 아닙니다. 이것이나 daemon만 실행해도 대화나 전달은 생기지 않습니다. pending 상황은 실행 중이거나 호스트가 예약한 에이전트가 도구를 명시적으로 호출할 때까지 남습니다.
 
 일상 대화에는 `serve`만, 별도 수동/예약 대화에는 `serve-scheduled`만 로드합니다. 격리와 agent lifecycle은 plugin 밖의 host/operator 책임입니다. Host가 `serve-scheduled`만 담긴 dedicated per-run MCP profile을 제공할 때만 자동 예약을 지원하며 그렇지 않으면 예약하지 않는 방식으로 fail closed합니다. 수동 restricted 대화는 가능합니다.
@@ -134,7 +177,8 @@ Daemon은 local sync·결정론 평가·queue·문서화된 critical OS fallback
 |:---|:---|
 | [`README.md`](README.md) | 영어 README |
 | [`docs/SETUP_GOOGLE.md`](docs/SETUP_GOOGLE.md) | BYO Google OAuth (공개 후 기본) |
-| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | 에이전트가 읽는 호스트 레시피와 명령 형태 |
+| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | 온보딩과 service 명령, 선택 사항인 호스트 레시피 |
+| [`docs/STATE_MODEL.md`](docs/STATE_MODEL.md) | 소스, lease, collector, daemon, fallback, receipt 상태 의미 |
 | [`docs/MEMORY_MODEL_V2.md`](docs/MEMORY_MODEL_V2.md) | 메모리 모델과 도구 계약 |
 
 ## 라이선스
