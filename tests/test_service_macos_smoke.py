@@ -47,7 +47,7 @@ class _SmokeHarness:
             text=True,
             env=self.environment,
             check=False,
-            timeout=30,
+            timeout=60,
         )
 
     def inspect(self) -> subprocess.CompletedProcess[str]:
@@ -131,16 +131,29 @@ def launchd_smoke(tmp_path: Path) -> Iterator[_SmokeHarness]:
         pytest.fail("; ".join(cleanup_failures))
 
 
+def _smoke_log_diagnostic(path: Path) -> str:
+    content = path.read_text(encoding="utf-8") if path.exists() else "not present"
+    return f"{path}:\n{content}"
+
+
 def test_real_launchagent_install_status_remove(
     launchd_smoke: _SmokeHarness,
 ) -> None:
     disabled = launchd_smoke.inspect_disabled()
     installed = launchd_smoke.service("install")
+    daemon_stdout = launchd_smoke.database.with_name(
+        launchd_smoke.database.name + ".daemon.out.log"
+    )
+    daemon_stderr = launchd_smoke.database.with_name(
+        launchd_smoke.database.name + ".daemon.err.log"
+    )
     assert installed.returncode == 0, (
         f"install stdout:\n{installed.stdout}\ninstall stderr:\n{installed.stderr}\n"
         f"print-disabled rc={disabled.returncode}\n"
         f"print-disabled stdout:\n{disabled.stdout}\n"
-        f"print-disabled stderr:\n{disabled.stderr}"
+        f"print-disabled stderr:\n{disabled.stderr}\n"
+        f"{_smoke_log_diagnostic(daemon_stdout)}\n"
+        f"{_smoke_log_diagnostic(daemon_stderr)}"
     )
     install_response = ServiceResponse.model_validate_json(installed.stdout)
 

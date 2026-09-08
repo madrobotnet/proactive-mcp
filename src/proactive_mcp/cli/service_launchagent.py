@@ -97,6 +97,12 @@ def render_launch_agent(executable: PurePath, database: PurePath) -> bytes:
             "PROACTIVE_DATABASE": database_value,
             _MARKER_KEY: _MARKER_VALUE,
         },
+        "StandardOutPath": _validated_path(
+            database.with_name(f"{database.name}.daemon.out.log"),
+        ),
+        "StandardErrorPath": _validated_path(
+            database.with_name(f"{database.name}.daemon.err.log"),
+        ),
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
         "ThrottleInterval": 5,

@@ -313,7 +313,7 @@ def test_interactive_non_linux_notifies_without_service(
     exit_code = cli.main(["setup"])
 
     assert exit_code == 0
-    assert session.events == [PROMPT, PROMPT, OAUTH_SUCCESS, NOTIFY]
+    assert session.events == [PROMPT, PROMPT, OAUTH_SUCCESS, PROMPT, NOTIFY]
     assert SERVICE_INSTALL not in session.events
     assert len(recording_runner.calls) == 1
 

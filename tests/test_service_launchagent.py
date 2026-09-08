@@ -68,6 +68,24 @@ def test_rendered_plist_uses_literal_arguments_and_restart_policy() -> None:
     assert b"&lt;" in rendered
 
 
+@pytest.mark.parametrize("database", [_DATABASE, PurePosixPath("/state/second.db")])
+@pytest.mark.parametrize(
+    ("key", "suffix"),
+    [
+        ("StandardOutPath", ".daemon.out.log"),
+        ("StandardErrorPath", ".daemon.err.log"),
+    ],
+)
+def test_rendered_plist_binds_output_paths_to_database(
+    database: PurePath,
+    key: str,
+    suffix: str,
+) -> None:
+    entries = _plist_entries(render_launch_agent(_EXECUTABLE, database))
+
+    assert entries[key] == f"{database}{suffix}"
+
+
 def test_managed_identity_requires_exact_label_and_marker() -> None:
     rendered = render_launch_agent(_EXECUTABLE, _DATABASE)
     wrong_label = rendered.replace(
