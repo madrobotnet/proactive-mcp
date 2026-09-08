@@ -53,8 +53,8 @@ from proactive_mcp.store import UnsafeDatabasePathError
 
 __all__ = ["execute_service"]
 
-_READINESS_TIMEOUT_SECONDS: Final = 5.0
-_READINESS_INTERVAL_SECONDS: Final = 0.05
+_READINESS_TIMEOUT_SECONDS: Final = 30.0
+_READINESS_INTERVAL_SECONDS: Final = 0.1
 
 
 _MANAGER: DarwinManager = LaunchdUserManager(LAUNCHAGENT_LABEL)
