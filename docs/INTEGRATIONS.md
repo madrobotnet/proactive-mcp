@@ -5,8 +5,126 @@ situations, but it does not contain an agent, model, conversation runtime, or
 message-delivery channel. It never launches Grok, Codex, Hermes, another host
 agent, or an LLM, and it never sends a prompt to one.
 
-Install from PyPI with `uvx proactive-mcp`. A source checkout
-(`uv run --directory …`) is for development.
+Use the onboarding source install below for the wizard. The older published
+PyPI command is `uvx proactive-mcp`. A development checkout uses
+`uv run --directory /absolute/path/to/proactive-mcp proactive-mcp`.
+
+## First-run onboarding
+
+### Availability
+
+PyPI `0.2.0` does not include the wizard, service proposal, or setup test
+notification. Until an onboarding release is published, install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) and Git and use
+`uvx --from` with the merged main commit below. This installs the source without
+a manual checkout; it is not a new PyPI release. Keep the same source prefix
+for all onboarding commands instead of switching to the older PyPI package.
+
+Start interactive setup:
+
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp setup
+```
+
+`setup` is interactive. It asks for the path to an installed-app Google OAuth
+client JSON file and whether it may open a browser. Create and consent to your
+own Google Desktop OAuth client, which has Gmail and Calendar read-only access.
+After authorization, accept the proposal to register the watcher service. The
+service backends are Linux systemd user service, macOS LaunchAgent, and Windows
+Task Scheduler. They share the same lifecycle commands:
+
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp service install
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp service status
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp service remove
+```
+
+Unless an accepted service registration fails, interactive setup ends by sending
+the fixed, PII-free `Setup test notification`. Seeing it confirms that the local
+OS notification route is available. It does not contain account, OAuth, Gmail,
+Calendar, path, or Situation data. If notifications are unavailable, setup
+prints a redacted warning instead.
+
+An accepted registration that fails exits with an error before sending that test
+notification. Start the watcher manually, then fix or retry service registration
+when ready.
+
+The OS fallback has one bootstrap exception: it may notify the first eligible
+Situation that has never been received. After that, its default is
+critical-only. A fallback notification is neither agent delivery nor
+`delivered`, so the Situation stays pending for a later host check.
+
+If you decline registration, run the watcher yourself. After a failed accepted
+registration, use the same manual path. These are separate terminals: the
+daemon runs continuously, so a shell running it cannot also run `status`.
+
+**Terminal 1, run the continuous watcher:**
+
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp daemon
+```
+
+**Terminal 2, inspect status while the watcher is running:**
+
+```bash
+uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268 proactive-mcp status
+```
+
+`status` prints redacted connection and database status as JSON. Do not copy
+OAuth material, payloads, or source data into a support report.
+
+### Command reference
+
+| Command | Meaning |
+|---|---|
+| `proactive-mcp setup` | Interactive Google read-only setup and, where supported, service-install proposal. |
+| `proactive-mcp service install\|status\|remove` | Install, inspect, or remove the platform watcher service. The result is redacted JSON. |
+| `proactive-mcp daemon [--once] [--poll-interval-minutes MINUTES]` | Run the watcher continuously, run one evaluation then exit, or override its configured poll interval. |
+| `proactive-mcp status` | Print redacted connection and database status as JSON. |
+| `proactive-mcp disconnect` | Delete stored Google authorization before local state cleanup. |
+| `proactive-mcp serve` | Run the everyday MCP server over local stdio. |
+| `proactive-mcp serve-scheduled` | Run the restricted scheduled MCP server over local stdio. |
+| `proactive-mcp google-smoke --confirm-real-account-read` | Perform the explicitly confirmed read-only Gmail and Calendar smoke read, returning redacted counts and error codes. Without the confirmation flag, it does not read the account. |
+
+The table shows command suffixes. Use the full `uvx --from` source prefix
+above; `uvx` does not add a permanent `proactive-mcp` executable to your shell.
+A development checkout can instead prepend
+`uv run --directory /absolute/path/to/proactive-mcp`. A persistent installation
+uses its provided `proactive-mcp` executable.
+
+`setup --non-interactive`, `setup --headless`, `setup --client-secrets PATH`,
+and `setup --reauth` are compatibility modes. Any one bypasses the interactive
+wizard, its service-install proposal, and its `Setup test notification`.
+`--headless` skips browser launch, `--client-secrets PATH` supplies the OAuth
+client JSON path, `--reauth` replaces stored authorization, and
+`--non-interactive` disables prompts. After using any of them, install the
+watcher manually with `proactive-mcp service install`, or start
+`proactive-mcp daemon` yourself. These flags do not preserve the omitted
+onboarding steps.
+
+Host wiring is optional after setup. A host can give richer delivery, including
+acknowledgement, snooze, and mute, but it is not a prerequisite for OS fallback
+notifications.
+
+## Watcher daemon and degraded mode
+
+The watcher service runs `proactive-mcp daemon`, not an MCP host. Its job is
+local source sync, deterministic evaluation, queue maintenance, and OS
+fallback. It never starts a host, agent, model, conversation, or LLM, and never
+sends one a prompt. The service registration above only keeps that daemon
+running.
+
+Without the daemon, an explicit `proactive_check` can lazy-sync and evaluate,
+but periodic sync and OS fallback are unavailable. `status` reports this
+degraded state. Host scheduling is separate: a host-native dedicated run may
+call `proactive_check`, but starting `serve-scheduled` only waits for that host
+connection.
+
+| Trigger target | Result |
+|---|---|
+| `proactive-mcp daemon` | Background local sync, evaluation, queue work, and the documented OS fallback. No agent conversation. |
+| `proactive-mcp serve-scheduled` | Restricted stdio server waiting for a host. No tool call by itself. |
+| Host-native dedicated agent task | Host starts an agent that may explicitly call restricted MCP tools. |
 
 ## Runtime ownership
 
@@ -90,6 +208,14 @@ zero. Profile-scoped collector observations report actual calls only and never
 claim to verify host configuration. See [`STATE_MODEL.md`](STATE_MODEL.md).
 
 ## Installation command shapes
+
+For the source onboarding path above, keep its pinned `--from` source when
+registering either MCP profile. The public-install examples and host recipes
+below remain unchanged: for a source registration with `command = "uvx"`, add
+`"--from"` and
+`"git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268"`
+before `"proactive-mcp"` in the argument list. Do not switch a source-installed
+profile back to the older PyPI package.
 
 Use an absolute executable path in host MCP configuration. The public shape
 is:
@@ -269,31 +395,6 @@ The host must own the agent lifecycle and, for automation, provide a dedicated
 per-run MCP profile. proactive-mcp supplies neither a model nor a generic host
 launcher. Remote-only hosts wait for a future transport design; V1 does not add
 HTTP, adapters, or a server-side LLM.
-
-## Watcher daemon and degraded mode
-
-The recommended local watcher is:
-
-```bash
-uvx proactive-mcp daemon
-```
-
-A development checkout uses that environment's `proactive-mcp daemon`
-instead.
-
-A user service, LaunchAgent, or Windows scheduled task may keep **this daemon
-process** running. That service starts proactive-mcp local background work only;
-it must not launch an agent command. Without the daemon, an explicit
-`proactive_check` can lazy-sync and evaluate, but periodic sync and OS fallback
-are unavailable. `get_status` reports that degraded state.
-
-Do not confuse the daemon service with host scheduling:
-
-| Trigger target | Result |
-|---|---|
-| `proactive-mcp daemon` | Background local sync/evaluation/queue work; no agent conversation |
-| `proactive-mcp serve-scheduled` | Restricted stdio server waiting for a host; no tool call by itself |
-| Host-native dedicated agent task | Host starts an agent that may explicitly call restricted MCP tools |
 
 ## Verification
 
