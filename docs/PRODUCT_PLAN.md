@@ -280,7 +280,9 @@ CREATE TABLE memory_items (
 | **M5 연동 레시피** | agent-owned lifecycle과 profile isolation 계약, 수동 restricted flow, host-native scheduling 조건 문서화. plugin이 Grok/Codex/Hermes/model을 시작·선택·검증하는 wrapper는 없음 | agent-off 시 host process/conversation 미생성 및 pending 유지, 이후 실행 중인 host의 명시적 restricted MCP 호출로 queue 회수 실증. 자동 예약은 dedicated per-run profile을 보장하는 host에서만 host-owned로 검증 |
 | **M6 온보딩** | README 정비, GCP OAuth 설정 가이드 | 새 환경에서 clean install → 온보딩 완료까지 15분 이내 |
 
-**M6 이후 — 공개 전환 (Owner 결정):** M6(#7)는 완료로 닫혀 있다. 2026-08-26 Owner CLI: 사용자 문서는 PyPI에 올린다는 전제로 쓴다. README·INTEGRATIONS·SETUP_GOOGLE은 `uvx proactive-mcp`와 BYO를 현재 경로로 적는다.
+**M6 이후 공개 전환, Owner 결정:** M6(#7)는 완료로 닫혀 있다. Owner가 #41 epic과 하위 #42, #43, #44, #45, #46, #60, #61, #62 및 PR #63으로 v0.3.0 온보딩 기본 경로를 승인했다. 기본 순서는 install, 대화형 `proactive-mcp setup` wizard, BYO Google OAuth, watcher 등록 제안, 고정 test notification이다. watcher 등록은 Linux systemd user service, macOS LaunchAgent, Windows Task Scheduler를 대상으로 한다. host 연결은 OS 알림의 선행 조건이 아니며, acknowledge, snooze, mute를 포함한 더 풍부한 전달이 필요할 때만 선택한다. 기존 에이전트 붙여 넣기 블록은 폐기하지 않고 이 선택 단계로 둔다. 전달 계약은 그대로 유지한다.
+
+이 결정은 문서 머리말과 §2를 포함한 이전의 agent-first, no-wizard, 현재 PyPI 설치 경로 진술을 대체한다. PyPI `0.2.0`에는 wizard가 없으므로, wizard가 포함된 v0.3.0 PyPI 릴리스 전에는 pinned git `uvx --from git+https://github.com/madrobotnet/proactive-mcp@7cd0f03243027df464084c3957f03d3c42169268` 설치를 한시적으로 허용한다. 이는 source checkout을 기본 경로로 바꾸는 것이 아니라 현재 사용자 문서의 과도기 예외다. v0.3.0을 PyPI에 배포한 뒤에는 README.md, README.ko.md, docs/INTEGRATIONS.md의 설치 명령을 `uvx proactive-mcp`로 되돌리는 후속 작업을 수행한다.
 
 저장소 `public` 전환과 `uv publish`는 문서와 별개다. PyPI만 올리면 저장소가 private여도 패키지가 공개되므로, 게시는 저장소 공개와 같은 날에 끝낸다. 에이전트는 Owner 승인 없이 둘 다 실행하지 않는다.
 
@@ -317,9 +319,9 @@ Attention 정책 경계(Quiet Hours 경계 시각, 예산 소진, cooldown), ded
 
 ## 11. 배포·온보딩
 
-- **배포 artifact:** 정본 artifact는 PyPI `proactive-mcp` 0.2.0과 `uvx`다. 사용자 문서는 이 경로를 현재 설치로 적는다. 소스 checkout은 개발 또는 collaborator 작업에만 쓴다. 실제 게시는 Owner 승인 후 GitHub Release와 PyPI Trusted Publishing으로 실행한다.
-- **기존 에이전트에 붙여 넣기 + BYO:** 사람은 쓰는 에이전트에 붙여 넣기 블록 하나를 넣고 Google 동의만 한다. 에이전트가 `uvx` 설치·MCP 등록·읽기 전용 Google 연결·검증을 맡는다. Google은 BYO만 — Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 토큰과 데이터는 사용자 머신에만 저장된다.
-- **권장 데몬:** 에이전트가 MCP 등록과 setup을 마친 뒤 `proactive-mcp daemon` local service를 등록한다. 데몬은 sync·평가·queue·문서화된 OS 폴백만 담당하며 agent/LLM을 호출하거나 prompt를 보내지 않는다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, periodic sync와 폴백 알림은 동작하지 않는다.
+- **배포 artifact와 기본 온보딩:** Owner가 #41과 하위 #42, #43, #44, #45, #46, #60, #61, #62 및 PR #63으로 승인한 기본 경로는 install, 대화형 `proactive-mcp setup` wizard, BYO Google OAuth, watcher 등록 제안, 고정 test notification 순서다. watcher 등록 대상은 Linux systemd user service, macOS LaunchAgent, Windows Task Scheduler다. PyPI `0.2.0`에는 wizard가 없으므로 v0.3.0 PyPI 릴리스 전에는 현재 README.md, README.ko.md, docs/INTEGRATIONS.md처럼 pinned git `uvx --from` 설치를 한시적 예외로 쓴다. source checkout은 개발 또는 collaborator 작업에만 쓴다. v0.3.0 배포 뒤 이 세 사용자 문서의 설치 명령을 `uvx proactive-mcp`로 되돌린다. 실제 게시는 Owner 승인 후 GitHub Release와 PyPI Trusted Publishing으로 실행한다.
+- **에이전트 붙여 넣기와 BYO:** 기존 에이전트에 붙여 넣기 블록은 기본 경로가 아니라 선택적인 host wiring 단계다. OS 알림에는 필요하지 않지만, 연결하면 acknowledge, snooze, mute를 포함한 더 풍부한 전달을 할 수 있다. 이때 에이전트가 MCP 등록과 검증을 맡고, 사람은 Google 동의와 blocker 보고만 한다. Google은 BYO만 사용하며 Owner `client_secret.json`을 패키지나 핸드오프에 넣지 않는다. 토큰과 데이터는 사용자 머신에만 저장된다. §4.2와 §4.1의 전달 계약은 이 선택 단계에서도 바꾸지 않는다.
+- **권장 데몬:** 대화형 `proactive-mcp setup` wizard가 Google OAuth 뒤 watcher local service 등록을 제안한다. watcher 등록과 OS 알림에 host MCP 연결은 필요하지 않다. 데몬은 sync·평가·queue·문서화된 OS 폴백만 담당하며 agent/LLM을 호출하거나 prompt를 보내지 않는다. 데몬이 없어도 §4.1의 degraded 모드는 유지되지만, periodic sync와 폴백 알림은 동작하지 않는다.
 - **에이전트 전달 규칙:** 에이전트는 `proactive_check`를 호출하고 §5.2에 따라 전체 후보를 검토한다. 반환값에 `receipt_token`이 있고 lease를 확정하기로 했다면 사용자에게 보여 주지 않기로 확신한 후보까지 포함한 lease 전체를 `confirm_delivery(receipt_token)`로 한 번 확정한다. 불확실한 후보는 알리거나 전체 lease를 미확정 상태로 두거나 일상 대화에서 확정 후 snooze하며, 비실행 항목이라고 조용히 버리지 않는다. 토큰이 없으면 확정하지 않는다.
 - **언어와 대화 분리:** MCP 도구명·설명·필드·값은 영어를 유지하고 호스트는 사용자의 언어로 말한다. 일상 대화에는 `serve`만, 별도 수동/예약 대화에는 `serve-scheduled`만 로드하며 한 대화에 두 프로필을 함께 로드하지 않는다. Host/operator가 이 isolation과 agent lifecycle을 소유한다. Host가 dedicated per-run profile을 제공하지 못하면 자동 예약은 지원하지 않고 구성하지 않는다. Grok 0.2.112 merged source와 Codex config layer의 immutable isolation을 plugin이 보장한다고 주장하지 않는다.
 - **에이전트용 JSON·host 레시피 참조 부록:** 기본 경로에서 사람은 JSON을 직접 편집하거나 `mcp add`를 실행하지 않는다. 아래 JSON 예시와 플랫폼별 host 레시피는 에이전트가 MCP 등록에 적용할 때만 참고한다. `uvx` 등록 예시는 다음과 같다.
